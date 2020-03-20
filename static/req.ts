@@ -1,4 +1,4 @@
-const server=location.href
+export const server='//'+location.host+location.pathname
 export function get_font(font:string, text:string) {
   return new Promise((rs, re) => {
     var xhr = new XMLHttpRequest();

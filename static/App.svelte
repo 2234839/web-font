@@ -1,6 +1,6 @@
 <script>
   import { writable } from 'svelte/store';
-  import { get_font, get_font_list } from './req';
+  import { get_font, get_font_list,server } from './req';
   /** 可用的字体列表  {id:number,name:string:selected:undefined | boolen,css:undefined|string}*/
   $: font_list = [];
   get_font_list().then(r => {
@@ -13,6 +13,11 @@
     selected_font.forEach(font => {
       get_font(font.name, text)
         .then(r => {
+          console.log(r);
+
+          r=r.replace(/\/\/.*?\//g,server)
+          console.log(r);
+
           const family = r.match(/font-family: "(.*)"/)[1];
           font.css = r;
           font.family = family;
