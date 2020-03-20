@@ -41,6 +41,23 @@ ui 需要展现一些特定的字体，但直接引入字体包又过大，于�
 
 ![下载展示](./doc_img/下载展示.jpg)
 
+## 提供的服务
+
+### 查询可用字体列表
+
+![font_list](./doc_img/api/font_list.jpg)
+
+### 生成压缩字体包
+
+![fontmin](./doc_img/api/fontmin.jpg)
+
+如图可见每个返回的字体资源，访问即可下载。另外在访问该目录下的 asset.zip 可以直接下载全部的文件,生成的资源目录结构见下图
+
+![生成的资源.jpg](./doc_img/生成的资源.jpg)
+
+### 动态生成字体
+
+http://127.0.0.1:3000/generate_fonts_dynamically/font/1584688387272/优设标题黑.ttf
 
 ## 写项目时遇到的问题
 

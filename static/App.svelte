@@ -13,10 +13,7 @@
     selected_font.forEach(font => {
       get_font(font.name, text)
         .then(r => {
-          console.log(r);
-
           r=r.replace(/\/\/.*?\//g,server)
-          console.log(r);
 
           const family = r.match(/font-family: "(.*)"/)[1];
           font.css = r;

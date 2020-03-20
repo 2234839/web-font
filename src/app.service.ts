@@ -5,10 +5,6 @@ import { join } from 'path';
 import { config } from './config';
 @Injectable()
 export class AppService {
-  getHello(): string {
-    return 'Hello World!';
-  }
-
   font_min(text: string, font: string) {
     const srcPath = `./src/font/${font}.ttf`; // 字体源文件
     const outPath = `asset/font/${Date.now()}/`;
@@ -49,5 +45,14 @@ export class AppService {
         }
       });
     });
+  }
+
+  generate_fonts_dynamically(
+    text: string,
+    font: string,
+    temp: string,
+    format: string,
+  ) {
+    return 11;
   }
 }
