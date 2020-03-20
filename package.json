@@ -6,7 +6,7 @@
   "license": "MIT",
   "scripts": {
     "prebuild": "rimraf dist",
-    "build": "nest build",
+    "build": "nest build && parcel build ./static/index.html",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "start:web": "parcel ./static/index.html",
     "start": "nest start",
@@ -33,7 +33,9 @@
     "rimraf": "^3.0.0",
     "rxjs": "^6.5.3",
     "svelte": "^3.20.1",
-    "tailwindcss": "^1.2.0"
+    "tailwindcss": "^1.2.0",
+    "zip-a-folder": "0.0.12",
+    "zip-folder": "^1.0.0"
   },
   "devDependencies": {
     "@nestjs/cli": "^6.9.0",

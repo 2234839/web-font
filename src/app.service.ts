@@ -1,13 +1,15 @@
 import { Injectable } from '@nestjs/common';
 import Fontmin from 'fontmin';
-
+const { zip } = require('zip-a-folder');
+import { join } from 'path';
+import { config } from './config';
 @Injectable()
 export class AppService {
   getHello(): string {
     return 'Hello World!';
   }
 
-  font_min(text:string,font:string) {
+  font_min(text: string, font: string) {
     const srcPath = `./src/font/${font}.ttf`; // 字体源文件
     const outPath = `asset/font/${Date.now()}/`;
     const destPath = `./${outPath}`; // 输出路径
@@ -22,7 +24,7 @@ export class AppService {
       .use(Fontmin.ttf2eot()) // eot 转换插件
       .use(Fontmin.ttf2woff()) // woff 转换插件
       .use(Fontmin.ttf2svg()) // svg 转换插件
-      .use(Fontmin.css({ fontPath: `http://127.0.0.1:3000/${outPath}` })) // css 生成插件
+      .use(Fontmin.css({ fontPath: `${config.web_font_path}${outPath}` })) // css 生成插件
       .dest(destPath); // 输出配置
 
     // 执行
@@ -37,6 +39,10 @@ export class AppService {
               (f.history[f.history.length - 1] as string).endsWith('.css'),
             )
             .map(f => f._contents.toString());
+          zip(
+            join(__dirname, '../../', destPath),
+            join(__dirname, '../../', destPath, 'asset.zip'),
+          );
           // resolve({code:0,fil:files.map(f=>f._contents.toString())}); // 成功
           // resolve({code:0,files}); // 成功
           resolve(css); // 成功

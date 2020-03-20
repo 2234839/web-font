@@ -1,11 +1,11 @@
 <script>
   import { writable } from 'svelte/store';
-  import { get_font,get_font_list } from './req';
+  import { get_font, get_font_list } from './req';
   /** 可用的字体列表  {id:number,name:string:selected:undefined | boolen,css:undefined|string}*/
-  $: font_list =[  ]
-  get_font_list().then(r=>{
-    font_list=r.map(ttf=>({name:ttf.replace(/\.ttf$/,'')}))
-  })
+  $: font_list = [];
+  get_font_list().then(r => {
+    font_list = r.map(ttf => ({ name: ttf.replace(/\.ttf$/, '') }));
+  });
   /** 选择的文字 */
   let text = '';
   $: selected_font = font_list.filter(font => font.selected);
@@ -13,16 +13,25 @@
     selected_font.forEach(font => {
       get_font(font.name, text)
         .then(r => {
-          const family = r.match(/font-family: "(.*)"/)[1]
+          const family = r.match(/font-family: "(.*)"/)[1];
           font.css = r;
-          font.family=family
+          font.family = family;
+          font.zip=r.match(/(asset\/font\/\d+\/)/)[0]+'asset.zip'
           /** 因为要触发其他更新则必须对这个变量重新赋值 */
-          font_list=font_list
+          font_list = font_list;
         })
         .catch(e => {
           console.log(e);
         });
     });
+  }
+  function copy(str) {
+    var input = document.getElementById("copy_box");
+    input.value=str
+    input.focus();
+    input.setSelectionRange(0, -1); // 全选
+    document.execCommand("copy")
+    alert(`复制成功\n${str}`)
   }
 </script>
 
@@ -35,7 +44,12 @@
   }
 </style>
 
-<div class=" flex justify-evenly">
+{#each font_list as font, i}
+  {@html "<style>"+font.css+'.'+font.name+"{font-family:"+font.family+"}</style>"}
+{/each}
+<h1 class="text-lg text-center mb-3">web font 字体裁剪工具</h1>
+<textarea id="copy_box" class="w-0 h-0 fixed -m-24" />
+<div class="flex justify-evenly">
   <textarea
     bind:value={text}
     class="border flex-1 m-1"
@@ -46,22 +60,30 @@
     {#each font_list as font, i}
       <div
         on:click={e => (font.selected = !font.selected)}
-        class="c-label {font.selected ? 'c-label-selected' : ''}">
+        class="c-label {font.selected ? 'c-label-selected' : ''}
+        {font.name}">
         {font.name}
       </div>
     {/each}
   </div>
 </div>
 
-<div on:click={generate_font}>生成字体</div>
+<div class="flex">
+  <div on:click={generate_font}  class="bg-red-200 text-red-600 rounded-md px-1 hover:bg-red-400 hover:text-white duration-75">
+    生成字体
+  </div>
+</div>
 
 {#each selected_font as font, i}
   <div class={font.name}>
-    <div style="font-family:{font.family};font-size:2rem">{text}</div>
-    <div style="font-size:.6rem;text-align: right;">{font.name}</div>
-  </div>
-{/each}
+    <div style="font-size:2rem">{text}</div>
+    <div class="flex justify-end items-center text-xs">
+      {#if font.css}
+        <a class="text-blue-400 underline" href="/{font.zip}">下载压缩资源</a>
+        <div  class="c-label mx-1 text-xs" on:click={copy(font.css)}>复制css</div>
+      {/if}
 
-{#each font_list as font, i}
-  {@html `<style>${font.css}</style>`}
+      <div>{font.name}</div>
+    </div>
+  </div>
 {/each}
