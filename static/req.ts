@@ -1,4 +1,4 @@
-const server=location.href+"/"
+const server=location.href
 export function get_font(font:string, text:string) {
   return new Promise((rs, re) => {
     var xhr = new XMLHttpRequest();
@@ -9,7 +9,7 @@ export function get_font(font:string, text:string) {
     });
     xhr.open(
       'GET',
-      `${server}/fontmin?font=${encodeURIComponent(
+      `${server}fontmin?font=${encodeURIComponent(
         font,
       )}&text=${encodeURIComponent(text)}`,
     );
@@ -27,7 +27,7 @@ export function get_font_list(font:string, text:string) {
     });
     xhr.open(
       'GET',
-      `${server}/font_list`,
+      `${server}font_list`,
     );
     xhr.onerror=re
     xhr.send();
