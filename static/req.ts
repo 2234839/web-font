@@ -1,4 +1,4 @@
-const server="http://127.0.0.1:3000"
+const server="/"
 export function get_font(font:string, text:string) {
   return new Promise((rs, re) => {
     var xhr = new XMLHttpRequest();
