@@ -11,6 +11,7 @@ import { AppService } from './app.service';
 import { join } from 'path';
 import { promises as fs } from 'fs';
 import { Request } from 'express';
+import { Stream } from 'stream';
 @Controller()
 export class AppController {
   constructor(private readonly appService: AppService) {}
@@ -30,13 +31,28 @@ export class AppController {
 
   /** 压缩字体 */
   @Get('generate_fonts_dynamically*')
-  generate_fonts_dynamically(
-    @Req() req:Request,
+  async generate_fonts_dynamically(
+    @Req() req: Request,
+    @Res() res,
     @Query('text') text: string,
     @Query('font') font: string,
     @Query('temp') temp: string,
   ) {
-    const format=req.url.match(/\.(.*)\?/)[1]
-    return this.appService.generate_fonts_dynamically(text, font,temp,format);
+    console.time()
+    const type = req.url.match(/\.(.*)\?/)[1];
+    const file = await this.appService.generate_fonts_dynamically(
+      text,
+      font,
+      temp,
+      type,
+    );
+    res.set({
+      'Content-Type': `font/${type}`,
+    });
+    const bufferStream = new Stream.PassThrough();
+    bufferStream.end(file);
+    bufferStream.pipe(res);
+    console.timeEnd()
+
   }
 }
