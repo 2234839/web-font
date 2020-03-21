@@ -13,7 +13,7 @@
       @font-face {
               font-family: "test";
               src:
-                  url("/generate_fonts_dynamically.ttf?temp=true&font=优设标题黑&text=优设标题黑(直接改这里和前面的字体名看效果)") format("truetype");
+                  url("${location.pathname}generate_fonts_dynamically.ttf?temp=true&font=优设标题黑&text=优设标题黑(直接改这里和前面的字体名看效果)") format("truetype");
               font-style: normal;
               font-weight: normal;
           }
