@@ -17,9 +17,9 @@ ui 需要展现一些特定的字体，但直接引入字体包又过大，于�
 
 例如 如下图生成的字体包仅包含 「天地无极乾坤借法」
 ![界面预览](./doc_img/页面截图.jpg)
-```HTML
+
 <video src="./doc_img/功能演示.mkv" controls="controls" width:100% height:auto></video>
-```
+
 其体积自然十分之小
 
 ![体积展示](./doc_img/体积展示.jpg)
