@@ -7,7 +7,7 @@
   "scripts": {
     "prebuild": "rimraf dist",
     "build": "nest build && parcel build ./static/index.html",
-    "build:font": "nest build && parcel build ./static/index.html --public-url ./font/",
+    "build:font": "nest build && parcel build ./static/index.html --public-url /font/",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "start:web": "parcel ./static/index.html",
     "start": "nest start",
