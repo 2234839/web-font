@@ -8,6 +8,18 @@
   });
   /** 选择的文字 */
   let text = '';
+  /** 用于测试动态生成接口 */
+  let generate_fonts_dynamically=`<style>
+      @font-face {
+              font-family: "test";
+              src:
+                  url("/generate_fonts_dynamically.ttf?temp=true&font=优设标题黑&text=优设标题黑(直接改这里和前面的字体名看效果)") format("truetype");
+              /* iOS 4.1- */
+              font-style: normal;
+              font-weight: normal;
+          }
+      }
+</style>`
   $: selected_font = font_list.filter(font => font.selected);
   function generate_font() {
     selected_font.forEach(font => {
@@ -49,7 +61,7 @@
 {#each font_list as font, i}
   {@html "<style>"+font.css+'.'+font.name+"{font-family:"+font.family+"}</style>"}
 {/each}
-<h1 class="text-lg text-center mb-3">web font 字体裁剪工具</h1>
+<h1 class="text-lg text-center mb-3 font-bold">web font 字体裁剪工具</h1>
 <textarea id="copy_box" class="w-0 h-0 fixed -m-24" />
 <div class="flex justify-evenly">
   <textarea
@@ -89,3 +101,16 @@
     </div>
   </div>
 {/each}
+
+
+<h2 class="text-lg text-center my-3  font-bold"> 动态生成字体（generate_fonts_dynamically 接口）</h2>
+<p>使用如下的方式引入，则可以直接使用</p>
+<textarea
+  bind:value={generate_fonts_dynamically}
+  class="border flex-1 m-1 w-full text-lg"
+  placeholder="在此输入需要提取的文字"
+  rows="13"
+  style="font-family:test;" />
+{@html generate_fonts_dynamically}
+
+

@@ -38,21 +38,21 @@ export class AppController {
     @Query('font') font: string,
     @Query('temp') temp: string,
   ) {
-    console.time()
     const type = req.url.match(/\.(.*)\?/)[1];
+    res.set({
+      'Content-Type': `font/${type}`,
+    });
+    if(!text)
+      return ' '
     const file = await this.appService.generate_fonts_dynamically(
       text,
       font,
       temp,
       type,
     );
-    res.set({
-      'Content-Type': `font/${type}`,
-    });
+
     const bufferStream = new Stream.PassThrough();
     bufferStream.end(file);
     bufferStream.pipe(res);
-    console.timeEnd()
-
   }
 }
