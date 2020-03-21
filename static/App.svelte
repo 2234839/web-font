@@ -29,7 +29,7 @@
           const family = r.match(/font-family: "(.*)"/)[1];
           font.css = r;
           font.family = family;
-          font.zip=r.match(/(asset\/font\/\d+\/)/)[0]+'asset.zip'
+          font.zip=location.pathname+r.match(/(asset\/font\/\d+\/)/)[0]+'asset.zip'
           /** 因为要触发其他更新则必须对这个变量重新赋值 */
           font_list = font_list;
         })
