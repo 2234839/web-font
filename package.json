@@ -23,6 +23,7 @@
   },
   "dependencies": {
     "@babel/polyfill": "^7.8.7",
+    "@fullhuman/postcss-purgecss": "^2.1.0",
     "@nestjs/common": "^6.7.2",
     "@nestjs/core": "^6.7.2",
     "@nestjs/platform-express": "^6.7.2",

@@ -48,15 +48,6 @@
   }
 </script>
 
-<style>
-  .c-label {
-    @apply border m-1 rounded-md px-1 items-center h-6 text-sm;
-  }
-  .c-label-selected {
-    @apply bg-red-600 text-white;
-  }
-</style>
-
 {#each font_list as font, i}
   {@html "<style>"+font.css+'.'+font.name+"{font-family:"+font.family+"}</style>"}
 {/each}
