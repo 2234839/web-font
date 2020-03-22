@@ -17,7 +17,7 @@ export class AppService {
   }
   async font_min(text: string, font: string,server_url:string) {
     /** 因为 text 为 空或者是空格之类的 会导致 fontmin 运算很久 */
-    text='●'
+    text+='●'
     const srcPath = `${font_src}${font}.ttf`; // 字体源文件
     const outPath = `asset/font/${Date.now()}/`;
     const destPath = `./${outPath}`; // 输出路径
