@@ -1,19 +1,21 @@
 <script>
   import { writable } from 'svelte/store';
-  import { get_font, get_font_list,server } from './req';
+  import { get_font, get_font_list,server,post_fontmin } from './req';
   /** 可用的字体列表  {id:number,name:string:selected:undefined | boolen,css:undefined|string}*/
   $: font_list = [];
   get_font_list().then(r => {
     font_list = r.map(ttf => ({ name: ttf.replace(/\.ttf$/, '') }));
   });
   /** 选择的文字 */
-  let text = '';
+  let text = '在此输入需要提取的文字\n在右侧选择字体\n然后点击下方的生成字体按钮';
+  /** 请求方式 */
+  let request_method="post"
   /** 用于测试动态生成接口 */
   let generate_fonts_dynamically=`<style>
       @font-face {
               font-family: "test";
               src:
-                  url("${location.pathname}generate_fonts_dynamically.ttf?temp=true&font=优设标题黑&text=优设标题黑(直接改这里和前面的字体名看效果)") format("truetype");
+                  url("${server}generate_fonts_dynamically.ttf?temp=true&font=优设标题黑&text=优设标题黑(直接改这里和前面的字体名看效果)") format("truetype");
               font-style: normal;
               font-weight: normal;
           }
@@ -21,22 +23,39 @@
 </style>`
   $: selected_font = font_list.filter(font => font.selected);
   function generate_font() {
-    selected_font.forEach(font => {
-      get_font(font.name, text)
-        .then(r => {
-          r=r.replace(/\/\/.*?\//g,server)
-
-          const family = r.match(/font-family: "(.*)"/)[1];
-          font.css = r;
-          font.family = family;
-          font.zip=server+r.match(/(asset\/font\/\d+\/)/)[0]+'asset.zip'
-          /** 因为要触发其他更新则必须对这个变量重新赋值 */
-          font_list = font_list;
+    if('post'===request_method){
+      /** 使用 post 请求，单请求方式 */
+      post_fontmin(
+        selected_font.map(f=>({
+          font:f.name, text
+        }))
+      ).then(res=>{
+        selected_font.forEach(font=>{
+          let r=res.find(o=>o.font===font.name).css
+          font_processing(font,r)
         })
-        .catch(e => {
-          console.log(e);
-        });
-    });
+      })
+    }
+    if('get'===request_method){
+      /** 使用 get 请求，多请求方式 */
+      selected_font.forEach(font => {
+        get_font(font.name, text)
+          .then(r => {
+            font_processing(font,r)
+          })
+      });
+    }
+
+    function font_processing(font,r) {
+      r=r.replace(/\/\/.*?\//g,server)
+
+      const family = r.match(/font-family: "(.*)"/)[1];
+      font.css = r;
+      font.family =  family;
+      font.zip=server+r.match(/(asset\/font\/\d+\/)/)[0]+'asset.zip'
+      /** 因为要触发其他更新则必须对这个变量重新赋值 */
+      font_list = font_list;
+    }
   }
   function copy(str) {
     var input = document.getElementById("copy_box");
@@ -57,7 +76,7 @@
   <textarea
     bind:value={text}
     class="border flex-1 m-1"
-    placeholder="在此输入需要提取的文字"
+    placeholder="在此输入需要提取的文字 在右侧选择字体 然后点击下方的生成字体按钮"
     cols="40"
     rows="3" />
   <div class="flex-1 m-1 flex flex-wrap">
@@ -73,9 +92,25 @@
 </div>
 
 <div class="flex">
-  <div on:click={generate_font}  class="bg-red-200 text-red-600 rounded-md px-1 hover:bg-red-400 hover:text-white duration-75">
+  <div on:click={generate_font}  class="bg-red-200 text-red-600 rounded-md px-2 hover:bg-red-400 hover:text-white duration-75 flex items-center shadow-md">
     生成字体
   </div>
+
+  <div class="flex border ml-2 items-end">
+    <div
+      on:click={e => request_method="post"}
+      class="c-label {request_method==="post" ? 'c-label-selected' : ''}">
+      使用 post 请求
+    </div>
+    <div
+      on:click={e => request_method="get"}
+      class="c-label {request_method==="get" ? 'c-label-selected' : ''}">
+      使用 get 请求
+    </div>
+    <div class="text-sm">* 具体区别请打开控制台查看请求</div>
+  </div>
+
+
 </div>
 
 {#each selected_font as font, i}
@@ -94,7 +129,7 @@
 
 
 <h2 class="text-lg text-center my-3  font-bold"> 动态生成字体（generate_fonts_dynamically 接口）</h2>
-<p>使用如下的方式引入，则可以直接使用</p>
+<p class="ml-1">使用如下的方式引入，则可以直接使用</p>
 <textarea
   bind:value={generate_fonts_dynamically}
   class="border flex-1 m-1 w-full text-lg"

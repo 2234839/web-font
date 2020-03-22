@@ -35,4 +35,5 @@ lerna-debug.log*
 
 .cache
 dist
-asset
+asset/font
+asset/dynamically

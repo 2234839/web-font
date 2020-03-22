@@ -1,10 +1,11 @@
-export const server='//'+location.host+location.pathname
-export function get_font(font:string, text:string) {
+export const server = '//' + location.host + location.pathname;
+/** get 方式压缩字体 */
+export function get_font(font: string, text: string) {
   return new Promise((rs, re) => {
     var xhr = new XMLHttpRequest();
     xhr.addEventListener('readystatechange', function() {
       if (this.readyState === 4) {
-        rs(JSON.parse(this.responseText)[0]);
+        rs(this.responseText);
       }
     });
     xhr.open(
@@ -13,11 +14,27 @@ export function get_font(font:string, text:string) {
         font,
       )}&text=${encodeURIComponent(text)}`,
     );
-    xhr.onerror=re
+    xhr.onerror = re;
     xhr.send();
-  })
+  });
 }
-export function get_font_list(font:string, text:string) {
+/** post 方式压缩字体 */
+export function post_fontmin(par:{font:string,text:string}[]) {
+  return new Promise((rs, re) => {
+    var data = JSON.stringify(par);
+    var xhr = new XMLHttpRequest();
+    xhr.addEventListener('readystatechange', function() {
+      if (this.readyState === 4) {
+        rs(JSON.parse(this.responseText) );
+      }
+    });
+    xhr.open('POST', `${server}fontmin`);
+    xhr.setRequestHeader('Content-Type', 'application/json');
+    xhr.onerror = re;
+    xhr.send(data);
+  });
+}
+export function get_font_list(font: string, text: string) {
   return new Promise((rs, re) => {
     var xhr = new XMLHttpRequest();
     xhr.addEventListener('readystatechange', function() {
@@ -25,11 +42,8 @@ export function get_font_list(font:string, text:string) {
         rs(JSON.parse(this.responseText));
       }
     });
-    xhr.open(
-      'GET',
-      `${server}font_list`,
-    );
-    xhr.onerror=re
+    xhr.open('GET', `${server}font_list`);
+    xhr.onerror = re;
     xhr.send();
-  })
+  });
 }

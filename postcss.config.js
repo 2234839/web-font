@@ -9,7 +9,7 @@ const purgecss = require('@fullhuman/postcss-purgecss')({
     './static/*.svelte',
     './static/*.js',
     './static/*.ts',
-    // etc.
+    `111 `
   ],
 
   // Include any special characters you're using in this regular expression

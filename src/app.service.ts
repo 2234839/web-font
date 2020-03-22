@@ -5,10 +5,18 @@ import { join } from 'path';
 import crypto from 'crypto';
 import { config } from './config';
 import { promises as fs } from 'fs';
+import { req_par } from './req.decorator';
+
+const font_src="./asset/font_src/"
+
 @Injectable()
 export class AppService {
-  font_min(text: string, font: string) {
-    const srcPath = `./src/font/${font}.ttf`; // 字体源文件
+  font_list() {
+    const font_dir = join(__dirname, `../../${font_src}`);
+    return fs.readdir(font_dir);
+  }
+  font_min(text: string, font: string,server_url:string) {
+    const srcPath = `${font_src}${font}.ttf`; // 字体源文件
     const outPath = `asset/font/${Date.now()}/`;
     const destPath = `./${outPath}`; // 输出路径
     // 初始化
@@ -22,7 +30,7 @@ export class AppService {
       .use(Fontmin.ttf2eot()) // eot 转换插件
       .use(Fontmin.ttf2woff()) // woff 转换插件
       .use(Fontmin.ttf2svg()) // svg 转换插件
-      .use(Fontmin.css({ fontPath: `${config.web_font_path}${outPath}` })) // css 生成插件
+      .use(Fontmin.css({ fontPath: `${server_url}${outPath}` })) // css 生成插件
       .dest(destPath); // 输出配置
 
     // 执行
@@ -36,7 +44,7 @@ export class AppService {
             .filter(f =>
               (f.history[f.history.length - 1] as string).endsWith('.css'),
             )
-            .map(f => f._contents.toString());
+            .map(f => f._contents.toString())[0];
           zip(
             join(__dirname, '../../', destPath),
             join(__dirname, '../../', destPath, 'asset.zip'),
@@ -58,7 +66,7 @@ export class AppService {
     const hash = crypto.createHash('md5');
     hash.update(`${type}${font}${text}`);
     const hash_str = hash.digest('hex');
-    const srcPath = `./src/font/${font}.ttf`; // 字体源文件
+    const srcPath = `${font_src}${font}.ttf`; // 字体源文件
     const outPath = `asset/dynamically/${hash_str}`;
     const destPath = `./${outPath}`; // 输出路径
 

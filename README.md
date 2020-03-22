@@ -41,7 +41,7 @@ ui 需要展现一些特定的字体，但直接引入字体包又过大，于�
 }
 ```
 
-3.将 ttf 的字体包放置在 ./src/font/ 目录下自然可以检测到新的可用字体，无需重启服务
+3.将 ttf 的字体包放置在 ./asset/font_src/ 目录下自然可以检测到新的可用字体，无需重启服务
 
 ![路径预览](./doc_img/路径展示.jpg)
 
@@ -61,6 +61,11 @@ ui 需要展现一些特定的字体，但直接引入字体包又过大，于�
 
 如图可见每个返回的字体资源，访问即可下载。另外在访问该目录下的 asset.zip 可以直接下载全部的文件,生成的资源目录结构见下图
 
+![fontmin](./doc_img/api/fontmin_post.jpg)
+
+注意，此接口是还支持 post 方式访问的，这样可以一次请求多个类型的字体文件，而且不会如同 get 方法那样有长度限制
+
+
 ![生成的资源.jpg](./doc_img/生成的资源.jpg)
 
 ### 动态生成字体
@@ -73,7 +78,9 @@ ui 需要展现一些特定的字体，但直接引入字体包又过大，于�
 
 ## 写项目时遇到的问题
 
-使用 svelte https://github.com/DeMoorJasper/parcel-plugin-svelte 通过这个插件使用 parcel 然后报 new 的错 需要限制 编译的版本，在package.json browserslist 字段限制一下版本就好
+1. 使用 svelte https://github.com/DeMoorJasper/parcel-plugin-svelte 通过这个插件使用 parcel 然后报 new 的错 需要限制 编译的版本，在package.json browserslist 字段限制一下版本就好
+
+2. parcel 对 post purgecss 支持好像有问题，需要修改 postcss.config.js 文件他才能正确的删除样式
 
 ## 启动
 
