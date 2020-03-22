@@ -15,7 +15,9 @@ export class AppService {
     const font_dir = join(__dirname, `../../${font_src}`);
     return fs.readdir(font_dir);
   }
-  font_min(text: string, font: string,server_url:string) {
+  async font_min(text: string, font: string,server_url:string) {
+    /** 因为 text 为 空或者是空格之类的 会导致 fontmin 运算很久 */
+    text='●'
     const srcPath = `${font_src}${font}.ttf`; // 字体源文件
     const outPath = `asset/font/${Date.now()}/`;
     const destPath = `./${outPath}`; // 输出路径
@@ -63,6 +65,7 @@ export class AppService {
     temp: string,
     type: string,
   ) {
+    text+='●'
     const hash = crypto.createHash('md5');
     hash.update(`${type}${font}${text}`);
     const hash_str = hash.digest('hex');
