@@ -18,7 +18,6 @@
                   url("${server}generate_fonts_dynamically.ttf?temp=true&font=优设标题黑&text=优设标题黑(直接改这里和前面的字体名看效果)") format("truetype");
               font-style: normal;
               font-weight: normal;
-          }
       }
 </style>`
   $: selected_font = font_list.filter(font => font.selected);
