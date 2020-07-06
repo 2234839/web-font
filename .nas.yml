@@ -1,0 +1,4 @@
+nasMappings:
+  llej-service:
+    - localNasDir: node_modules
+      remoteNasDir: /mnt/auto/node_modules
