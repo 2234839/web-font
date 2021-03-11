@@ -20,6 +20,6 @@ jobs:
       - if: ${{ github.ref == 'refs/heads/pre' }}
         env: ${{ secrets }}
         run: npx malagu deploy -m pre
-      - if: ${{ github.ref != 'refs/heads/master' && github.ref != 'refs/heads/pre' }}
-        env: ${{ secrets }}
-        run: npx malagu deploy -m test
+      # - if: ${{ github.ref != 'refs/heads/master' && github.ref != 'refs/heads/pre' }}
+      #   env: ${{ secrets }}
+      #   run: npx malagu deploy -m test

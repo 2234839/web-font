@@ -1,36 +1,14 @@
 {
   "private": true,
   "name": "web-font-master",
-  "keywords": [
-    "malagu-component"
-  ],
   "workspaces": [
-    "projects/*"
+    "apps/*"
   ],
   "version": "0.0.0",
   "license": "MIT",
-  "files": [
-    "lib",
-    "src"
-  ],
-  "dependencies": {
-    "@malagu/fc-adapter": "latest",
-    "@malagu/mvc": "latest",
-    "@malagu/serve-static": "latest"
-  },
-  "devDependencies": {
-    "@malagu/cli": "latest",
-    "rimraf": "^2.6.3"
-  },
   "scripts": {
-    "clean": "rimraf lib dist .malagu",
-    "build": "malagu build && yarn 前端build",
-    "start": "malagu serve",
     "前端dev": "yarn workspace frontend dev",
-    "前端build": "yarn workspace frontend build",
-    "deploy": "malagu deploy -m test",
-    "deploy:test": "malagu deploy -m test",
-    "deploy:pre": "malagu deploy -m pre",
-    "deploy:prod": "malagu deploy -m prod"
+    "后端dev": "yarn workspace backend start",
+    "deploy:prod": "yarn workspace frontend build && yarn workspace backend deploy:prod"
   }
 }

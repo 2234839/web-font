@@ -32,6 +32,7 @@ $ yarn deploy:prod      # 部署到线上环境
 
 ```
 
+部署到阿里云 cn-qingdao
 ## 关于 Malagu Framework
 
 Malagu 是基于 TypeScript 的 Serverless First、组件化、平台无关的渐进式应用框架。

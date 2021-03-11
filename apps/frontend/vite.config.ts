@@ -5,7 +5,7 @@ import vue from "@vitejs/plugin-vue";
 export default defineConfig({
   plugins: [vue()],
   build: {
-    outDir: "../../.malagu/frontend/dist/",
+    outDir: "../backend/.malagu/frontend/dist/",
     emptyOutDir: true,
   },
 });

@@ -1,0 +1,13 @@
+targets:
+  - backend
+
+malagu:
+  # serve-static:
+  #   root: .malagu/frontend/dist
+
+  faas-adapter:
+    customDomain:
+      name: webfontserverless.shenzilong.cn
+    service:
+      name: web_font # 默认值是 malagu
+
