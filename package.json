@@ -24,7 +24,7 @@
   },
   "scripts": {
     "clean": "rimraf lib dist .malagu",
-    "build": "malagu build",
+    "build": "malagu build && yarn 前端build",
     "start": "malagu serve",
     "前端dev": "yarn workspace frontend dev",
     "前端build": "yarn workspace frontend build",
