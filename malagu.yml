@@ -1,2 +1,6 @@
 targets:
   - backend
+
+malagu:
+  serve-static:
+    root: .malagu/frontend/dist

@@ -1,11 +1,12 @@
-import { Controller, Get, Text } from '@malagu/mvc/lib/node';
+import { Controller, Get, Text } from "@malagu/mvc/lib/node";
 
 @Controller()
 export class HomeController {
-    
-    @Get()
-    @Text()
-    home(): string {
-        return 'Welcome to Malagu';
-    }
+  @Get("/12")
+  @Text()
+  home(): string {
+    console.log(222);
+
+    return "Welcome to Malagu";
+  }
 }
