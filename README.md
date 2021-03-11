@@ -1,103 +1,93 @@
-# web font 字体裁剪工具
+# 开发说明
 
-## 起因
+## 安装依赖
 
-ui 需要展现一些特定的字体，但直接引入字体包又过大，于是想到了裁剪字体，一开始想的使用「字蛛」但他是针对静态网站的，而且实际他会多出许多英文的，估计是直接将源码中存在的文字都算进去了。
-后来又找到阿里的「webfont」 但他的字体有限，项目又不开源，所以自己写了这个
-
-## 尝试
-
-[web font 在线站点](https://webfont.shenzilong.cn/)
-
-请注意，由于这个服务器比较差，所以访问可能比较慢，且因为服务器空间问题我会不定时的清空生成的资源，所以请不要使用这个站点生成的在线资源，如有需要应当自行布设
-
-## 目的与功能
-
-1.裁剪字体包使其仅包含选中的字体
-
-例如 如下图生成的字体包仅包含 「天地无极乾坤借法」
-![界面预览](./doc_img/页面截图.jpg)
-
-<video src="./doc_img/功能演示.mkv" controls="controls" width:100% height:auto></video>
-
-其体积自然十分之小
-
-![体积展示](./doc_img/体积展示.jpg)
-
-2.另外可以生成 css 直接复制可用，部署在公网便可永久访问
-
-例如
-
-```css
-@font-face {
-    font-family: "QIJIC";
-    src: url("http://127.0.0.1:3000/asset/font/1584680576469/令东齐伋复刻体.eot"); /* IE9 */
-    src: url("http://127.0.0.1:3000/asset/font/1584680576469/令东齐伋复刻体.eot?#iefix") format("embedded-opentype"), /* IE6-IE8 */
-    url("http://127.0.0.1:3000/asset/font/1584680576469/令东齐伋复刻体.woff") format("woff"), /* chrome, firefox */
-    url("http://127.0.0.1:3000/asset/font/1584680576469/令东齐伋复刻体.ttf") format("truetype"), /* chrome, firefox, opera, Safari, Android, iOS 4.2+ */
-    url("http://127.0.0.1:3000/asset/font/1584680576469/令东齐伋复刻体.svg#QIJIC") format("svg"); /* iOS 4.1- */
-    font-style: normal;
-    font-weight: normal;
-}
-```
-
-3.将 ttf 的字体包放置在 ./asset/font_src/ 目录下自然可以检测到新的可用字体，无需重启服务
-
-![路径预览](./doc_img/路径展示.jpg)
-
-4.提供 zip 的整体下载方案
-
-![下载展示](./doc_img/下载展示.jpg)
-
-## 提供的服务
-
-### 查询可用字体列表
-
-![font_list](./doc_img/api/font_list.jpg)
-
-### 生成压缩字体包
-
-![fontmin](./doc_img/api/fontmin.jpg)
-
-如图可见每个返回的字体资源，访问即可下载。另外在访问该目录下的 asset.zip 可以直接下载全部的文件,生成的资源目录结构见下图
-
-![fontmin](./doc_img/api/fontmin_post.jpg)
-
-注意，此接口是还支持 post 方式访问的，这样可以一次请求多个类型的字体文件，而且不会如同 get 方法那样有长度限制
-
-
-![生成的资源.jpg](./doc_img/生成的资源.jpg)
-
-### 动态生成字体
-
-![generate_fonts_dynamically](./doc_img/api/generate_fonts_dynamically.jpg)
-
-#### 请注意
-
-只支持生成 .ttf .eot .woff .svg 这几种格式
-
-## 写项目时遇到的问题
-
-1. 使用 svelte https://github.com/DeMoorJasper/parcel-plugin-svelte 通过这个插件使用 parcel 然后报 new 的错 需要限制 编译的版本，在package.json browserslist 字段限制一下版本就好
-
-2. parcel 对 post purgecss 支持好像有问题，需要修改 postcss.config.js 文件他才能正确的删除样式
-
-## 启动
+以下使用 yarn 工具来说明，你也可以使用 npm。
 
 ```bash
-npm i
-npm run build
-npm run start
+# 通过 malagu init 初始化应用的时候已经自动安装了依赖，所以你只需要安装你额外需要的依赖即可
+
+$ yarn add xxxx
 ```
 
-默认的访问地址是  http://127.0.0.1:3000
+## 本地运行
 
-## 鸣谢
+```shell
+# 启动本地服务，端口默认 3000
+# 在终端中会输出本地服务的 URL 链接
 
-[字体天下](http://www.fonts.net.cn/commercial-free-32767/fonts-zh-1.html)
+$ yarn start  # 或者执行 malagu serve 命令
+```
 
-[fontmin](https://github.com/ecomfe/fontmin)
+## 构建部署
 
-## License
+模板默认提供了四套隔离环境：本地（local）、测试（test）、预发（pre）、线上（prod）。每个环境对于这一个 malagu 配置文件（可选），类似 malagu-test.yml。而 malagu.yml 文件一般用于放所有环境的公共配置。第一次部署的时候可能会提示你填写相关云厂商 ak 信息。如果是 Vercel 云平台的模板，会提示你需要登录到 Vercel 平台。你也可以在项目通过 .env 提供云厂商的 ak 信息。
 
-MIT © [崮生](https://shenzilong.cn/关于/mit.html)
+```bash
+
+$ yarn deploy           # 部署到测试环境
+$ yarn deploy:test      # 部署到测试环境
+$ yarn deploy:pre       # 部署到预发环境
+$ yarn deploy:prod      # 部署到线上环境
+
+```
+
+## 关于 Malagu Framework
+
+Malagu 是基于 TypeScript 的 Serverless First、组件化、平台无关的渐进式应用框架。
+
+
+### 特征
+
+- 约定大于配置，零配置，开箱即用
+- TypeScript 版 Spring Boot
+- Serverless First
+- 平台不锁定
+- 支持前后端一体化，前端框架不锁定
+- 支持微服务
+- 组件化，渐进式
+- 命令行工具插件化
+- 依赖注入
+- 面向切面编程（AOP）
+- 集成了流行的 ORM 框架，使用装饰器声明式事务管理
+- 支持 OIDC 认证
+- 支持 OAuth2 授权
+- 使用 rxjs 管理状态
+- 提供 REST 和 RPC 两种接口风格
+
+Malagu 名字由来：在我的家乡，谐音“吗啦咕”是小石头的意思，小石头堆砌起来可以建成高楼大厦、道路桥梁，而 Malagu 组件编排可以实现千变万化的应用。
+
+### 快速开始
+
+```bash
+# 安装命令行工具
+npm install -g yarn
+npm install -g @malagu/cli
+
+# 初始化
+malagu init project-name
+cd project-name            # 进入项目根目录
+
+# 运行
+malagu serve
+
+# 部署
+malagu deploy
+```
+
+### 文档
+
+- [介绍](https://www.yuque.com/cellbang/malagu/puw7p0)
+- [快速开始](https://www.yuque.com/cellbang/malagu/qmq79k)
+- [命令行工具](https://www.yuque.com/cellbang/malagu/xbfpir)
+- [控制器](https://www.yuque.com/cellbang/malagu/cbgl7g)
+- [数据库操作](https://www.yuque.com/cellbang/malagu/ztbcwq)
+- [微服务](https://www.yuque.com/cellbang/malagu/wtiy6s)
+- [认证与授权](https://www.yuque.com/cellbang/malagu/qhl0km)
+- [云平台适配](https://www.yuque.com/cellbang/malagu/hh1mng)
+- [依赖注入](https://www.yuque.com/cellbang/malagu/fw025h)
+- [组件设计](https://www.yuque.com/cellbang/malagu/qaqomw)
+- [前端架构](https://www.yuque.com/cellbang/malagu/vl9wbw)
+- [React 开发](https://www.yuque.com/cellbang/malagu/fum7u8)
+- [前后端一体化开发](https://www.yuque.com/cellbang/malagu/fi6lxi)
+
