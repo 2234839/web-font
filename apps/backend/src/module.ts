@@ -1,5 +1,4 @@
-import './home-controller';
+import './fontmin';
 import { autoBind } from '@malagu/core';
-console.log("app start");
 
 export default autoBind();

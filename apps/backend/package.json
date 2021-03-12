@@ -12,7 +12,9 @@
   "dependencies": {
     "@malagu/fc-adapter": "latest",
     "@malagu/mvc": "latest",
-    "@malagu/serve-static": "latest"
+    "@malagu/serve-static": "latest",
+    "fontmin": "^0.9.8",
+    "zip-a-folder": "^0.1.0"
   },
   "devDependencies": {
     "@malagu/cli": "latest",
