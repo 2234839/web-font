@@ -1,0 +1,11 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+a {
+  @apply underline hover:text-blue-500;
+}
+
+input {
+  @apply border;
+}
