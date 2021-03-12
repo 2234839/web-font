@@ -111,6 +111,6 @@
   #app,
   textarea,
   input {
-    font-size: 1.3em;
+    @apply md:text-xl;
   }
 </style>
