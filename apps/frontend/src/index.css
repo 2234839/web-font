@@ -3,9 +3,10 @@
 @tailwind utilities;
 
 a {
-  @apply underline hover:text-blue-500;
+  @apply underline text-blue-800 hover:text-blue-500;
 }
 
-input {
+input,
+select {
   @apply border;
 }

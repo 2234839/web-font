@@ -3,8 +3,8 @@ targets:
 
 malagu:
   serve-static:
-    # apiPath: /*
-    apiPath: /api/*
+    apiPath: /*
+    # apiPath: /api/*
 
   faas-adapter:
     customDomain:

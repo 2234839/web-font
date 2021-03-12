@@ -1,4 +1,4 @@
-import { Controller, File, Get, Query } from "@malagu/mvc/lib/node";
+import { Controller, File, Get, Post, Query } from "@malagu/mvc/lib/node";
 import { Context } from "@malagu/web/lib/node";
 import { createHash } from "crypto";
 //@ts-ignore
@@ -87,5 +87,10 @@ export class FontMinController {
         }
       });
     });
+  }
+
+  @Post("font_list")
+  async font_list() {
+    return fs.readdir(font_src);
   }
 }
