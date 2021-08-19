@@ -7,8 +7,9 @@ ui 需要展现一些特定的字体，但直接引入字体包又过大，于�
 
 ## 尝试
 
-[web font 在线站点](https://webfont.shenzilong.cn/)
-[web font serverless 版在线尝试地址](http://webfontserverless.shenzilong.cn/)
+- [web font 在线站点](https://webfont.shenzilong.cn/)
+
+- 基于 [malagu](https://github.com/cellbang/malagu) 搭建的 [web font **serverless** 版在线尝试地址](http://webfontserverless.shenzilong.cn/) ， [serverless代码分支](https://github.com/2234839/web-font/tree/serverless)
 
 请注意，由于这个服务器比较差，所以访问可能比较慢，且因为服务器空间问题我会不定时的清空生成的资源，所以请不要使用这个站点生成的在线资源，如有需要应当自行布设
 
