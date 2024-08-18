@@ -1,10 +1,9 @@
+import fs, { readFile } from "fs/promises";
 import * as path from "path";
-import fs from "fs/promises";
-import type { cMiddleware } from "./server/req_res";
-import { mimeTypes } from "./server/mime_type";
-import { cRouter, SimpleHttpServer } from "./server/server";
 import { fontSubset } from "./font_util/font";
-import { readFile, writeFile } from "fs/promises";
+import { mimeTypes } from "./server/mime_type";
+import type { cMiddleware } from "./server/req_res";
+import { SimpleHttpServer } from "./server/server";
 const ROOT_DIR = path.resolve("dist"); // 静态文件目录
 const staticFileMiddleware: cMiddleware = async function (req, res, next) {
   if (req.method === "GET") {

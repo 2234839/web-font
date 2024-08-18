@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "build_backend": "tsup && ./llrt2 compile ./dist_backend/app.cjs ./dist_backend/app.lrt",
+    "docker": "docker build -t web-font:latest .",
     "preview": "vite preview"
   },
   "dependencies": {

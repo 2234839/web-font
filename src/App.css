@@ -1,6 +1,6 @@
 @font-face {
   font-family: "CustomFont";
-  src: url("http://localhost:8087/api.ttf?font=令东齐伋复刻体.ttf&text=令东齐伋复刻体问藏书房") format("truetype");
+  src: url("/api.ttf?font=令东齐伋复刻体.ttf&text=令东齐伋复刻体问藏书房") format("truetype");
   font-weight: normal;
   font-style: normal;
 }

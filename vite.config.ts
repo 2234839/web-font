@@ -4,4 +4,7 @@ import {  } from "fs";
 
 export default defineConfig({
   plugins: [solid()],
+  server:{
+    host:"0.0.0.0"
+  }
 })
