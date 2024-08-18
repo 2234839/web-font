@@ -1,13 +1,14 @@
 {
   "name": "webfont",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
     "build_backend": "tsup && ./llrt2 compile ./dist_backend/app.cjs ./dist_backend/app.lrt",
-    "docker": "docker build -t web-font:latest .",
+    "docker_build": "docker build -t llej0/web-font:${npm_package_version} -t llej0/web-font:latest .",
+    "docker_push": "docker push llej0/web-font:${npm_package_version} && docker push llej0/web-font:latest",
     "preview": "vite preview"
   },
   "dependencies": {

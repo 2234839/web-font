@@ -25,5 +25,6 @@ dist-ssr
 
 llrt*
 font/*
+*.tar
 
 dist_backend
