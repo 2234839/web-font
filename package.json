@@ -1,0 +1,22 @@
+{
+  "name": "webfont",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "fonteditor-core": "^2.4.1",
+    "solid-js": "^1.8.20"
+  },
+  "devDependencies": {
+    "@types/node": "^22.4.0",
+    "tsup": "^8.2.4",
+    "typescript": "^5.5.3",
+    "vite": "^5.4.1",
+    "vite-plugin-solid": "^2.10.2"
+  }
+}
