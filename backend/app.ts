@@ -3,7 +3,9 @@ import { mimeTypes } from "./server/mime_type";
 import type { cMiddleware } from "./server/req_res";
 import { SimpleHttpServer } from "./server/server";
 import { path_join, readFile, stat } from "./interface";
-import "./server/tjs";
+if (global.tjs) {
+  import("./server/tjs");
+}
 const ROOT_DIR = "dist"; // 静态文件目录
 
 const logMiddleware: cMiddleware = async (req, res, next) => {
@@ -14,28 +16,7 @@ const logMiddleware: cMiddleware = async (req, res, next) => {
   return r;
 };
 const reqs: Promise<unknown>[] = [];
-const limitMiddleware: cMiddleware = async (req, res, next) => {
-  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-  while (reqs.length > 5) {
-    if (req.socket.destroyed) {
-      // 连接销毁，不再执行
-      console.log("destroyed");
 
-      return { req, res };
-    }
-    await sleep(50);
-  }
-
-  const r = Promise.resolve(next(req, res));
-  reqs.push(r);
-  r.finally(() => {
-    const index = reqs.indexOf(r);
-    if (index > -1) {
-      reqs.splice(index, 1);
-    }
-  });
-  return r;
-};
 const staticFileMiddleware: cMiddleware = async function (req, res, next) {
   let newRes: Response;
   if (req.method === "GET") {
@@ -83,28 +64,31 @@ const staticFileMiddleware: cMiddleware = async function (req, res, next) {
   return next(req, newRes);
 };
 const corsMiddleware: cMiddleware = async (req, res, next) => {
-  // 允许所有域跨域请求
-  res.headers["Access-Control-Allow-Origin"] = "*";
-  // 如果你只想允许特定域名：
-  // res.headers["Access-Control-Allow-Origin"] = "https://example.com";
-  // 允许常见的 HTTP 方法
-  res.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS";
-  // 允许的请求头
-  res.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization";
-
   // 如果是 OPTIONS 请求（预检请求），直接返回成功响应
   if (req.method === "OPTIONS") {
-    res.statusCode = 204;
-    res.headers["Content-Length"] = "0";
-    res.body = "";
     // 直接结束请求，不继续传递到下一个中间件
-    return { req, res };
+    return {
+      req,
+      res: new Response("", {
+        status: 204,
+        headers: {
+          "Content-Length": "0",
+        },
+      }),
+    };
   } else {
-    return next(req, res);
+    const newRes = await next(req, res);
+    // 允许所有域跨域请求
+    newRes.res.headers.append("Access-Control-Allow-Origin", "*");
+    // 如果你只想允许特定域名：
+    // res.headers["Access-Control-Allow-Origin"] = "https://example.com";
+    // 允许常见的 HTTP 方法
+    newRes.res.headers.append("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+    // 允许的请求头
+    newRes.res.headers.append("Access-Control-Allow-Headers", "Content-Type, Authorization");
+    return newRes;
   }
 };
-const fontCache: { [key: string]: any } = {};
-const textCache: { [key: string]: any } = {};
 const fontApiMiddleware: cMiddleware = async (req, res, next) => {
   if (!req.url.startsWith("/api")) return next(req, res);
   // 创建一个新的 URL 对象（需要一个完整的 URL，必须包含协议和主机）
@@ -117,7 +101,7 @@ const fontApiMiddleware: cMiddleware = async (req, res, next) => {
   }
   const path = `font/${font}`;
   const fontType = path.split(".").pop() as "ttf";
-  const oldFontBuffer = fontCache[path] ?? new Uint8Array(await readFile(path)).buffer;
+  const oldFontBuffer = new Uint8Array(await readFile(path)).buffer;
 
   const outType = "ttf";
   const newFont = await fontSubset(oldFontBuffer, text, {
@@ -140,7 +124,7 @@ const server = new SimpleHttpServer({ port: 8087 });
 server.use(
   logMiddleware,
   // limitMiddleware,
-  // corsMiddleware,
+  corsMiddleware,
   fontApiMiddleware,
   staticFileMiddleware,
 );
