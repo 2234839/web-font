@@ -25,6 +25,8 @@ dist-ssr
 
 llrt*
 font/*
+tjs
+app
 *.tar
 
 dist_backend

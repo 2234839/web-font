@@ -1,12 +1,14 @@
 {
   "compilerOptions": {
-    "target": "ES2022",
+    "target": "ES2023",
     "lib": [
-      "ES2023"
+      "ES2023","DOM"
+    ],
+    "typeRoots": [
+      "node_modules/@txikijs/types"
     ],
     "module": "ESNext",
     "skipLibCheck": true,
-    "types": [],
     /* Bundler mode */
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
@@ -21,6 +23,7 @@
   },
   "include": [
     "vite.config.ts",
-    "backend/*.ts"
-, "backend/server/mime_type.ts", "backend/server/server.ts"  ]
+    "backend/*.ts",
+    "backend/**/*.ts",
+  ]
 }

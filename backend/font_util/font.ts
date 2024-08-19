@@ -19,5 +19,8 @@ export const fontSubset = async (
   const newFont = optimizedFont.write({
     type: option.outType,
   });
-  return newFont as unknown as DataView;
+  if (typeof newFont !== "string") {
+    return new Uint8Array(newFont);
+  }
+  return newFont;
 };

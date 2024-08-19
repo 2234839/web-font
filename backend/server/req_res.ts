@@ -1,21 +1,7 @@
-// 解析请求
-export function parseRequest(requestBuffer: string): cRequest {
-  const [requestLine] = requestBuffer.split("\r\n");
-  const [method, url] = requestLine.split(" ");
-  return { method, url };
-}
 // 请求和响应模型
-export interface cRequest {
-  method: string;
-  url: string;
-}
+export type cRequest = Request;
 
-export interface cResponse {
-  statusCode: number;
-  headers: Record<string, string>;
-  body: Buffer | string;
-}
-
+export type cResponse = Response;
 export type cNext = (
   req: cRequest,
   res: cResponse,

@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "vite build",
     "build_backend": "tsup && ./llrt2 compile ./dist_backend/app.cjs ./dist_backend/app.lrt",
     "docker_build": "docker build -t llej0/web-font:${npm_package_version} -t llej0/web-font:latest .",
     "docker_push": "docker push llej0/web-font:${npm_package_version} && docker push llej0/web-font:latest",
@@ -16,6 +16,7 @@
     "solid-js": "^1.8.20"
   },
   "devDependencies": {
+    "@txikijs/types": "^24.6.0",
     "@types/node": "^22.4.0",
     "tsup": "^8.2.4",
     "typescript": "^5.5.3",

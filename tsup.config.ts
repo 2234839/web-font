@@ -7,5 +7,6 @@ export default defineConfig({
   clean: true,
   bundle: true,
   noExternal: [/.*/],
-  outDir:"dist_backend"
+  external: ["@txikijs/types"],
+  outDir: "dist_backend",
 });

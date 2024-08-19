@@ -3,7 +3,8 @@ import { createMemo, createSignal } from "solid-js";
 function App() {
   const [text, set_text] = createSignal("天地无极，乾坤借法");
 
-  const serverPath = import.meta.env.DEV ? "/" : "https://webfont.shenzilong.cn/";
+  // const serverPath = import.meta.env.DEV ? "/" : "https://webfont.shenzilong.cn/";
+  const serverPath = "/";
   const style = createMemo(
     () => `
   @font-face {

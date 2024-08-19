@@ -16,7 +16,7 @@ export function createTcpServer(handle: cNext) {
 
       // 如果收到请求头的结束标志，则处理请求
       if (requestBuffer.includes("\r\n\r\n")) {
-        const req = parseRequest(requestBuffer);
+        const req = parseRequest(requestBuffer, socket);
         const res: cResponse = { statusCode: 200, headers: {}, body: "" };
         try {
           // 处理请求

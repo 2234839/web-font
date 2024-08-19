@@ -15,6 +15,9 @@ importers:
         specifier: ^1.8.20
         version: 1.8.21
     devDependencies:
+      '@txikijs/types':
+        specifier: ^24.6.0
+        version: 24.6.0
       '@types/node':
         specifier: ^22.4.0
         version: 22.4.0
@@ -521,6 +524,9 @@ packages:
     resolution: {integrity: sha512-aJ1EJSuTdGnM6qbVC4B5DSmozPTqIag9fSzXRNNo+humQLG89XpPgdt16Ia56ORD7s+H8Pmyx44uczDQ0yDzpg==}
     cpu: [x64]
     os: [win32]
+
+  '@txikijs/types@24.6.0':
+    resolution: {integrity: sha512-BKQvQCUddJBVlAnBxdaaMpBhGKYUaaZVboRwasH6x8TMwMNOrRm+gHywUqLopHXLmIBevECg5L3pAjT2wS+iMg==}
 
   '@types/babel__core@7.20.5':
     resolution: {integrity: sha512-qoQprZvz5wQFJwMDqeseRXWv3rqMvhgpbXFfVyWhbx9X47POIA6i/+dXefEmZKoAgOaTdaIgNSMqMIU61yRyzA==}
@@ -1537,6 +1543,8 @@ snapshots:
 
   '@rollup/rollup-win32-x64-msvc@4.20.0':
     optional: true
+
+  '@txikijs/types@24.6.0': {}
 
   '@types/babel__core@7.20.5':
     dependencies:
