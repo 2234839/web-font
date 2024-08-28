@@ -3,8 +3,15 @@ import { mimeTypes } from "./server/mime_type";
 import type { cMiddleware } from "./server/req_res";
 import { SimpleHttpServer } from "./server/server";
 import { path_join, readFile, stat } from "./interface";
-if (global.tjs) {
+let release_name = global.tjs ? "tjs" : globalThis?.process?.release?.name;
+
+if (release_name === "tjs") {
   import("./server/tjs");
+} else if (release_name === "node" || release_name === "llrt") {
+  import("./server/node");
+}
+if (release_name === "llrt") {
+  import("./server/llrt");
 }
 const ROOT_DIR = "dist"; // 静态文件目录
 
@@ -15,12 +22,12 @@ const logMiddleware: cMiddleware = async (req, res, next) => {
   console.log(`[${t2 - t1}ms] ${req.url.split("?")[0]}`);
   return r;
 };
-const reqs: Promise<unknown>[] = [];
 
 const staticFileMiddleware: cMiddleware = async function (req, res, next) {
   let newRes: Response;
   if (req.method === "GET") {
-    const filePath = path_join(ROOT_DIR, req.url === "/" ? "index.html" : req.url);
+    const url = new URL(req.url);
+    const filePath = path_join(ROOT_DIR, url.pathname === "/" ? "index.html" : url.pathname);
     try {
       const stats = await stat(filePath);
 
@@ -90,9 +97,9 @@ const corsMiddleware: cMiddleware = async (req, res, next) => {
   }
 };
 const fontApiMiddleware: cMiddleware = async (req, res, next) => {
-  if (!req.url.startsWith("/api")) return next(req, res);
   // 创建一个新的 URL 对象（需要一个完整的 URL，必须包含协议和主机）
   const url = new URL(req.url, "http://test.com");
+  if (!url.pathname.startsWith("/api")) return next(req, res);
   const params = new URLSearchParams(url.search);
   const font = params.get("font") || "";
   const text = params.get("text") || "";

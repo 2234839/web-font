@@ -1,5 +1,4 @@
 import { cMiddleware, cRequest, cResponse, type cNext } from "./req_res";
-// import { createTcpServer } from "./tcp_server";
 // 配置
 // 路由器类
 export class cRouter {
@@ -28,18 +27,22 @@ export class SimpleHttpServer {
   private router: cRouter = new cRouter();
 
   constructor(options: { port: number; hostname?: string }) {
-    console.log(`Server is listening on port ${options.port}`);
+    let release_name = global.tjs ? "tjs" : globalThis?.process?.release?.name;
+    console.log("[release.name]", release_name);
     if (global.tjs) {
       this.tjsServer(options);
       return this;
     }
-    // const server = createTcpServer((req, res) => {
-    //   const r = this.router.handle(req, res);
-    //   return r;
-    // });
-    // server.listen(options.port, options.hostname, () => {
-    //   console.log(`Server is listening on port ${options.port}`);
-    // });
+    if (release_name === "llrt" || release_name == "node") {
+      import("./tcp_server").then((m) => {
+        const server = m.createTcpServer((socket) => {
+          connectionHandle(socket, (req, res) => this.router.handle(req, res));
+        });
+        server.listen(options.port, options.hostname, () => {
+          console.log(`Server is listening on port ${options.port}`);
+        });
+      });
+    }
   }
   private async tjsServer(options: { port: number; hostname?: string }) {
     const listener = (await global.tjs.listen(
@@ -48,7 +51,7 @@ export class SimpleHttpServer {
       options.port,
       {},
     )) as tjs.Listener;
-    // listener.localAddress;
+    console.log(`Server is listening on port ${options.port}`);
     for await (const connection of listener) {
       connectionHandle(connection, this.router.handle.bind(this.router));
     }
@@ -62,14 +65,21 @@ const decoder = new TextDecoder("utf-8");
 const encoder = new TextEncoder();
 // 请求头终止符
 const target = encoder.encode("\r\n\r\n");
-async function connectionHandle(connection: tjs.Connection, handle: cNext) {
+async function connectionHandle(
+  connection: {
+    readable: ReadableStream<Uint8Array>;
+    writable: WritableStream<Uint8Array>;
+    close: () => void;
+  },
+  handle: cNext,
+) {
   const { header, body } = await createStreamAfterTarget(connection.readable, target);
   if (!header) {
     return;
   }
   const httpHeaderText = decoder.decode(header);
   const httpHeader = parseHttpRequest(httpHeaderText);
-  const rawReq = new Request(httpHeader.url, {
+  const rawReq = new Request("http://" + httpHeader.headers["Host"] + httpHeader.url, {
     method: httpHeader.method,
     body: httpHeader.method === "GET" || httpHeader.method === "HEAD" ? undefined : body,
     headers: httpHeader.headers,
@@ -77,7 +87,6 @@ async function connectionHandle(connection: tjs.Connection, handle: cNext) {
   const rawRes = new Response();
 
   const { req, res } = await handle(rawReq, rawRes);
-
   const resWriter = connection.writable.getWriter();
   let headerText: string[] = [];
   res.headers.forEach((value, key) => {
@@ -86,12 +95,23 @@ async function connectionHandle(connection: tjs.Connection, handle: cNext) {
   const resHeaertText = `HTTP/1.1 ${res.status} OK\r\n${headerText.join("\r\n")}\r\n\r\n`;
   await resWriter.write(encoder.encode(resHeaertText));
   if (res.body) {
+    // node 运行时
+    // 释放写入器的锁定
+    resWriter.releaseLock();
+    console.log("[connection.writable.locked]", connection.writable.locked);
     // https://github.com/saghul/txiki.js/issues/646
     await res.body?.pipeTo(connection.writable);
   } else {
     // @ts-expect-error
-    await resWriter.write(res._bodyInit);
-    // await resWriter.write(encoder.encode(r));
+    if (res._bodyInit) {
+      // tjs 运行时
+      // @ts-expect-error
+      await resWriter.write(res._bodyInit);
+    } else {
+      // llrt 运行时
+      const buffer = new Uint8Array(await (await res.blob()).arrayBuffer());
+      await resWriter.write(buffer);
+    }
   }
   if (!resWriter.closed) {
     await resWriter.close();

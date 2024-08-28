@@ -13,7 +13,8 @@
   },
   "dependencies": {
     "fonteditor-core": "^2.4.1",
-    "solid-js": "^1.8.20"
+    "solid-js": "^1.8.20",
+    "web-streams-polyfill": "^4.0.0"
   },
   "devDependencies": {
     "@txikijs/types": "^24.6.0",
