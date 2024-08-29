@@ -14,13 +14,11 @@ export function createTcpServer(
         socket.on("data", (chunk) => {
           controller.enqueue(new Uint8Array(chunk));
         });
-
-        socket.on("end", () => {
-          controller.close();
-        });
-
         socket.on("error", (err) => {
           controller.error(err);
+        });
+        socket.on("close", () => {
+          controller.close();
         });
       },
       cancel() {

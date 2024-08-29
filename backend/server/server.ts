@@ -73,6 +73,7 @@ async function connectionHandle(
   },
   handle: cNext,
 ) {
+  // connection.readable.
   const { header, body } = await createStreamAfterTarget(connection.readable, target);
   if (!header) {
     return;

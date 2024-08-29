@@ -19,7 +19,8 @@ const logMiddleware: cMiddleware = async (req, res, next) => {
   const t1 = Date.now();
   const r = await next(req, res);
   const t2 = Date.now();
-  console.log(`[${t2 - t1}ms] ${req.url.split("?")[0]}`);
+  const url = new URL(req.url);
+  console.log(`[${t2 - t1}ms] ${url.pathname}`);
   return r;
 };
 
@@ -130,7 +131,6 @@ const fontApiMiddleware: cMiddleware = async (req, res, next) => {
 const server = new SimpleHttpServer({ port: 8087 });
 server.use(
   logMiddleware,
-  // limitMiddleware,
   corsMiddleware,
   fontApiMiddleware,
   staticFileMiddleware,
