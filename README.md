@@ -54,7 +54,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 100M       # 设置内存限制为100MB，根据实际需求来设置
+          memory: 900M       # 设置内存限制为900MB，根据实际需求来设置
     restart: on-failure      # 设置重启策略为 on-failure
 
 ```
@@ -65,9 +65,10 @@ services:
 
 ## 鸣谢
 
+[kekee000/fonteditor-core](https://github.com/kekee000/fonteditor-core)
+
 [字体天下](http://www.fonts.net.cn/commercial-free-32767/fonts-zh-1.html)
 
-[fontmin](https://github.com/ecomfe/fontmin)
 
 ## License
 
