@@ -98,7 +98,7 @@ const corsMiddleware: cMiddleware = async (req, res, next) => {
 };
 const fontApiMiddleware: cMiddleware = async (req, res, next) => {
   // 创建一个新的 URL 对象（需要一个完整的 URL，必须包含协议和主机）
-  const url = new URL(req.url, "http://test.com");
+  const url = new URL(req.url, "https://webfont.shenzilong.com");
   if (!url.pathname.startsWith("/api")) return next(req, res);
   const params = new URLSearchParams(url.search);
   const font = params.get("font") || "";

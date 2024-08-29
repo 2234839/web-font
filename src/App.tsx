@@ -1,4 +1,4 @@
-import { createMemo, createSignal } from "solid-js";
+import { createMemo, createSignal, type Accessor } from "solid-js";
 
 function App() {
   const [text, set_text] = createSignal("天地无极，乾坤借法");
@@ -19,6 +19,7 @@ function App() {
   }
 `,
   );
+  const throttledSetMemo = useThrottledMemo(() => style(), 1000);
   return (
     <div>
       <h1>
@@ -34,9 +35,27 @@ function App() {
       </div>
 
       <pre>{"<style>" + style() + "</style>"}</pre>
-      <style>{style()}</style>
+      <style>{throttledSetMemo()}</style>
     </div>
   );
 }
 
 export default App;
+
+function useThrottledMemo<T>(fn: () => T, delay: number): Accessor<T> {
+  const [throttledValue, setThrottledValue] = createSignal<T>(fn());
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+  createMemo(() => {
+    const value = fn();
+    if (timeoutId === null) {
+      setThrottledValue(value);
+      timeoutId = setTimeout(() => {
+        timeoutId = null;
+        setThrottledValue(fn());
+      }, delay);
+    }
+  });
+
+  return throttledValue;
+}
