@@ -49,9 +49,11 @@ function useThrottledMemo<T>(fn: () => T, delay: number): Accessor<T> {
   createMemo(() => {
     const value = fn();
     if (timeoutId === null) {
+      // @ts-expect-error
       setThrottledValue(value);
       timeoutId = setTimeout(() => {
         timeoutId = null;
+        // @ts-expect-error
         setThrottledValue(fn());
       }, delay);
     }
