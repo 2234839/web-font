@@ -10,8 +10,6 @@ function App() {
   @font-face {
     font-family: "CustomFont";
     src: url("${serverPath}api?font=令东齐伋复刻体.ttf&text=${text()}") format("truetype");
-    font-weight: normal;
-    font-style: normal;
   }
   input {
     color: red;
@@ -32,6 +30,7 @@ function App() {
           value={text()}
           onInput={(e) => set_text(e.target.value)}
         />
+        <div>{text()}</div>
       </div>
 
       <pre>{"<style>" + style() + "</style>"}</pre>
