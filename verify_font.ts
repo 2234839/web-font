@@ -18,6 +18,7 @@ const isBaseline = process.argv[2] === "baseline";
 const FONT_PATH = "font/令东齐伋复刻体.ttf";
 const FONT_NAME = "令东齐伋复刻体";
 const SIMILARITY_THRESHOLD = 0.98;
+const BASELINE_DIR = "benchmark_results";
 
 const raw = await readFile(FONT_PATH);
 const fontBuffer = new Uint8Array(raw).buffer;
@@ -135,15 +136,16 @@ function extractFontData(font: any) {
 
 /** 注册子集字体并返回 fontFamily 名 */
 async function registerSubsetFont(ttfBuffer: ArrayBuffer, counter: number): Promise<string> {
-  const fontPath = `verify_font_baseline/_verify_${counter}.ttf`;
+  const fontPath = `${BASELINE_DIR}/_verify_${counter}.ttf`;
   await writeFile(fontPath, Buffer.from(ttfBuffer));
   const familyName = `SubsetFont_${counter}`;
   FontLibrary.use(familyName, [fontPath]);
   return familyName;
 }
 
+await mkdir(BASELINE_DIR, { recursive: true });
+
 if (isBaseline) {
-  await mkdir("verify_font_baseline", { recursive: true });
   const baseline: Record<string, any> = {};
 
   for (const { text, label } of testCases) {
@@ -151,7 +153,7 @@ if (isBaseline) {
     const font = Font.create(fontBuffer, { type: "ttf", subset });
     const data = extractFontData(font);
 
-    await writeFile(`verify_font_baseline/${label}.ttf`, Buffer.from(data.buffer));
+    await writeFile(`${BASELINE_DIR}/${label}.ttf`, Buffer.from(data.buffer));
 
     /** 用完整字体和子集字体分别渲染，保存像素数据 */
     const fullPixels = renderText(FONT_NAME, text, 48);
@@ -172,10 +174,10 @@ if (isBaseline) {
     console.log(`  ${label}: glyf=${data.glyfCount}, output=${data.outputSize} bytes, ssim=${ssim.toFixed(4)}`);
   }
 
-  await writeFile("verify_font_baseline.json", JSON.stringify(baseline, null, 2));
+  await writeFile(`${BASELINE_DIR}/verify_baseline.json`, JSON.stringify(baseline, null, 2));
   console.log("\n基准已生成（含完整字体+子集字体渲染像素数据及相似度）");
 } else {
-  const baselineRaw = await readFile("verify_font_baseline.json", "utf-8");
+  const baselineRaw = await readFile(`${BASELINE_DIR}/verify_baseline.json`, "utf-8");
   const baseline = JSON.parse(baselineRaw);
 
   let allPassed = true;

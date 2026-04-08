@@ -5,6 +5,7 @@
  * 测量:
  *   1. 子集化总耗时（Font.create → optimize → sort → write）
  *   2. 渲染相似度（子集字体 vs 完整字体，SSIM 指标）
+ *   3. 输出渲染对比图片到 benchmark_results/ 目录
  */
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { performance } from "node:perf_hooks";
@@ -13,6 +14,7 @@ import { Canvas, FontLibrary } from "skia-canvas";
 
 const FONT_PATH = "font/令东齐伋复刻体.ttf";
 const FONT_NAME = "令东齐伋复刻体";
+const BENCHMARK_DIR = "benchmark_results";
 
 const raw = await readFile(FONT_PATH);
 const fontBuffer = new Uint8Array(raw).buffer;
@@ -46,6 +48,22 @@ function renderText(fontFamily: string, text: string, fontSize: number): Uint8Ar
   ctx.fillText(text, 10, Math.ceil(fontSize * 1.2));
   const imgData = ctx.getImageData(0, 0, width, height);
   return new Uint8Array(imgData.data.buffer);
+}
+
+/** 渲染文字并保存为 PNG */
+async function renderTextToPng(fontFamily: string, text: string, fontSize: number, filePath: string) {
+  const charWidth = Math.ceil(fontSize * 1.5);
+  const width = text.length * charWidth + 20;
+  const height = Math.ceil(fontSize * 1.5);
+  const canvas = new Canvas(width, height);
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "white";
+  ctx.fillRect(0, 0, width, height);
+  ctx.font = `${fontSize}px ${fontFamily}`;
+  ctx.fillStyle = "black";
+  ctx.fillText(text, 10, Math.ceil(fontSize * 1.2));
+  const buffer = await canvas.toBuffer("png");
+  return writeFile(filePath, buffer);
 }
 
 /** 计算两张图片的结构相似度（简化版 SSIM），返回 0~1 */
@@ -84,15 +102,26 @@ function calculateSSIM(a: Uint8Array, b: Uint8Array): number {
 
 /** 注册子集字体用于渲染 */
 async function registerSubsetFont(ttfBuffer: ArrayBuffer, counter: number): Promise<string> {
-  await mkdir("verify_font_baseline", { recursive: true });
-  const fontPath = `verify_font_baseline/_bench_${counter}.ttf`;
+  await mkdir(BENCHMARK_DIR, { recursive: true });
+  const fontPath = `${BENCHMARK_DIR}/_bench_${counter}.ttf`;
   await writeFile(fontPath, Buffer.from(ttfBuffer));
   const familyName = `BenchSubset_${counter}`;
   FontLibrary.use(familyName, [fontPath]);
   return familyName;
 }
 
+await mkdir(BENCHMARK_DIR, { recursive: true });
+
 console.log("\n=== 字体裁剪基准测试 ===\n");
+
+const results: Array<{
+  label: string;
+  avg: number;
+  min: number;
+  max: number;
+  outputSize: number;
+  ssim: number;
+}> = [];
 
 for (const { label, text } of testCases) {
   const subset = [...text].map((c) => c.codePointAt(0)!);
@@ -122,12 +151,25 @@ for (const { label, text } of testCases) {
   if (lastTtfBuffer) {
     subsetFontCounter++;
     const familyName = await registerSubsetFont(lastTtfBuffer, subsetFontCounter);
+
+    /** 保存渲染对比图片 */
+    const safeLabel = label.replace(/[^a-zA-Z0-9\u4e00-\u9fff]/g, "_");
+    await renderTextToPng(FONT_NAME, text, 48, `${BENCHMARK_DIR}/${safeLabel}_full.png`);
+    await renderTextToPng(familyName, text, 48, `${BENCHMARK_DIR}/${safeLabel}_subset.png`);
+
     const fullPixels = renderText(FONT_NAME, text, 48);
     const subsetPixels = renderText(familyName, text, 48);
     ssim = calculateSSIM(fullPixels, subsetPixels);
   }
 
+  results.push({ label, avg, min, max, outputSize: lastOutputSize, ssim });
   console.log(`  ${label}: avg=${avg.toFixed(1)}ms  min=${min.toFixed(1)}ms  max=${max.toFixed(1)}ms  输出=${lastOutputSize.toLocaleString()} bytes  ssim=${ssim.toFixed(4)}`);
 }
 
+/** 保存结果到 JSON */
+const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+const resultFile = `${BENCHMARK_DIR}/benchmark_${timestamp}.json`;
+await writeFile(resultFile, JSON.stringify({ timestamp: new Date().toISOString(), rounds: ROUNDS, results }, null, 2));
+console.log(`\n结果已保存到 ${resultFile}`);
+console.log(`渲染对比图片已保存到 ${BENCHMARK_DIR}/ 目录`);
 console.log("");

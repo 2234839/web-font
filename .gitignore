@@ -31,3 +31,7 @@ app
 
 dist_backend
 .pilot
+
+verify_font_baseline
+benchmark_results
+.claude
