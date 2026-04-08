@@ -252,6 +252,29 @@ async function handleUpload(req: Request, res: Response) {
   return { req, res: jsonResponse(result, result.success ? 200 : 400) };
 }
 
+/** 字体文件 LRU 缓存，最多保留 3 个最近使用的字体 buffer */
+const fontBufferCache = new Map<string, ArrayBuffer>();
+const FONT_CACHE_MAX = 3;
+
+/** 从缓存或磁盘读取字体 buffer */
+async function readFontBuffer(fontPath: string): Promise<ArrayBuffer> {
+  const cached = fontBufferCache.get(fontPath);
+  if (cached) {
+    /** LRU：命中时移到末尾（最近使用） */
+    fontBufferCache.delete(fontPath);
+    fontBufferCache.set(fontPath, cached);
+    return cached;
+  }
+  const buffer = new Uint8Array(await readFile(fontPath)).buffer;
+  if (fontBufferCache.size >= FONT_CACHE_MAX) {
+    /** 淘汰最久未使用的条目 */
+    const oldest = fontBufferCache.keys().next().value!;
+    fontBufferCache.delete(oldest);
+  }
+  fontBufferCache.set(fontPath, buffer);
+  return buffer;
+}
+
 /** GET /api?font=...&text=... — 字体裁剪 */
 async function handleFontSubset(req: Request, res: Response) {
   const url = parseUrl(req);
@@ -276,7 +299,7 @@ async function handleFontSubset(req: Request, res: Response) {
   const fontType = fontPath.split(".").pop() as "ttf";
   let oldFontBuffer: ArrayBuffer;
   try {
-    oldFontBuffer = new Uint8Array(await readFile(fontPath)).buffer;
+    oldFontBuffer = await readFontBuffer(fontPath);
   } catch {
     return {
       req,

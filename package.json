@@ -1,7 +1,7 @@
 {
   "name": "webfont",
   "private": true,
-  "version": "1.2.0",
+  "version": "1.2.1",
   "type": "module",
   "scripts": {
     "dev": "pnpx tsx scripts/dev-all.ts",
@@ -21,6 +21,7 @@
   },
   "devDependencies": {
     "@types/node": "^25.5.2",
+    "skia-canvas": "^3.0.8",
     "tsup": "^8.5.1",
     "typescript": "^6.0.2",
     "undici": "^8.0.2",
