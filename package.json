@@ -15,7 +15,7 @@
     "release": "pnpm build && pnpm build_backend && pnpm docker_build && pnpm docker_push"
   },
   "dependencies": {
-    "fonteditor-core": "^2.6.3",
+    "fonteditor-core": "file:./vendor/fonteditor-core",
     "solid-js": "^1.9.12",
     "web-streams-polyfill": "^4.2.0"
   },

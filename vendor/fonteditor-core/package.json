@@ -1,0 +1,110 @@
+{
+  "name": "fonteditor-core",
+  "version": "2.6.3",
+  "description": "fonts (ttf, woff, woff2, eot, svg, otf) parse, write, transform, glyph adjust.",
+  "keywords": [
+    "sfnt",
+    "font",
+    "editor",
+    "ttf",
+    "woff",
+    "woff2",
+    "svg",
+    "eot",
+    "otf"
+  ],
+  "homepage": "https://github.com/kekee000/fonteditor-core",
+  "authors": [
+    {
+      "name": "kekee000",
+      "email": "kekee000@gmail.com"
+    },
+    {
+      "name": "junmer",
+      "email": "junmer@foxmail.com"
+    },
+    {
+      "name": "pumpkinzomb",
+      "email": "pumpkinzomb@gmail.com"
+    }
+  ],
+  "bugs": {
+    "url": "https://github.com/kekee000/fonteditor-core/issues"
+  },
+  "licenses": [
+    {
+      "type": "MIT",
+      "url": "https://github.com/kekee000/fonteditor-core/raw/master/LICENSE"
+    }
+  ],
+  "scripts": {
+    "precommit": "npm run lint",
+    "publish:npm": "npm run build && npm publish --registry=https://registry.npmjs.org/",
+    "test": "npm run test:browser && npm run test:node && npm run test:esm",
+    "test:browser": "mocha --require @babel/register  test/spec/*.spec.js test/spec/**/*.spec.js",
+    "test:node": "npm run build && mocha test/node-spec/**/*.spec.js ",
+    "test:esm": "cd test/esm && npm i &&  mocha --extension mjs index.mjs",
+    "test:example": "cd test/example && npm i && npm run test",
+    "dev": "webpack-dev-server --open --config ./config/webpack.dev.js",
+    "build": "babel src --out-dir lib",
+    "lint": "eslint ./src ./test",
+    "lint:fix": "eslint --fix ./src ./test"
+  },
+  "husky": {
+    "hooks": {
+      "pre-commit": "lint-staged"
+    }
+  },
+  "lint-staged": {
+    "src/**/*.{jsx,txs,ts,js,vue}": [
+      "eslint"
+    ]
+  },
+  "repository": {
+    "type": "git",
+    "url": "git://github.com/kekee000/fonteditor-core.git"
+  },
+  "files": [
+    "index.d.ts",
+    "lib",
+    "src",
+    "woff2"
+  ],
+  "main": "./lib/main.js",
+  "module": "./lib/main.esm.js",
+  "types": "./index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./lib/main.esm.js",
+      "require": "./lib/main.js",
+      "types": "./index.d.ts",
+      "default": "./lib/main.js"
+    },
+    "./lib/*": "./lib/*.js"
+  },
+  "type": "commonjs",
+  "devDependencies": {
+    "@babel/cli": "^7.20.7",
+    "@babel/core": "^7.20.12",
+    "@babel/preset-env": "^7.20.2",
+    "@babel/register": "^7.18.9",
+    "babel-loader": "^8.0.6",
+    "babel-plugin-module-resolver": "^4.1.0",
+    "commander": "^3.0.2",
+    "css-loader": "^3.2.0",
+    "eslint": "^7.9.0",
+    "eslint-plugin-import": "^2.23.4",
+    "html-webpack-plugin": "^3.2.0",
+    "husky": "^4.3.0",
+    "lint-staged": "^10.4.0",
+    "mocha": "^11.7.1",
+    "pako": "^1.0.10",
+    "style-loader": "^1.0.0",
+    "webpack": "^4.41.1",
+    "webpack-cli": "^3.3.9",
+    "webpack-dev-server": "^3.8.2"
+  },
+  "dependencies": {
+    "@xmldom/xmldom": "^0.8.3"
+  }
+}
