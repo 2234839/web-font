@@ -99,7 +99,6 @@ async function connectionHandle(
     // node 运行时
     // 释放写入器的锁定
     resWriter.releaseLock();
-    console.log("[connection.writable.locked]", connection.writable.locked);
     // https://github.com/saghul/txiki.js/issues/646
     await res.body?.pipeTo(connection.writable);
   } else {

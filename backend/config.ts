@@ -1,0 +1,16 @@
+/**
+ * 从环境变量读取服务配置，启动时一次性加载
+ */
+const env = globalThis.process?.env ?? {};
+
+/** 临时上传开关 */
+export const enableTempUpload = env.ENABLE_TEMP_UPLOAD === "true";
+
+/** 管理员 API Key，为空则管理员上传不可用 */
+export const adminApiKey: string = env.ADMIN_API_KEY ?? "";
+
+/** 临时上传目录最大文件数 */
+export const tempMaxFiles = 10;
+
+/** 字体搜索目录（按优先级排序） */
+export const fontDirs = ["font", "font/temp", "font/admin"] as const;

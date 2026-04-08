@@ -5,9 +5,31 @@ export let stat: (path: string) => Promise<{
 
 export let readFile: (path: string) => Promise<Uint8Array>;
 
-export const implInterface = (options: { stat: typeof stat; readFile: typeof readFile }) => {
+export let writeFile: (path: string, data: Uint8Array) => Promise<void>;
+
+export let readdir: (path: string) => Promise<{
+  isFile: () => boolean;
+  name: string;
+}[]>;
+
+export let mkdir: (path: string) => Promise<void>;
+
+export let unlink: (path: string) => Promise<void>;
+
+export const implInterface = (options: {
+  stat: typeof stat;
+  readFile: typeof readFile;
+  writeFile: typeof writeFile;
+  readdir: typeof readdir;
+  mkdir: typeof mkdir;
+  unlink: typeof unlink;
+}) => {
   stat = options.stat;
   readFile = options.readFile;
+  writeFile = options.writeFile;
+  readdir = options.readdir;
+  mkdir = options.mkdir;
+  unlink = options.unlink;
 };
 
 export function path_join(...paths: string[]) {

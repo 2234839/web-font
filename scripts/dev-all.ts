@@ -30,7 +30,7 @@ process.on("SIGTERM", () => {
 
 console.log("Starting frontend and backend dev servers...\n");
 
-const backend = spawn("pnpx", ["tsx", "backend/app.ts"], {
+const backend = spawn("pnpx", ["tsx", "watch", "backend/app.ts"], {
   cwd: ROOT_DIR,
   stdio: "inherit",
   shell: true,
