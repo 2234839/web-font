@@ -1,10 +1,6 @@
 {
   "files": [],
-  "compilerOptions": {
-    "types": [
-      "txikijs"
-    ]
-  },
+  "compilerOptions": {},
   "references": [
     {
       "path": "./tsconfig.app.json"

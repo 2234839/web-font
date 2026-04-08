@@ -1,5 +1,6 @@
 import { createMemo, createSignal, onMount, Show, For } from "solid-js";
-import { fetchFonts, fetchConfig, uploadFont, type FontInfo, type ServerConfig } from "./api";
+import { fetchFonts, fetchConfig, type FontInfo, type ServerConfig } from "./api";
+import UploadSection from "./UploadSection";
 
 const s = {
   wrap: {
@@ -228,6 +229,8 @@ function App() {
         </section>
       </Show>
 
+      <UploadSection config={serverConfig()} onUploaded={refreshFonts} />
+
       <section style={{ ...s.section, "font-size": "12px", color: "#aaa", "line-height": "1.8" }}>
         <p><b>原理：</b>服务端根据 text 参数裁剪字体，只返回所需字符的子集。相同 URL 的请求会被浏览器自动缓存。</p>
         <p><b>基础用法：</b>将 CSS 复制到你的页面，修改 text 参数中的文字即可：</p>
@@ -249,148 +252,7 @@ function App() {
   });
 <\/script>`}</pre>
       </section>
-
-      <UploadSection config={serverConfig()} onUploaded={refreshFonts} />
     </div>
-  );
-}
-
-function UploadSection(props: { config: ServerConfig; onUploaded: () => void }) {
-  const [tempFile, set_tempFile] = createSignal<File | null>(null);
-  const [adminFile, set_adminFile] = createSignal<File | null>(null);
-  const [adminApiKey, set_adminApiKey] = createSignal("");
-  const [uploading, set_uploading] = createSignal(false);
-  const [msg, set_msg] = createSignal<{ ok: boolean; text: string } | null>(null);
-
-  function showMsg(ok: boolean, text: string) {
-    set_msg({ ok, text });
-    setTimeout(() => set_msg(null), 3000);
-  }
-
-  async function handleTempUpload() {
-    const file = tempFile();
-    if (!file) return;
-    set_uploading(true);
-    const result = await uploadFont(file, "temp");
-    set_uploading(false);
-    if (result.success) {
-      showMsg(true, "上传成功");
-      set_tempFile(null);
-      props.onUploaded();
-    } else {
-      showMsg(false, result.error ?? "上传失败");
-    }
-  }
-
-  async function handleAdminUpload() {
-    const file = adminFile();
-    if (!file) return;
-    set_uploading(true);
-    const result = await uploadFont(file, "admin", adminApiKey());
-    set_uploading(false);
-    if (result.success) {
-      showMsg(true, "上传成功");
-      set_adminFile(null);
-      props.onUploaded();
-    } else {
-      showMsg(false, result.error ?? "上传失败");
-    }
-  }
-
-  const canUpload = () => props.config.enableTempUpload || props.config.adminUploadEnabled;
-
-  return (
-    <Show when={canUpload()}>
-      <section style={s.section}>
-        <label style={{ ...s.label, "font-size": "14px", "font-weight": 500, "margin-bottom": "12px" }}>上传字体</label>
-
-        <Show when={msg()}>
-          {(m) => (
-            <div
-              style={{
-                padding: "8px 12px",
-                "margin-bottom": "12px",
-                "border-radius": "6px",
-                "font-size": "13px",
-                background: m().ok ? "#f0faf0" : "#fef2f2",
-                color: m().ok ? "#166534" : "#b91c1c",
-                border: `1px solid ${m().ok ? "#bbf7d0" : "#fecaca"}`,
-              }}
-            >
-              {m().text}
-            </div>
-          )}
-        </Show>
-
-        <Show when={props.config.enableTempUpload}>
-          <div style={s.card}>
-            <div style={{ "font-size": "14px", "font-weight": 500, "margin-bottom": "4px" }}>临时上传</div>
-            <div style={{ "font-size": "12px", color: "#999", "margin-bottom": "12px" }}>
-              最多保留 10 个文件，超出后自动删除最早上传的
-            </div>
-            <div style={{ display: "flex", "gap": "8px", "align-items": "center" }}>
-              <label style={{ ...s.btn, display: "inline-flex", "align-items": "center", cursor: "pointer" }}>
-                选择文件
-                <input
-                  type="file"
-                  accept=".ttf,.otf,.woff,.woff2"
-                  style={{ display: "none" }}
-                  onChange={(e) => set_tempFile(e.target.files?.[0] ?? null)}
-                />
-              </label>
-              <span style={{ "font-size": "13px", color: "#666" }}>
-                {tempFile()?.name ?? "未选择文件"}
-              </span>
-              <button
-                style={{ ...s.btn, opacity: tempFile() && !uploading() ? 1 : 0.5, cursor: tempFile() && !uploading() ? "pointer" : "not-allowed" }}
-                disabled={!tempFile() || uploading()}
-                onClick={handleTempUpload}
-              >
-                {uploading() ? "..." : "上传"}
-              </button>
-            </div>
-          </div>
-        </Show>
-
-        <Show when={props.config.adminUploadEnabled}>
-          <div style={s.card}>
-            <div style={{ "font-size": "14px", "font-weight": 500, "margin-bottom": "4px" }}>管理员上传</div>
-            <div style={{ "font-size": "12px", color: "#999", "margin-bottom": "12px" }}>
-              永久保存，需要 API Key 认证
-            </div>
-            <input
-              type="text"
-              autocomplete="off"
-              style={{ ...s.input, width: "100%", "margin-bottom": "10px" }}
-              value={adminApiKey()}
-              onInput={(e) => set_adminApiKey(e.target.value)}
-              placeholder="API Key"
-            />
-            <div style={{ display: "flex", "gap": "8px", "align-items": "center" }}>
-              <label style={{ ...s.btn, display: "inline-flex", "align-items": "center", cursor: "pointer" }}>
-                选择文件
-                <input
-                  type="file"
-                  accept=".ttf,.otf,.woff,.woff2"
-                  style={{ display: "none" }}
-                  onChange={(e) => set_adminFile(e.target.files?.[0] ?? null)}
-                />
-              </label>
-              <span style={{ "font-size": "13px", color: "#666" }}>
-                {adminFile()?.name ?? "未选择文件"}
-              </span>
-              <button
-                style={{ ...s.btn, opacity: adminFile() && adminApiKey() && !uploading() ? 1 : 0.5, cursor: adminFile() && adminApiKey() && !uploading() ? "pointer" : "not-allowed" }}
-                disabled={!adminFile() || !adminApiKey() || uploading()}
-                onClick={handleAdminUpload}
-              >
-                {uploading() ? "..." : "上传"}
-              </button>
-            </div>
-          </div>
-        </Show>
-      </section>
-    </Show>
   );
 }
 

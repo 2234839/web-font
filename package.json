@@ -20,7 +20,6 @@
     "web-streams-polyfill": "^4.2.0"
   },
   "devDependencies": {
-    "@txikijs/types": "^26.4.0",
     "@types/node": "^25.5.2",
     "tsup": "^8.5.1",
     "typescript": "^6.0.2",

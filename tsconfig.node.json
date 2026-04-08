@@ -4,9 +4,6 @@
     "lib": [
       "ES2023","DOM"
     ],
-    "typeRoots": [
-      "node_modules/@txikijs/types"
-    ],
     "module": "ESNext",
     "skipLibCheck": true,
     /* Bundler mode */
