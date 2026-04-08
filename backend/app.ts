@@ -108,6 +108,14 @@ const staticFileMiddleware: cMiddleware = async function (req, res, next) {
   if (req.method === "GET") {
     const url = parseUrl(req);
     const filePath = path_join(ROOT_DIR, url.pathname === "/" ? "index.html" : url.pathname);
+    /** 防止路径穿越：规范化后必须仍在 dist 目录内 */
+    if (!filePath.startsWith(ROOT_DIR + "/") && filePath !== ROOT_DIR) {
+      newRes = new Response("403 Forbidden", {
+        status: 403,
+        headers: { "Content-Type": "text/plain; charset=utf-8" },
+      });
+      return next(req, newRes);
+    }
     try {
       const stats = await stat(filePath);
 
@@ -131,8 +139,7 @@ const staticFileMiddleware: cMiddleware = async function (req, res, next) {
       }
     } catch (err) {
       console.log("[err]", err);
-      // @ts-ignore
-      newRes = new Response(`服务器内部错误 Not Found\n${err}\n${err.stack}`, {
+      newRes = new Response("500 Internal Server Error", {
         status: 500,
         headers: {
           "Content-Type": "text/plain; charset=utf-8",
@@ -292,6 +299,7 @@ async function handleFontSubset(req: Request, res: Response) {
       status: 200,
       headers: {
         "Content-Type": "font/ttf",
+        "Cache-Control": "public, max-age=31536000, immutable",
       },
     }),
   };

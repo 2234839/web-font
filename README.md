@@ -56,6 +56,7 @@ services:
     environment:
       - ENABLE_TEMP_UPLOAD=true        # 开启临时上传（默认 false）
       - TEMP_MAX_FILES=10              # 临时上传最大文件数（默认 10）
+      - TEMP_MAX_TOTAL_SIZE=209715200  # 临时上传目录总体积上限，单位字节（默认 209715200，即 200MB）
       - ADMIN_API_KEY=你的管理员密钥    # 设置后开启管理员上传，不设置则不可用
     deploy:
       resources:
@@ -81,7 +82,7 @@ services:
 
 ### 上传功能
 
-- **临时上传**：设置环境变量 `ENABLE_TEMP_UPLOAD=true` 启用，最多保留 10 个字体文件，超出后自动删除最早上传的（FIFO）
+- **临时上传**：设置环境变量 `ENABLE_TEMP_UPLOAD=true` 启用，最多保留 10 个字体文件（`TEMP_MAX_FILES`），总大小限制 200MB（`TEMP_MAX_TOTAL_SIZE`），超出后自动删除最早上传的（FIFO）
 - **管理员上传**：设置环境变量 `ADMIN_API_KEY=你的密钥` 启用，上传的字体永久保存，需要通过 API Key 认证
 - 支持的字体格式：`.ttf` `.otf` `.woff` `.woff2`
 

@@ -252,6 +252,10 @@ function App() {
   });
 <\/script>`}</pre>
       </section>
+
+      <footer style={{ "margin-top": "48px", "padding-top": "16px", "border-top": "1px solid #eee", "font-size": "12px", color: "#999", "text-align": "center" }}>
+        <p>感谢 <a href="https://www.ruanyifeng.com/blog/2020/03/weekly-issue-100.html" target="_blank" rel="noopener noreferrer" style={{ color: "#999" }}>阮一峰科技爱好者周刊（第 100 期）</a> 收录本项目</p>
+      </footer>
     </div>
   );
 }

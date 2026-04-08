@@ -1,5 +1,5 @@
 pnpm dev 可以同时启动前后端，并且都会修改代码后自动重载
-- pnpm docker_push  发布当前项目的docker镜像
+- pnpm release  构建并发布当前项目的docker镜像
 ## 浏览器测试（vite-plugin-pilot）
 已安装。`npx pilot run '代码'` 执行 JS（返回结果+日志+快照）、`npx pilot page` 页面状态
 `npx pilot help` 查看pilot所有功能

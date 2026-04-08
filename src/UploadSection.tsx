@@ -115,7 +115,7 @@ function TempUploadCard(props: {
     <div style={card}>
       <div style={{ "font-size": "14px", "font-weight": 500, "margin-bottom": "4px" }}>游客上传</div>
       <div style={{ "font-size": "12px", color: "#999", "margin-bottom": "12px" }}>
-        临时文件，最多保留 10 个，超出后自动删除最早上传的
+        临时文件，最多保留 10 个，总大小限制 200MB，超出后自动删除最早上传的
       </div>
       <FileUploader
         disabled={!props.fileName}
