@@ -109,7 +109,18 @@ const fontApiMiddleware: cMiddleware = async (req, res, next) => {
   }
   const path = `font/${font}`;
   const fontType = path.split(".").pop() as "ttf";
-  const oldFontBuffer = new Uint8Array(await readFile(path)).buffer;
+  let oldFontBuffer: ArrayBuffer;
+  try {
+    oldFontBuffer = new Uint8Array(await readFile(path)).buffer;
+  } catch {
+    return {
+      req,
+      res: new Response(`Font not found: ${font}`, {
+        status: 404,
+        headers: { "Content-Type": "text/plain; charset=utf-8" },
+      }),
+    };
+  }
 
   const outType = "ttf";
   const newFont = await fontSubset(oldFontBuffer, text, {

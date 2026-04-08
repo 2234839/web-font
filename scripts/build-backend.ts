@@ -10,6 +10,15 @@ import { mkdir, writeFile, rm } from "node:fs/promises";
 import { arch, platform } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { EnvHttpProxyAgent, setGlobalDispatcher } from "undici";
+
+/** 自动读取 http_proxy/https_proxy 环境变量配置全局代理 */
+const proxyUrl = process.env.https_proxy || process.env.HTTPS_PROXY
+  || process.env.http_proxy || process.env.HTTP_PROXY;
+if (proxyUrl) {
+  setGlobalDispatcher(new EnvHttpProxyAgent());
+  console.log(`Using proxy: ${proxyUrl}`);
+}
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = join(__dirname, "..");
