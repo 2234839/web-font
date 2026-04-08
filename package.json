@@ -10,19 +10,19 @@
     "docker_build": "docker build -t llej0/web-font:${npm_package_version} -t llej0/web-font:latest .",
     "docker_push": "docker push llej0/web-font:${npm_package_version} && docker push llej0/web-font:latest",
     "preview": "vite preview",
-    "release":"pnpm build && pnpm build_backend && pnpm docker_build && pnpm docker_push"
+    "release": "pnpm build && pnpm build_backend && pnpm docker_build && pnpm docker_push"
   },
   "dependencies": {
-    "fonteditor-core": "^2.4.1",
-    "solid-js": "^1.8.20",
-    "web-streams-polyfill": "^4.0.0"
+    "fonteditor-core": "^2.6.3",
+    "solid-js": "^1.9.12",
+    "web-streams-polyfill": "^4.2.0"
   },
   "devDependencies": {
-    "@txikijs/types": "^24.6.0",
-    "@types/node": "^22.4.0",
-    "tsup": "^8.2.4",
-    "typescript": "^5.5.3",
-    "vite": "^5.4.1",
-    "vite-plugin-solid": "^2.10.2"
+    "@txikijs/types": "^26.4.0",
+    "@types/node": "^25.5.2",
+    "tsup": "^8.5.1",
+    "typescript": "^6.0.2",
+    "vite": "^8.0.7",
+    "vite-plugin-solid": "^2.11.12"
   }
 }
