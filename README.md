@@ -55,7 +55,8 @@ services:
     volumes:
       - ./data:/home/font # 挂载本机字体目录
     environment:
-      - ENABLE_TEMP_UPLOAD=true        # 开启临时上传（最多10个，FIFO溢出覆盖）
+      - ENABLE_TEMP_UPLOAD=true        # 开启临时上传（默认 false）
+      - TEMP_MAX_FILES=10              # 临时上传最大文件数（默认 10）
       - ADMIN_API_KEY=你的管理员密钥    # 设置后开启管理员上传，不设置则不可用
     deploy:
       resources:
