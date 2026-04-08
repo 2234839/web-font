@@ -4,9 +4,11 @@
   "version": "1.0.4",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "pnpx tsx scripts/dev-all.ts",
+    "dev:frontend": "vite",
+    "dev:backend": "pnpx tsx backend/app.ts",
     "build": "vite build",
-    "build_backend": "tsup && ./llrt compile ./dist_backend/app.cjs ./dist_backend/app.lrt",
+    "build_backend": "pnpx tsx scripts/build-backend.ts",
     "docker_build": "docker build -t llej0/web-font:${npm_package_version} -t llej0/web-font:latest .",
     "docker_push": "docker push llej0/web-font:${npm_package_version} && docker push llej0/web-font:latest",
     "preview": "vite preview",
