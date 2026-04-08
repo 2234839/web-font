@@ -1,4 +1,4 @@
-import { createMemo, createSignal, onMount, Show, For, type Accessor } from "solid-js";
+import { createMemo, createSignal, onMount, Show, For } from "solid-js";
 import { fetchFonts, fetchConfig, uploadFont, type FontInfo, type ServerConfig } from "./api";
 
 const s = {
@@ -39,7 +39,7 @@ const s = {
     width: "100%",
     height: "72px",
     padding: "8px 12px",
-    "font-size": "18px",
+    "font-size": "32px",
     border: "1px solid #d9d9d9",
     "border-radius": "6px",
     resize: "vertical",
@@ -110,7 +110,7 @@ function App() {
     if (!font) return "";
     return `@font-face {
   font-family: "CustomFont";
-  src: url("/api?font=${font}&text=${encodeURIComponent(text())}") format("truetype");
+  src: url("${location.origin}/api?font=${font}&text=${encodeURIComponent(text())}") format("truetype");
 }
 .custom-font {
   color: red;
@@ -118,7 +118,22 @@ function App() {
 }`;
   });
 
-  const throttledCss = useThrottledMemo(() => cssStyle(), 1000, text);
+  /** 字体切换时使用 SDK 重新加载 */
+  const prevFontRef = { value: "" };
+  createMemo(() => {
+    const font = selectedFont();
+    if (!font) return;
+    if (font !== prevFontRef.value) {
+      prevFontRef.value = font;
+      const el = document.getElementById("webfont-preview");
+      if (el) el.style.fontFamily = 'inherit';
+      (globalThis as any).WebFont?.loadFont({
+        fontName: font,
+        selector: "#webfont-preview",
+        family: "CustomFont",
+      });
+    }
+  });
 
   async function refreshFonts() {
     const fontList = await fetchFonts();
@@ -165,9 +180,9 @@ function App() {
       <section style={s.section}>
         <label style={s.label}>输入文本预览效果</label>
         <textarea
+          id="webfont-preview"
           style={{
             ...s.textarea,
-            "font-family": selectedFont() ? '"CustomFont", sans-serif' : "inherit",
           }}
           value={text()}
           onInput={(e) => set_text(e.target.value)}
@@ -215,19 +230,27 @@ function App() {
 
       <section style={{ ...s.section, "font-size": "12px", color: "#aaa", "line-height": "1.8" }}>
         <p><b>原理：</b>服务端根据 text 参数裁剪字体，只返回所需字符的子集。相同 URL 的请求会被浏览器自动缓存。</p>
-        <p><b>最小化用法：</b>将下方 CSS 复制到你的页面，修改 text 参数中的文字即可：</p>
+        <p><b>基础用法：</b>将 CSS 复制到你的页面，修改 text 参数中的文字即可：</p>
         <pre style={{ ...s.pre, "font-size": "12px", "margin-top": "4px" }}>{`<style>
 @font-face {
   font-family: "MyFont";
-  src: url("https://your-domain/api?font=字体名&text=你的文字") format("truetype");
+  src: url("${location.origin}/api?font=字体名&text=你的文字") format("truetype");
 }
 .title { font-family: "MyFont"; }
 </style>
 <h1 class="title">你的文字</h1>`}</pre>
+        <p style={{ "margin-top": "12px" }}><b>进阶用法（推荐）：</b>动态内容场景下，使用 JS SDK 自动监听元素文字变化，按需增量加载字体片段，不会出现全量字体闪烁。<a href="/webfont-sdk.js" download="webfont-sdk.js">下载 SDK</a></p>
+        <pre style={{ ...s.pre, "font-size": "12px", "margin-top": "4px" }}>{`<script src="${location.origin}/webfont-sdk.js"><\/script>
+<script>
+  WebFont.loadFont({
+    fontName: "${selectedFont()}",
+    selector: ".title",
+    family: "MyFont",
+  });
+<\/script>`}</pre>
       </section>
 
       <UploadSection config={serverConfig()} onUploaded={refreshFonts} />
-      <style>{throttledCss()}</style>
     </div>
   );
 }
@@ -336,7 +359,8 @@ function UploadSection(props: { config: ServerConfig; onUploaded: () => void }) 
               永久保存，需要 API Key 认证
             </div>
             <input
-              type="password"
+              type="text"
+              autocomplete="off"
               style={{ ...s.input, width: "100%", "margin-bottom": "10px" }}
               value={adminApiKey()}
               onInput={(e) => set_adminApiKey(e.target.value)}
@@ -368,34 +392,6 @@ function UploadSection(props: { config: ServerConfig; onUploaded: () => void }) 
       </section>
     </Show>
   );
-}
-
-function useThrottledMemo<T>(fn: () => T, delay: number, trigger?: Accessor<unknown>): Accessor<T> {
-  const [throttledValue, setThrottledValue] = createSignal<T>(fn());
-  let timeoutId: ReturnType<typeof setTimeout> | null = null;
-  let isFirst = true;
-
-  createMemo(() => {
-    if (trigger) trigger();
-    const value = fn();
-    if (isFirst) {
-      isFirst = false;
-      // @ts-expect-error
-      setThrottledValue(value);
-      return;
-    }
-    if (timeoutId === null) {
-      // @ts-expect-error
-      setThrottledValue(value);
-      timeoutId = setTimeout(() => {
-        timeoutId = null;
-        // @ts-expect-error
-        setThrottledValue(fn());
-      }, delay);
-    }
-  });
-
-  return throttledValue;
 }
 
 export default App;
