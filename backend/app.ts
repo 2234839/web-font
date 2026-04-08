@@ -1,3 +1,8 @@
+/** 解析请求 URL（req.url 只有路径，需要补全协议和主机才能用 URL API） */
+function parseUrl(req: Request): URL {
+  return new URL(req.url, "http://localhost");
+}
+
 import { fontSubset } from "./font_util/font";
 import { mimeTypes } from "./server/mime_type";
 import type { cMiddleware } from "./server/req_res";
@@ -95,7 +100,7 @@ const logMiddleware: cMiddleware = async (req, res, next) => {
   const t1 = Date.now();
   const r = await next(req, res);
   const t2 = Date.now();
-  const url = new URL(req.url);
+  const url = parseUrl(req);
   console.log(`[${t2 - t1}ms] ${req.method} ${url.pathname}`);
   return r;
 };
@@ -103,7 +108,7 @@ const logMiddleware: cMiddleware = async (req, res, next) => {
 const staticFileMiddleware: cMiddleware = async function (req, res, next) {
   let newRes: Response;
   if (req.method === "GET") {
-    const url = new URL(req.url);
+    const url = parseUrl(req);
     const filePath = path_join(ROOT_DIR, url.pathname === "/" ? "index.html" : url.pathname);
     try {
       const stats = await stat(filePath);
@@ -199,21 +204,24 @@ async function handleGetConfig(req: Request, res: Response) {
 
 /** POST /api/upload?mode=temp|admin — 上传字体 */
 async function handleUpload(req: Request, res: Response) {
-  const url = new URL(req.url, "https://webfont.shenzilong.com");
+  const url = parseUrl(req);
   const mode = url.searchParams.get("mode") ?? "temp";
 
   const contentType = req.headers.get("Content-Type") ?? "";
-  let body: ArrayBuffer;
-  try {
-    body = await req.arrayBuffer();
-  } catch {
-    return { req, res: jsonResponse({ success: false, error: "读取请求体失败" }, 400) };
+  console.log("[upload] mode:", mode, "contentType:", contentType);
+
+  const body = (req as Request & { _bodyBuffer?: ArrayBuffer })._bodyBuffer;
+  if (!body || body.byteLength === 0) {
+    return { req, res: jsonResponse({ success: false, error: "请求体为空" }, 400) };
   }
+  console.log("[upload] body size:", body.byteLength);
 
   let parsed;
   try {
     parsed = parseMultipart(contentType, body);
-  } catch {
+    console.log("[upload] parsed files:", parsed.files.length);
+  } catch (err) {
+    console.log("[upload] parse error:", err);
     return { req, res: jsonResponse({ success: false, error: "无效的 multipart 数据" }, 400) };
   }
 
@@ -222,22 +230,26 @@ async function handleUpload(req: Request, res: Response) {
   }
 
   const file = parsed.files[0];
+  console.log("[upload] file:", file.name, "filename:", file.filename, "data size:", file.data.length);
 
+  let result;
   if (mode === "admin") {
     const authHeader = req.headers.get("Authorization") ?? "";
     const apiKey = authHeader.replace("Bearer ", "");
-    const result = await handleAdminUpload({ data: file.data, filename: file.filename }, apiKey);
+    result = await handleAdminUpload({ data: file.data, filename: file.filename }, apiKey);
+    console.log("[upload] admin result:", result);
     return { req, res: jsonResponse(result, result.success ? 200 : 403) };
   }
 
   // 默认：临时上传
-  const result = await handleTempUpload({ data: file.data, filename: file.filename });
+  result = await handleTempUpload({ data: file.data, filename: file.filename });
+  console.log("[upload] temp result:", result);
   return { req, res: jsonResponse(result, result.success ? 200 : 400) };
 }
 
 /** GET /api?font=...&text=... — 字体裁剪 */
 async function handleFontSubset(req: Request, res: Response) {
-  const url = new URL(req.url, "https://webfont.shenzilong.com");
+  const url = parseUrl(req);
   const params = new URLSearchParams(url.search);
   const font = params.get("font") || "";
   const text = params.get("text") || "";
@@ -289,7 +301,7 @@ async function handleFontSubset(req: Request, res: Response) {
 
 /** 统一的 API 路由中间件 */
 const fontApiMiddleware: cMiddleware = async (req, res, next) => {
-  const url = new URL(req.url, "https://webfont.shenzilong.com");
+  const url = parseUrl(req);
   if (!url.pathname.startsWith("/api")) return next(req, res);
 
   if (url.pathname === "/api/fonts" && req.method === "GET") {
@@ -312,7 +324,7 @@ const fontApiMiddleware: cMiddleware = async (req, res, next) => {
 const MAX_UPLOAD_SIZE = 50 * 1024 * 1024;
 
 const uploadSizeMiddleware: cMiddleware = async (req, res, next) => {
-  if (req.method === "POST" && new URL(req.url).pathname === "/api/upload") {
+  if (req.method === "POST" && parseUrl(req).pathname === "/api/upload") {
     const contentLength = parseInt(req.headers.get("Content-Length") ?? "0", 10);
     if (contentLength > MAX_UPLOAD_SIZE) {
       return {

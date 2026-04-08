@@ -73,50 +73,79 @@ async function connectionHandle(
   },
   handle: cNext,
 ) {
-  // connection.readable.
-  const { header, body } = await createStreamAfterTarget(connection.readable, target);
-  if (!header) {
-    return;
-  }
-  const httpHeaderText = decoder.decode(header);
-  const httpHeader = parseHttpRequest(httpHeaderText);
-  const rawReq = new Request("http://" + httpHeader.headers["Host"] + httpHeader.url, {
-    method: httpHeader.method,
-    body: httpHeader.method === "GET" || httpHeader.method === "HEAD" ? undefined : body,
-    headers: httpHeader.headers,
-  });
-  const rawRes = new Response();
-
-  const { req, res } = await handle(rawReq, rawRes);
-  const resWriter = connection.writable.getWriter();
-  let headerText: string[] = [];
-  res.headers.forEach((value, key) => {
-    headerText.push(`${key}: ${value}`);
-  });
-  const resHeaertText = `HTTP/1.1 ${res.status} OK\r\n${headerText.join("\r\n")}\r\n\r\n`;
-  await resWriter.write(encoder.encode(resHeaertText));
-  if (res.body) {
-    // node 运行时
-    // 释放写入器的锁定
-    resWriter.releaseLock();
-    // https://github.com/saghul/txiki.js/issues/646
-    await res.body?.pipeTo(connection.writable);
-  } else {
-    // @ts-expect-error
-    if (res._bodyInit) {
-      // tjs 运行时
-      // @ts-expect-error
-      await resWriter.write(res._bodyInit);
-    } else {
-      // llrt 运行时
-      const buffer = new Uint8Array(await (await res.blob()).arrayBuffer());
-      await resWriter.write(buffer);
+  try {
+    const { header, body } = await createStreamAfterTarget(connection.readable, target);
+    if (!header) {
+      return;
     }
+    const httpHeaderText = decoder.decode(header);
+    const httpHeader = parseHttpRequest(httpHeaderText);
+    const hasBody = httpHeader.method !== "GET" && httpHeader.method !== "HEAD";
+    /** 根据 Content-Length 读取指定长度的 body，避免在 keep-alive 连接上无限等待 */
+    let bodyArrayBuffer: ArrayBuffer | undefined;
+    if (hasBody && body) {
+      const contentLength = parseInt(httpHeader.headers["Content-Length"] ?? "0", 10);
+      if (contentLength > 0) {
+        const chunks: Uint8Array[] = [];
+        let received = 0;
+        for await (const chunk of body) {
+          chunks.push(chunk);
+          received += chunk.length;
+          if (received >= contentLength) break;
+        }
+        const merged = new Uint8Array(received);
+        let offset = 0;
+        for (const chunk of chunks) {
+          merged.set(chunk, offset);
+          offset += chunk.length;
+        }
+        bodyArrayBuffer = merged.buffer.slice(merged.byteOffset, merged.byteOffset + merged.byteLength);
+      } else if (httpHeader.headers["Transfer-Encoding"] === "chunked") {
+        /** chunked transfer encoding 暂不支持，跳过 body */
+      }
+    }
+    const rawReq = new Request("http://" + httpHeader.headers["Host"] + httpHeader.url, {
+      method: httpHeader.method,
+      headers: httpHeader.headers,
+    });
+    /** 将 body 数据挂到 request 对象上，供中间件直接读取 */
+    (rawReq as Request & { _bodyBuffer?: ArrayBuffer })._bodyBuffer = bodyArrayBuffer;
+    const rawRes = new Response();
+
+    const { req, res } = await handle(rawReq, rawRes);
+    const resWriter = connection.writable.getWriter();
+    let headerText: string[] = [];
+    res.headers.forEach((value, key) => {
+      headerText.push(`${key}: ${value}`);
+    });
+    const resHeaertText = `HTTP/1.1 ${res.status} OK\r\n${headerText.join("\r\n")}\r\n\r\n`;
+    await resWriter.write(encoder.encode(resHeaertText));
+    if (res.body) {
+      // node 运行时
+      // 释放写入器的锁定
+      resWriter.releaseLock();
+      // https://github.com/saghul/txiki.js/issues/646
+      await res.body?.pipeTo(connection.writable);
+    } else {
+      // @ts-expect-error
+      if (res._bodyInit) {
+        // tjs 运行时
+        // @ts-expect-error
+        await resWriter.write(res._bodyInit);
+      } else {
+        // llrt 运行时
+        const buffer = new Uint8Array(await (await res.blob()).arrayBuffer());
+        await resWriter.write(buffer);
+      }
+    }
+    if (!resWriter.closed) {
+      await resWriter.close();
+    }
+    connection.close();
+  } catch (err) {
+    console.log("[connectionHandle error]", err);
+    try { connection.close(); } catch { /* ignore */ }
   }
-  if (!resWriter.closed) {
-    await resWriter.close();
-  }
-  connection.close();
 }
 
 function parseHttpRequest(requestText: string) {

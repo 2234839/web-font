@@ -10,7 +10,15 @@ export interface MultipartFile {
   data: Uint8Array;
 }
 
-export function parseMultipart(contentType: string, body: ArrayBuffer): MultipartFile {
+export interface MultipartParseResult {
+  files: MultipartFile[];
+}
+
+export function parseMultipart(contentType: string, body: ArrayBuffer): MultipartParseResult {
+  if (!body || body.byteLength === 0) {
+    return { files: [] };
+  }
+
   const boundaryMatch = contentType.match(/boundary=([^\s;]+)/);
   if (!boundaryMatch) throw new Error("No boundary found");
   const boundary = boundaryMatch[1].replace(/^"(.*)"$/, "$1");
@@ -19,7 +27,6 @@ export function parseMultipart(contentType: string, body: ArrayBuffer): Multipar
   const decoder = new TextDecoder("utf-8");
   const bodyBytes = new Uint8Array(body);
   const delimiter = encoder.encode("\r\n--" + boundary);
-  const endDelimiter = encoder.encode("--" + boundary + "--");
 
   /** 在字节数组中查找子串位置 */
   function findBytes(haystack: Uint8Array, needle: Uint8Array, offset: number): number {
@@ -46,9 +53,6 @@ export function parseMultipart(contentType: string, body: ArrayBuffer): Multipar
   pos = sbPos + startBoundary.length;
 
   while (pos < bodyBytes.length) {
-    // 检查是否到达结束边界
-    if (findBytes(bodyBytes, endDelimiter, pos - 2) !== -1) break;
-
     // 查找 headers 和 body 的分界 "\r\n\r\n"
     const headerEnd = findBytes(bodyBytes, encoder.encode("\r\n\r\n"), pos);
     if (headerEnd === -1) break;
@@ -79,11 +83,16 @@ export function parseMultipart(contentType: string, body: ArrayBuffer): Multipar
     }
 
     pos = nextBoundary + delimiter.length;
+
+    // 检查 boundary 后面是否紧跟 "--"（结束标记）
+    if (pos + 2 <= bodyBytes.length && bodyBytes[pos] === 45 && bodyBytes[pos + 1] === 45) {
+      break;
+    }
     // 跳过 boundary 后的 "\r\n"
     if (pos < bodyBytes.length && bodyBytes[pos] === 13 && bodyBytes[pos + 1] === 10) {
       pos += 2;
     }
   }
 
-  return { ...files[0], files } as MultipartFile & { files: MultipartFile[] };
+  return { files };
 }

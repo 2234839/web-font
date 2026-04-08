@@ -175,7 +175,7 @@ function App() {
         />
       </section>
 
-      <Show when={selectedFont() && text()}>
+      <Show when={selectedFont()}>
         <section style={s.section}>
           <div style={{ display: "flex", "justify-content": "space-between", "align-items": "center", "margin-bottom": "6px" }}>
             <label style={{ ...s.label, margin: "0" }}>CSS 代码</label>
@@ -193,7 +193,17 @@ function App() {
               </button>
               <button
                 style={{ ...s.btn, padding: "3px 12px", "font-size": "12px" }}
-                onClick={() => navigator.clipboard.writeText(cssStyle())}
+                onClick={async (e) => {
+                  const btn = e.currentTarget;
+                  try {
+                    await navigator.clipboard.writeText(cssStyle());
+                    btn.textContent = "已复制";
+                    setTimeout(() => { btn.textContent = "复制 CSS"; }, 1500);
+                  } catch {
+                    btn.textContent = "复制失败";
+                    setTimeout(() => { btn.textContent = "复制 CSS"; }, 1500);
+                  }
+                }}
               >
                 复制 CSS
               </button>
@@ -202,6 +212,19 @@ function App() {
           <pre style={s.pre}>{cssStyle()}</pre>
         </section>
       </Show>
+
+      <section style={{ ...s.section, "font-size": "12px", color: "#aaa", "line-height": "1.8" }}>
+        <p><b>原理：</b>服务端根据 text 参数裁剪字体，只返回所需字符的子集。相同 URL 的请求会被浏览器自动缓存。</p>
+        <p><b>最小化用法：</b>将下方 CSS 复制到你的页面，修改 text 参数中的文字即可：</p>
+        <pre style={{ ...s.pre, "font-size": "12px", "margin-top": "4px" }}>{`<style>
+@font-face {
+  font-family: "MyFont";
+  src: url("https://your-domain/api?font=字体名&text=你的文字") format("truetype");
+}
+.title { font-family: "MyFont"; }
+</style>
+<h1 class="title">你的文字</h1>`}</pre>
+      </section>
 
       <UploadSection config={serverConfig()} onUploaded={refreshFonts} />
       <style>{throttledCss()}</style>

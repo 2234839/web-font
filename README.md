@@ -19,6 +19,9 @@ ui 需要展现一些特定的字体，但直接引入字体包又过大，于�
 
 1.裁剪字体包使其仅包含选中的字体,其体积自然十分之小
 2.另外可以生成 css 直接复制可用，部署在公网便可永久访问
+3.支持字体文件上传（临时上传和管理员上传两种模式）
+4.支持下载裁剪后的字体文件
+5.字体名称支持模糊匹配（精确 > 前缀 > 包含）
 
 
 ## 安装与使用
@@ -40,7 +43,7 @@ tjs run ./dist_backend/app.cjs
 
 https://hub.docker.com/repository/docker/llej0/web-font 很小的包体积 ![alt text](doc/image.png)
 
-docker compoose.yml
+docker compose.yml
 
 ```yml
 version: '3'
@@ -51,6 +54,9 @@ services:
       - "8087:8087"
     volumes:
       - ./data:/home/font # 挂载本机字体目录
+    environment:
+      - ENABLE_TEMP_UPLOAD=true        # 开启临时上传（最多10个，FIFO溢出覆盖）
+      - ADMIN_API_KEY=你的管理员密钥    # 设置后开启管理员上传，不设置则不可用
     deploy:
       resources:
         limits:
@@ -62,6 +68,22 @@ services:
 其中 font 目录替换成你的字体文件存放目录
 
 ## 提供的服务
+
+### API 接口
+
+| 接口 | 说明 |
+|------|------|
+| `GET /api?font=字体名&text=文字` | 裁剪字体，字体名支持模糊匹配 |
+| `GET /api/fonts` | 列出所有可用字体 |
+| `GET /api/config` | 获取公开配置（是否开启上传等） |
+| `POST /api/upload?mode=temp` | 临时上传字体文件（需开启 `ENABLE_TEMP_UPLOAD`） |
+| `POST /api/upload?mode=admin` | 管理员上传字体文件（需 `Authorization: Bearer <API_KEY>`） |
+
+### 上传功能
+
+- **临时上传**：设置环境变量 `ENABLE_TEMP_UPLOAD=true` 启用，最多保留 10 个字体文件，超出后自动删除最早上传的（FIFO）
+- **管理员上传**：设置环境变量 `ADMIN_API_KEY=你的密钥` 启用，上传的字体永久保存，需要通过 API Key 认证
+- 支持的字体格式：`.ttf` `.otf` `.woff` `.woff2`
 
 ## 鸣谢
 

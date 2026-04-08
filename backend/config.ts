@@ -10,7 +10,7 @@ export const enableTempUpload = env.ENABLE_TEMP_UPLOAD === "true";
 export const adminApiKey: string = env.ADMIN_API_KEY ?? "";
 
 /** 临时上传目录最大文件数 */
-export const tempMaxFiles = 10;
+export const tempMaxFiles = parseInt(env.TEMP_MAX_FILES ?? "10", 10) || 10;
 
 /** 字体搜索目录（按优先级排序） */
 export const fontDirs = ["font", "font/temp", "font/admin"] as const;

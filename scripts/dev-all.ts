@@ -34,6 +34,7 @@ const backend = spawn("pnpx", ["tsx", "watch", "backend/app.ts"], {
   cwd: ROOT_DIR,
   stdio: "inherit",
   shell: true,
+  env: { ...process.env, ENABLE_TEMP_UPLOAD: "true", ADMIN_API_KEY: "dev-key" },
 });
 children.push(backend);
 
