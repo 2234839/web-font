@@ -30,3 +30,4 @@ app
 *.tar
 
 dist_backend
+.pilot

@@ -14,23 +14,6 @@ function sanitizeFilename(filename: string): string {
   return filename.replace(/[/\\]/g, "").replace(/[\x00-\x1f]/g, "");
 }
 
-/** 生成带时间戳前缀的文件名，用于 FIFO 排序 */
-function generateTempFilename(originalName: string): string {
-  const ts = Date.now().toString(36);
-  const ext = originalName.includes(".") ? "." + originalName.split(".").pop() : ".ttf";
-  const base = originalName.replace(/\.[^.]+$/, "");
-  return `${ts}_${base}${ext}`;
-}
-
-/** 获取临时目录中的字体文件列表 */
-async function getTempFiles(): Promise<string[]> {
-  const entries = await readdir("font/temp");
-  return entries
-    .filter((e) => e.isFile() && isAllowedFontFile(e.name))
-    .map((e) => e.name)
-    .sort();
-}
-
 /** 确保目录存在，不存在则创建 */
 async function ensureDir(dir: string) {
   const { stat, mkdir } = await import("./interface");
@@ -57,20 +40,24 @@ export async function handleTempUpload(fileData: { data: Uint8Array; filename: s
 
   await ensureDir("font/temp");
 
-  const existingFiles = await getTempFiles();
+  const filename = sanitizeFilename(fileData.filename);
+  const filePath = path_join("font/temp", filename);
 
-  // FIFO: 超出上限时删除最早的文件
-  if (existingFiles.length >= tempMaxFiles) {
-    const toDelete = existingFiles[0];
-    try {
-      await unlink(path_join("font/temp", toDelete));
-    } catch {
-      // 删除失败不影响上传
+  /** 同名文件直接覆盖，否则检查文件数量上限 */
+  try {
+    await (await import("./interface")).stat(filePath);
+  } catch {
+    const entries = await readdir("font/temp");
+    const count = entries.filter((e) => e.isFile() && isAllowedFontFile(e.name)).length;
+    if (count >= tempMaxFiles) {
+      const toDelete = entries.find((e) => e.isFile() && isAllowedFontFile(e.name));
+      if (toDelete) {
+        try { await unlink(path_join("font/temp", toDelete.name)); } catch { /* 删除失败不影响上传 */ }
+      }
     }
   }
 
-  const filename = generateTempFilename(sanitizeFilename(fileData.filename));
-  await writeFile(path_join("font/temp", filename), fileData.data);
+  await writeFile(filePath, fileData.data);
   return { success: true };
 }
 

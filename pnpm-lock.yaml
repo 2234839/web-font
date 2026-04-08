@@ -36,6 +36,9 @@ importers:
       vite:
         specifier: ^8.0.7
         version: 8.0.7(@types/node@25.5.2)(esbuild@0.27.7)
+      vite-plugin-pilot:
+        specifier: ^1.0.19
+        version: 1.0.19(magic-string@0.30.21)(vite@8.0.7(@types/node@25.5.2)(esbuild@0.27.7))
       vite-plugin-solid:
         specifier: ^2.11.12
         version: 2.11.12(solid-js@1.9.12)(vite@8.0.7(@types/node@25.5.2)(esbuild@0.27.7))
@@ -995,6 +998,20 @@ packages:
     peerDependencies:
       browserslist: '>= 4.21.0'
 
+  vite-plugin-pilot@1.0.19:
+    resolution: {integrity: sha512-8Oa+1P+oP8lV1zemyi2Mzz8I2LRPWEyR7Zi7F8l30yNBrGlYsgJvJePSF73U2l/tUdRaF3V7D4ET3Na68Lqvzg==}
+    engines: {node: '>=18.0.0'}
+    hasBin: true
+    peerDependencies:
+      '@vue/compiler-dom': '>=3.3'
+      magic-string: '>=0.30'
+      vite: '>=5'
+    peerDependenciesMeta:
+      '@vue/compiler-dom':
+        optional: true
+      magic-string:
+        optional: true
+
   vite-plugin-solid@2.11.12:
     resolution: {integrity: sha512-FgjPcx2OwX9h6f28jli7A4bG7PP3te8uyakE5iqsmpq3Jqi1TWLgSroC9N6cMfGRU2zXsl4Q6ISvTr2VL0QHpA==}
     peerDependencies:
@@ -1859,6 +1876,12 @@ snapshots:
       browserslist: 4.28.2
       escalade: 3.2.0
       picocolors: 1.1.1
+
+  vite-plugin-pilot@1.0.19(magic-string@0.30.21)(vite@8.0.7(@types/node@25.5.2)(esbuild@0.27.7)):
+    dependencies:
+      vite: 8.0.7(@types/node@25.5.2)(esbuild@0.27.7)
+    optionalDependencies:
+      magic-string: 0.30.21
 
   vite-plugin-solid@2.11.12(solid-js@1.9.12)(vite@8.0.7(@types/node@25.5.2)(esbuild@0.27.7)):
     dependencies:

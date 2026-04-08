@@ -12,12 +12,10 @@ import { enableTempUpload, adminApiKey, fontDirs } from "./config";
 import { parseMultipart } from "./multipart";
 import { handleTempUpload, handleAdminUpload } from "./upload";
 
-let release_name = global.tjs ? "tjs" : globalThis?.process?.release?.name;
+let release_name = globalThis?.process?.release?.name;
 
 let runtimeReady: Promise<void>;
-if (release_name === "tjs") {
-  runtimeReady = import("./server/tjs").then(() => {});
-} else if (release_name === "node" || release_name === "llrt") {
+if (release_name === "node" || release_name === "llrt") {
   runtimeReady = import("./server/node").then(() => {});
 } else {
   runtimeReady = Promise.resolve();

@@ -27,13 +27,9 @@ export class SimpleHttpServer {
   private router: cRouter = new cRouter();
 
   constructor(options: { port: number; hostname?: string }) {
-    let release_name = global.tjs ? "tjs" : globalThis?.process?.release?.name;
+    const release_name = globalThis?.process?.release?.name;
     console.log("[release.name]", release_name);
-    if (global.tjs) {
-      this.tjsServer(options);
-      return this;
-    }
-    if (release_name === "llrt" || release_name == "node") {
+    if (release_name === "llrt" || release_name === "node") {
       import("./tcp_server").then((m) => {
         const server = m.createTcpServer((socket) => {
           connectionHandle(socket, (req, res) => this.router.handle(req, res));
@@ -44,18 +40,6 @@ export class SimpleHttpServer {
       });
     }
   }
-  private async tjsServer(options: { port: number; hostname?: string }) {
-    const listener = (await global.tjs.listen(
-      "tcp",
-      options.hostname ?? "::",
-      options.port,
-      {},
-    )) as tjs.Listener;
-    console.log(`Server is listening on port ${options.port}`);
-    for await (const connection of listener) {
-      connectionHandle(connection, this.router.handle.bind(this.router));
-    }
-  }
   use(...middlewares: cMiddleware[]) {
     middlewares.forEach((middleware) => this.router.use(middleware));
     return this;
@@ -63,6 +47,18 @@ export class SimpleHttpServer {
 }
 const decoder = new TextDecoder("utf-8");
 const encoder = new TextEncoder();
+
+/** 合并多个 Uint8Array 为单个 ArrayBuffer */
+function mergeChunks(chunks: Uint8Array[], totalLength: number): ArrayBuffer {
+  const merged = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    merged.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return merged.buffer.slice(merged.byteOffset, merged.byteOffset + merged.byteLength);
+}
+
 // 请求头终止符
 const target = encoder.encode("\r\n\r\n");
 async function connectionHandle(
@@ -81,11 +77,20 @@ async function connectionHandle(
     const httpHeaderText = decoder.decode(header);
     const httpHeader = parseHttpRequest(httpHeaderText);
     const hasBody = httpHeader.method !== "GET" && httpHeader.method !== "HEAD";
-    /** 根据 Content-Length 读取指定长度的 body，避免在 keep-alive 连接上无限等待 */
+    /** 大小写不敏感查找 header */
+    const getHeader = (name: string) => {
+      const lower = name.toLowerCase();
+      for (const key of Object.keys(httpHeader.headers)) {
+        if (key.toLowerCase() === lower) return httpHeader.headers[key];
+      }
+      return undefined;
+    };
+    /** 读取请求体 */
     let bodyArrayBuffer: ArrayBuffer | undefined;
     if (hasBody && body) {
-      const contentLength = parseInt(httpHeader.headers["Content-Length"] ?? "0", 10);
+      const contentLength = parseInt(getHeader("Content-Length") ?? "0", 10);
       if (contentLength > 0) {
+        /** 根据 Content-Length 读取指定长度的 body */
         const chunks: Uint8Array[] = [];
         let received = 0;
         for await (const chunk of body) {
@@ -93,18 +98,77 @@ async function connectionHandle(
           received += chunk.length;
           if (received >= contentLength) break;
         }
-        const merged = new Uint8Array(received);
-        let offset = 0;
-        for (const chunk of chunks) {
-          merged.set(chunk, offset);
-          offset += chunk.length;
+        body.cancel?.();
+        bodyArrayBuffer = mergeChunks(chunks, received);
+      } else if (getHeader("Transfer-Encoding") === "chunked") {
+        /** 解码 chunked transfer encoding */
+        const chunks: Uint8Array[] = [];
+        let totalLength = 0;
+        const chunkBuf: number[] = [];
+        let state: "size" | "data" | "crlf_after_data" = "size";
+        let chunkSize = 0;
+        let dataRead = 0;
+        let goto_done = false;
+        for await (const rawChunk of body) {
+          for (const byte of rawChunk) {
+            switch (state) {
+              case "size": {
+                if (byte === 13) continue; // \r
+                if (byte === 10) {
+                  // \n — size 行结束
+                  const sizeStr = new TextDecoder().decode(new Uint8Array(chunkBuf)).trim();
+                  chunkSize = parseInt(sizeStr, 16);
+                  chunkBuf.length = 0;
+                  if (chunkSize === 0) {
+                    state = "crlf_after_data"; // 最后一个空行
+                  } else {
+                    state = "data";
+                    dataRead = 0;
+                  }
+                } else {
+                  chunkBuf.push(byte);
+                }
+                break;
+              }
+              case "data": {
+                chunkBuf.push(byte);
+                dataRead++;
+                if (dataRead >= chunkSize) {
+                  const data = new Uint8Array(chunkBuf);
+                  chunks.push(data);
+                  totalLength += data.length;
+                  chunkBuf.length = 0;
+                  state = "crlf_after_data";
+                }
+                break;
+              }
+              case "crlf_after_data": {
+                // 跳过 trailing \r\n
+                if (byte === 10) {
+                  if (chunkSize === 0) {
+                    // 结束标记后的 \n
+                    state = "size";
+                    goto_done = true;
+                  } else {
+                    state = "size";
+                  }
+                }
+                break;
+              }
+            }
+            if (goto_done) break;
+          }
+          if (goto_done) break;
         }
-        bodyArrayBuffer = merged.buffer.slice(merged.byteOffset, merged.byteOffset + merged.byteLength);
-      } else if (httpHeader.headers["Transfer-Encoding"] === "chunked") {
-        /** chunked transfer encoding 暂不支持，跳过 body */
+        if (totalLength > 0) {
+          bodyArrayBuffer = mergeChunks(chunks, totalLength);
+        }
+        body.cancel?.();
+      } else {
+        /** 无 Content-Length 且非 chunked，暂不处理 */
       }
     }
-    const rawReq = new Request("http://" + httpHeader.headers["Host"] + httpHeader.url, {
+    const rawReq = new Request("http://" + (getHeader("Host") ?? "localhost") + httpHeader.url, {
       method: httpHeader.method,
       headers: httpHeader.headers,
     });
@@ -121,22 +185,13 @@ async function connectionHandle(
     const resHeaertText = `HTTP/1.1 ${res.status} OK\r\n${headerText.join("\r\n")}\r\n\r\n`;
     await resWriter.write(encoder.encode(resHeaertText));
     if (res.body) {
-      // node 运行时
-      // 释放写入器的锁定
+      /** node 运行时 */
       resWriter.releaseLock();
-      // https://github.com/saghul/txiki.js/issues/646
       await res.body?.pipeTo(connection.writable);
     } else {
-      // @ts-expect-error
-      if (res._bodyInit) {
-        // tjs 运行时
-        // @ts-expect-error
-        await resWriter.write(res._bodyInit);
-      } else {
-        // llrt 运行时
-        const buffer = new Uint8Array(await (await res.blob()).arrayBuffer());
-        await resWriter.write(buffer);
-      }
+      /** llrt 运行时 */
+      const buffer = new Uint8Array(await (await res.blob()).arrayBuffer());
+      await resWriter.write(buffer);
     }
     if (!resWriter.closed) {
       await resWriter.close();
@@ -161,11 +216,13 @@ function parseHttpRequest(requestText: string) {
   const headers: Record<string, string> = {};
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i];
-    if (line === "") break; // 空行表示头部结束
+    if (line === "" || line === "\r") break; // 空行表示头部结束
 
-    const [key, ...valueParts] = line.split(":");
-    const value = valueParts.join(":").trim();
-    headers[key.trim()] = value;
+    const colonIndex = line.indexOf(":");
+    if (colonIndex === -1) continue;
+    const key = line.slice(0, colonIndex).trim();
+    const value = line.slice(colonIndex + 1).trim();
+    headers[key] = value;
   }
 
   return {
@@ -175,58 +232,69 @@ function parseHttpRequest(requestText: string) {
     headers,
   };
 }
-async function createStreamAfterTarget(
+function createStreamAfterTarget(
   originalStream: ReadableStream<Uint8Array>,
   target: Uint8Array,
-) {
+): Promise<{ header: Uint8Array | null; body: ReadableStream<Uint8Array> }> {
   const reader = originalStream.getReader();
   let buffer = new Uint8Array();
 
-  // Function to check if target is found in the buffer
-  function containsTarget(buffer: Uint8Array, target: Uint8Array): number {
-    for (let i = 0; i <= buffer.length - target.length; i++) {
-      if (buffer.slice(i, i + target.length).every((value, index) => value === target[index])) {
+  function containsTarget(buf: Uint8Array, tgt: Uint8Array): number {
+    for (let i = 0; i <= buf.length - tgt.length; i++) {
+      if (buf.slice(i, i + tgt.length).every((value, index) => value === tgt[index])) {
         return i;
       }
     }
     return -1;
   }
-  let controller = null as unknown as ReadableStreamDefaultController<Uint8Array>;
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) {
-      controller.close();
-      break; // Stream ended
-    }
-    if (controller) {
-      controller.enqueue(value);
-      continue;
-    }
-    // Append the new chunk to the buffer
-    const newBuffer = new Uint8Array(buffer.length + value.length);
-    newBuffer.set(buffer);
-    newBuffer.set(value, buffer.length);
-    buffer = newBuffer;
 
-    // Check if the target is found in the buffer
-    const targetIndex = containsTarget(buffer, target);
-    if (targetIndex !== -1) {
-      // Found the target data, return the remaining buffer after the target data
-      const start = targetIndex + target.length;
-      const header = buffer.slice(0, start);
-      const remainingData = buffer.slice(start);
-      const body = new ReadableStream<Uint8Array>({
-        start(c) {
-          controller = c;
-          controller.enqueue(remainingData);
-        },
+  return new Promise((resolve) => {
+    function pump() {
+      reader.read().then(({ done, value }) => {
+        if (done) {
+          resolve({ header: null, body: new ReadableStream<Uint8Array>() });
+          return;
+        }
+        const newBuffer = new Uint8Array(buffer.length + value.length);
+        newBuffer.set(buffer);
+        newBuffer.set(value, buffer.length);
+        buffer = newBuffer;
+
+        const targetIndex = containsTarget(buffer, target);
+        if (targetIndex === -1) {
+          pump();
+          return;
+        }
+        const start = targetIndex + target.length;
+        const header = buffer.slice(0, start);
+        const remainingData = buffer.slice(start);
+
+        /** body stream：先写入剩余数据，然后在后台继续从 originalStream 读取 */
+        let controller!: ReadableStreamDefaultController<Uint8Array>;
+        const body = new ReadableStream<Uint8Array>({
+          start(c) {
+            controller = c;
+            if (remainingData.length > 0) {
+              controller.enqueue(remainingData);
+            }
+            /** 后台继续读取 originalStream 并转发到 body stream */
+            (async () => {
+              try {
+                while (true) {
+                  const { done, value } = await reader.read();
+                  if (done) { controller.close(); return; }
+                  controller.enqueue(value);
+                }
+              } catch (err) {
+                /** body stream 被消费方 cancel 时预期会抛错 */
+                console.log("[createStreamAfterTarget] body stream closed:", err);
+              }
+            })();
+          },
+        });
+        resolve({ header, body });
       });
-      // Create a new stream from the remaining data
-      return {
-        header,
-        body,
-      };
     }
-  }
-  return { header: null, body: new ReadableStream<Uint8Array>() }; // Return an empty stream if the target is not found
+    pump();
+  });
 }

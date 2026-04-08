@@ -26,7 +26,7 @@ ui 需要展现一些特定的字体，但直接引入字体包又过大，于�
 
 ## 安装与使用
 
-### 使用 node / tjs / llrt 等运行时
+### 使用 node / llrt 等运行时
 
 拉取项目，并将字体文件放到项目内的 font 目录下，然后运行：
 
@@ -34,7 +34,6 @@ pnpm install && pnpm build && pnpm build_backend
 
 node ./dist_backend/app.cjs
 llrt ./dist_backend/app.cjs
-tjs run ./dist_backend/app.cjs
 
 
 ### 使用 docker 安装
