@@ -82,7 +82,8 @@ function sizeof(ttf) {
   ttf.support.cmap.format4Segments = getSegments(unicodes2Bytes, 0xFFFF);
   ttf.support.cmap.format4Size = 24 + ttf.support.cmap.format4Segments.length * 8;
   ttf.support.cmap.format0Segments = getFormat0Segment(glyfUnicodes);
-  ttf.support.cmap.format0Size = 262;
+  ttf.support.cmap.hasFormat0 = ttf.support.cmap.format0Segments.length > 0;
+  ttf.support.cmap.format0Size = ttf.support.cmap.hasFormat0 ? 262 : 0;
 
   var hasGLyphsOver2Bytes = false;
   for (var gi = 0, gil = unicodes2Bytes.length; gi < gil; gi++) {
@@ -97,7 +98,10 @@ function sizeof(ttf) {
     ttf.support.cmap.format12Segments = getSegments(unicodes4Bytes);
     ttf.support.cmap.format12Size = 16 + ttf.support.cmap.format12Segments.length * 12;
   }
-  var size = 4 + (hasGLyphsOver2Bytes ? 32 : 24)
+  /** 记录头大小必须动态计算，与 write.js 中的 numRecords 保持一致，否则会导致表偏移错位 */
+  var numRecords = 2 + (ttf.support.cmap.hasFormat0 ? 1 : 0) + (hasGLyphsOver2Bytes ? 1 : 0);
+  var recordHeaderSize = 4 + numRecords * 8;
+  var size = recordHeaderSize
   + ttf.support.cmap.format0Size
   + ttf.support.cmap.format4Size
   + (hasGLyphsOver2Bytes ? ttf.support.cmap.format12Size : 0);

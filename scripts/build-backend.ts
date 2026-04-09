@@ -103,7 +103,11 @@ function runTsup() {
 /** 使用 LLRT compile 生成 .lrt 文件 */
 function runLlrtCompile() {
   console.log("\n--- Running LLRT compile ---");
-  execSync(`${LLRT_BIN} compile ./dist_backend/app.cjs ./dist_backend/app.lrt`, {
+  execSync(`${LLRT_BIN} compile ./dist_backend/backend/app.cjs ./dist_backend/app.lrt`, {
+    stdio: "inherit",
+    cwd: ROOT_DIR,
+  });
+  execSync(`${LLRT_BIN} compile "./dist_backend/基准测试_llrt.cjs" ./dist_backend/llrt_bench.lrt`, {
     stdio: "inherit",
     cwd: ROOT_DIR,
   });

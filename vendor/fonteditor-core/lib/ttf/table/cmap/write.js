@@ -92,26 +92,33 @@ function writeSubTable12(writer, segments) {
 
 function write(writer, ttf) {
   var hasGLyphsOver2Bytes = ttf.support.cmap.hasGLyphsOver2Bytes;
+  var hasFormat0 = ttf.support.cmap.hasFormat0;
   var pos = writer.offset;
   var view = writer.view;
 
+  var numRecords = 2 + (hasFormat0 ? 1 : 0) + (hasGLyphsOver2Bytes ? 1 : 0);
   view.setUint16(pos, 0, false); pos += 2;
-  view.setUint16(pos, hasGLyphsOver2Bytes ? 4 : 3, false); pos += 2;
+  view.setUint16(pos, numRecords, false); pos += 2;
   writer.offset = pos;
 
-  var subTableOffset = 4 + (hasGLyphsOver2Bytes ? 32 : 24);
+  var headerSize = 4 + numRecords * 8;
   var format4Size = ttf.support.cmap.format4Size;
   var format0Size = ttf.support.cmap.format0Size;
 
-  writer.writeUint16(0); writer.writeUint16(3); writer.writeUint32(subTableOffset);
-  writer.writeUint16(1); writer.writeUint16(0); writer.writeUint32(subTableOffset + format4Size);
-  writer.writeUint16(3); writer.writeUint16(1); writer.writeUint32(subTableOffset);
+  /** platform 0 (Unicode) 和 platform 3 (Windows) 共享同一个 format 4 subtable */
+  writer.writeUint16(0); writer.writeUint16(3); writer.writeUint32(headerSize);
+  if (hasFormat0) {
+    writer.writeUint16(1); writer.writeUint16(0); writer.writeUint32(headerSize + format4Size);
+  }
+  writer.writeUint16(3); writer.writeUint16(1); writer.writeUint32(headerSize);
   if (hasGLyphsOver2Bytes) {
-    writer.writeUint16(3); writer.writeUint16(10); writer.writeUint32(subTableOffset + format4Size + format0Size);
+    writer.writeUint16(3); writer.writeUint16(10); writer.writeUint32(headerSize + format4Size + format0Size);
   }
 
   writeSubTable4(writer, ttf.support.cmap.format4Segments);
-  writeSubTable0(writer, ttf.support.cmap.format0Segments);
+  if (hasFormat0) {
+    writeSubTable0(writer, ttf.support.cmap.format0Segments);
+  }
   if (hasGLyphsOver2Bytes) {
     writeSubTable12(writer, ttf.support.cmap.format12Segments);
   }

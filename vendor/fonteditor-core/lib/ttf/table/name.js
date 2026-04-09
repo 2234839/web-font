@@ -87,10 +87,11 @@ var _default = exports.default = _table.default.create('name', [], {
       offset += r.name.length;
     }
 
+    /** 必须在 writeBytes 前同步 writer.offset，否则 writeBytes 会从旧偏移写入，覆盖 header */
+    writer.offset = pos;
     for (var j = 0, jl = nameRecordTbl.length; j < jl; j++) {
       writer.writeBytes(nameRecordTbl[j].name);
     }
-    writer.offset = pos;
     return writer;
   },
   size: function size(ttf) {
