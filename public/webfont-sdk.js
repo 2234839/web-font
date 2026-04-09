@@ -40,7 +40,7 @@ var WebFont = (function () {
   /**
    * 获取或创建对应 fontKey 的加载器
    */
-  function getLoader(fontName, baseUrl, family) {
+  function getLoader(fontName, baseUrl, family, outType) {
     var key = fontKey(fontName, family);
     if (!loaders[key]) {
       loaders[key] = {
@@ -49,7 +49,8 @@ var WebFont = (function () {
         applied: false,
         fontName: fontName,
         family: family,
-        baseUrl: baseUrl
+        baseUrl: baseUrl,
+        outType: outType || "woff2"
       };
     }
     return loaders[key];
@@ -69,7 +70,9 @@ var WebFont = (function () {
     var loadedChars = loader.loadedChars;
 
     var text = newChars.join("");
-    var url = baseUrl + "/api?font=" + encodeURIComponent(fontName) + "&text=" + encodeURIComponent(text);
+    var outType = loader.outType || "woff2";
+    var url = baseUrl + "/api?font=" + encodeURIComponent(fontName) + "&text=" + encodeURIComponent(text) + "&outType=" + outType;
+    var formatStr = outType === "woff2" ? "woff2" : "truetype";
     var unicodeRanges = newChars
       .map(function (c) { return "U+" + c.codePointAt(0).toString(16).padStart(4, "0"); })
       .join(", ");
@@ -78,7 +81,7 @@ var WebFont = (function () {
     style.textContent =
       '@font-face {\n' +
       '  font-family: "' + family + '";\n' +
-      '  src: url("' + url + '") format("truetype");\n' +
+      '  src: url("' + url + '") format("' + formatStr + '");\n' +
       '  unicode-range: ' + unicodeRanges + ';\n' +
       '}\n';
     document.head.appendChild(style);
@@ -210,7 +213,8 @@ var WebFont = (function () {
       clearInterval(pollTasks[selector].timer);
     }
 
-    var loader = getLoader(fontName, baseUrl, family);
+    var outType = options.outType || "woff2";
+    var loader = getLoader(fontName, baseUrl, family, outType);
     var applied = false;
 
     function tick() {
@@ -251,7 +255,8 @@ var WebFont = (function () {
       observeTasks[selector].dispose();
     }
 
-    var loader = getLoader(fontName, baseUrl, family);
+    var outType = options.outType || "woff2";
+    var loader = getLoader(fontName, baseUrl, family, outType);
     var applied = false;
     var debounceTimer = null;
 
@@ -333,7 +338,8 @@ var WebFont = (function () {
     var baseUrl = options.baseUrl || location.origin;
     var family = options.family || fontName.replace(/\.[^.]+$/, "");
 
-    var loader = getLoader(fontName, baseUrl, family);
+    var outType = options.outType || "woff2";
+    var loader = getLoader(fontName, baseUrl, family, outType);
 
     processText(loader, options.text);
 

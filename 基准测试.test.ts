@@ -10,6 +10,7 @@
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { performance } from "node:perf_hooks";
 import { Font } from "./vendor/fonteditor-core/lib/ttf/font.js";
+import woff2Module from "./vendor/fonteditor-core/woff2/index.js";
 import { Canvas, FontLibrary } from "skia-canvas";
 
 const FONT_PATH = "font/令东齐伋复刻体.ttf";
@@ -19,6 +20,12 @@ const BENCHMARK_DIR = "benchmark_results";
 const raw = await readFile(FONT_PATH);
 const fontBuffer = new Uint8Array(raw).buffer;
 FontLibrary.use(FONT_NAME, FONT_PATH);
+
+/** 初始化 woff2 wasm 并测量耗时 */
+const wasmInitStart = performance.now();
+await woff2Module.init();
+const wasmInitTime = performance.now() - wasmInitStart;
+console.log(`  woff2 wasm 初始化: ${wasmInitTime.toFixed(1)}ms`);
 
 const testCases = [
   { label: "8个汉字", text: "天地玄黄宇宙洪荒" },
@@ -125,8 +132,10 @@ const results: Array<{
 
 for (const { label, text } of testCases) {
   const subset = [...text].map((c) => c.codePointAt(0)!);
-  const times: number[] = [];
-  let lastOutputSize = 0;
+
+  /** --- ttf 测试 --- */
+  const ttfTimes: number[] = [];
+  let lastTtfSize = 0;
   let lastTtfBuffer: ArrayBuffer | null = null;
 
   for (let i = 0; i < ROUNDS; i++) {
@@ -135,24 +144,42 @@ for (const { label, text } of testCases) {
     const optimized = font.optimize().sort();
     const result = optimized.write({ type: "ttf" });
     const t1 = performance.now();
-    times.push(t1 - t0);
-    lastOutputSize = typeof result === "string" ? result.length : result.byteLength;
+    ttfTimes.push(t1 - t0);
+    lastTtfSize = typeof result === "string" ? result.length : result.byteLength;
     if (i === 0) {
       lastTtfBuffer = result instanceof ArrayBuffer ? result : new Uint8Array(result as any).buffer;
     }
   }
 
-  const avg = times.reduce((a, b) => a + b, 0) / times.length;
-  const min = Math.min(...times);
-  const max = Math.max(...times);
+  const ttfAvg = ttfTimes.reduce((a, b) => a + b, 0) / ttfTimes.length;
+  const ttfMin = Math.min(...ttfTimes);
+  const ttfMax = Math.max(...ttfTimes);
 
-  /** 计算渲染相似度 */
+  /** --- woff2 测试 --- */
+  const woff2Times: number[] = [];
+  let lastWoff2Size = 0;
+
+  for (let i = 0; i < ROUNDS; i++) {
+    const t0 = performance.now();
+    const font = Font.create(fontBuffer, { type: "ttf", subset });
+    const optimized = font.optimize().sort();
+    const result = optimized.write({ type: "woff2" });
+    const t1 = performance.now();
+    woff2Times.push(t1 - t0);
+    lastWoff2Size = typeof result === "string" ? result.length : result.byteLength;
+  }
+
+  const woff2Avg = woff2Times.reduce((a, b) => a + b, 0) / woff2Times.length;
+  const woff2Min = Math.min(...woff2Times);
+  const woff2Max = Math.max(...woff2Times);
+  const compressionRatio = ((1 - lastWoff2Size / lastTtfSize) * 100).toFixed(1);
+
+  /** 计算渲染相似度（使用 ttf） */
   let ssim = 0;
   if (lastTtfBuffer) {
     subsetFontCounter++;
     const familyName = await registerSubsetFont(lastTtfBuffer, subsetFontCounter);
 
-    /** 保存渲染对比图片 */
     const safeLabel = label.replace(/[^a-zA-Z0-9\u4e00-\u9fff]/g, "_");
     await renderTextToPng(FONT_NAME, text, 48, `${BENCHMARK_DIR}/${safeLabel}_full.png`);
     await renderTextToPng(familyName, text, 48, `${BENCHMARK_DIR}/${safeLabel}_subset.png`);
@@ -162,8 +189,9 @@ for (const { label, text } of testCases) {
     ssim = calculateSSIM(fullPixels, subsetPixels);
   }
 
-  results.push({ label, avg, min, max, outputSize: lastOutputSize, ssim });
-  console.log(`  ${label}: avg=${avg.toFixed(1)}ms  min=${min.toFixed(1)}ms  max=${max.toFixed(1)}ms  输出=${lastOutputSize.toLocaleString()} bytes  ssim=${ssim.toFixed(4)}`);
+  results.push({ label, avg: ttfAvg, min: ttfMin, max: ttfMax, outputSize: lastTtfSize, ssim });
+  console.log(`  [ttf]   ${label}: avg=${ttfAvg.toFixed(1)}ms  min=${ttfMin.toFixed(1)}ms  max=${ttfMax.toFixed(1)}ms  输出=${lastTtfSize.toLocaleString()} bytes  ssim=${ssim.toFixed(4)}`);
+  console.log(`  [woff2] ${label}: avg=${woff2Avg.toFixed(1)}ms  min=${woff2Min.toFixed(1)}ms  max=${woff2Max.toFixed(1)}ms  输出=${lastWoff2Size.toLocaleString()} bytes  压缩率=${compressionRatio}%`);
 }
 
 /** 保存结果到 JSON */

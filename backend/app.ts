@@ -4,6 +4,7 @@ function parseUrl(req: Request): URL {
 }
 
 import { fontSubset } from "./font_util/font";
+import type { FontEditor } from "../vendor/fonteditor-core/lib/ttf/font.js";
 import { mimeTypes } from "./server/mime_type";
 import type { cMiddleware } from "./server/req_res";
 import { SimpleHttpServer } from "./server/server";
@@ -296,7 +297,7 @@ async function handleFontSubset(req: Request, res: Response) {
     };
   }
 
-  const fontType = fontPath.split(".").pop() as "ttf";
+  const fontType = fontPath.split(".").pop() as FontEditor.FontType;
   let oldFontBuffer: ArrayBuffer;
   try {
     oldFontBuffer = await readFontBuffer(fontPath);
@@ -310,18 +311,29 @@ async function handleFontSubset(req: Request, res: Response) {
     };
   }
 
-  const outType = "ttf";
+  /** LLRT 不支持 wasm，默认 ttf；Node.js 默认 woff2（体积更小） */
+  const isLlrt = release_name === "llrt";
+  const outTypeParam = params.get("outType") || "";
+  const outType = (outTypeParam === "woff2" || outTypeParam === "ttf")
+    ? (isLlrt && outTypeParam === "woff2" ? "ttf" : outTypeParam)
+    : (isLlrt ? "ttf" : "woff2");
+
   const newFont = await fontSubset(oldFontBuffer, text, {
     outType: outType,
     sourceType: fontType,
   });
+
+  const contentTypes: Record<string, string> = {
+    ttf: "font/ttf",
+    woff2: "font/woff2",
+  };
 
   return {
     req,
     res: new Response(newFont, {
       status: 200,
       headers: {
-        "Content-Type": "font/ttf",
+        "Content-Type": contentTypes[outType] || "font/ttf",
         "Cache-Control": "public, max-age=31536000, immutable",
       },
     }),

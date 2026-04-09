@@ -126,7 +126,7 @@ function App() {
     if (!font) return "";
     return `@font-face {
   font-family: "CustomFont";
-  src: url("${location.origin}/api?font=${font}&text=${encodeURIComponent(text())}") format("truetype");
+  src: url("${location.origin}/api?font=${font}&text=${encodeURIComponent(text())}&outType=woff2") format("woff2");
 }
 .custom-font {
   color: red;
@@ -229,8 +229,8 @@ function App() {
                 style={{ ...s.btn, padding: "3px 12px", "font-size": "12px" }}
                 onClick={() => {
                   const a = document.createElement("a");
-                  a.href = `/api?font=${selectedFont()}&text=${encodeURIComponent(text())}`;
-                  a.download = selectedFont().replace(/\.[^.]+$/, "") + "_subset.ttf";
+                  a.href = `/api?font=${selectedFont()}&text=${encodeURIComponent(text())}&outType=woff2`;
+                  a.download = selectedFont().replace(/\.[^.]+$/, "") + "_subset.woff2";
                   a.click();
                 }}
               >
@@ -266,7 +266,7 @@ function App() {
         <pre style={{ ...s.pre, "font-size": "12px", "margin-top": "4px" }}>{`<style>
 @font-face {
   font-family: "MyFont";
-  src: url("${location.origin}/api?font=字体名&text=你的文字") format("truetype");
+  src: url("${location.origin}/api?font=字体名&text=你的文字") format("woff2");
 }
 .title { font-family: "MyFont"; }
 </style>

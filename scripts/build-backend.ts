@@ -6,7 +6,7 @@
  */
 import { execSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, writeFile, rm } from "node:fs/promises";
+import { copyFile, mkdir, writeFile, rm } from "node:fs/promises";
 import { arch, platform } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -100,6 +100,14 @@ function runTsup() {
   execSync("pnpm tsup", { stdio: "inherit", cwd: ROOT_DIR });
 }
 
+/** 复制 woff2.wasm 到 tsup 输出目录（打包后 __dirname 指向此处） */
+async function copyWoff2Wasm() {
+  const src = join(ROOT_DIR, "vendor/fonteditor-core/woff2/woff2.wasm");
+  const dst = join(ROOT_DIR, "dist_backend/backend/woff2.wasm");
+  await copyFile(src, dst);
+  console.log("Copied woff2.wasm to dist_backend/backend/");
+}
+
 /** 使用 LLRT compile 生成 .lrt 文件 */
 function runLlrtCompile() {
   console.log("\n--- Running LLRT compile ---");
@@ -118,6 +126,7 @@ function runLlrtCompile() {
 async function main() {
   await ensureLlrt();
   runTsup();
+  await copyWoff2Wasm();
   runLlrtCompile();
 }
 
