@@ -94,6 +94,7 @@ var TTFReader = exports.default = /*#__PURE__*/function () {
       var codes = ttf.cmap;
       var glyf = ttf.glyf;
       var subsetMap = ttf.readOptions.subset ? ttf.subsetMap : null;
+      var subsetGids = ttf.readOptions.subset ? ttf.subsetGids : null;
 
       /* 优化13+24+62: unicode 遍历，subset 模式只遍历 subsetMap */
       for (var c in codes) {
@@ -107,18 +108,20 @@ var TTFReader = exports.default = /*#__PURE__*/function () {
         glyf[i].unicode.push(+c);
       }
 
-      /* 优化13: advanceWidth 遍历优化 */
+      /* 优化13+82+118: advanceWidth 遍历优化，使用密集数组 */
       var hmtx = ttf.hmtx;
-      if (subsetMap) {
-        for (var idx in subsetMap) {
-          var idxNum = +idx;
-          glyf[idxNum].advanceWidth = hmtx[idxNum].advanceWidth;
-          glyf[idxNum].leftSideBearing = hmtx[idxNum].leftSideBearing;
+      if (subsetGids) {
+        for (var gi = 0, gl = subsetGids.length; gi < gl; gi++) {
+          var idxNum = subsetGids[gi];
+          var hIdx = idxNum * 2;
+          glyf[idxNum].advanceWidth = hmtx[hIdx];
+          glyf[idxNum].leftSideBearing = hmtx[hIdx + 1];
         }
       } else {
-        for (var hi = 0, hl = hmtx.length; hi < hl; hi++) {
-          glyf[hi].advanceWidth = hmtx[hi].advanceWidth;
-          glyf[hi].leftSideBearing = hmtx[hi].leftSideBearing;
+        for (var hi = 0, hl = hmtx.length / 2; hi < hl; hi++) {
+          var hIdx2 = hi * 2;
+          glyf[hi].advanceWidth = hmtx[hIdx2];
+          glyf[hi].leftSideBearing = hmtx[hIdx2 + 1];
         }
       }
 
@@ -128,27 +131,52 @@ var TTFReader = exports.default = /*#__PURE__*/function () {
         var names = ttf.post.names;
         var pascalBytes = ttf.post._pascalStringBytes;
         var pascalOffsets = ttf.post._pascalStringOffsets;
-        for (var ni = 0, nl = nameIndex.length; ni < nl; ni++) {
-          if (subsetMap && !subsetMap[ni]) {
-            continue;
+        /* 优化87: subset 模式下按需从 view 读取 nameIndex */
+        var niView = ttf.post._nameIndexView;
+        var niViewOffset = ttf.post._nameIndexViewOffset;
+
+        if (subsetGids) {
+          for (var niIdx = 0, nl2 = subsetGids.length; niIdx < nl2; niIdx++) {
+            var niNum = subsetGids[niIdx];
+            var nIdx = niView ? niView.getUint16(niViewOffset + niNum * 2, false) : (nameIndex && nameIndex[niNum]);
+            if (nIdx === undefined || nIdx === null) continue;
+            if (nIdx <= 257) {
+              glyf[niNum].name = _postName.default[nIdx];
+            } else if (names) {
+              glyf[niNum].name = names[nIdx - 258] || '';
+            } else if (pascalBytes) {
+              var off = pascalOffsets ? pascalOffsets[nIdx - 258] : null;
+              if (off === null) {
+                /* 按需计算 pascal string 偏移量 */
+                var pOff = 0;
+                for (var pk = 0; pk < nIdx - 258; pk++) {
+                  pOff += 1 + (pascalBytes[pOff] || 0);
+                }
+                off = pOff;
+              }
+              glyf[niNum].name = off !== undefined ? _post.getPascalStringAt(pascalBytes, off) : '';
+            }
           }
-          var nIdx = nameIndex[ni];
-          if (nIdx <= 257) {
-            glyf[ni].name = _postName.default[nIdx];
-          } else if (names) {
-            glyf[ni].name = names[nIdx - 258] || '';
-          } else if (pascalBytes && pascalOffsets) {
-            var off = pascalOffsets[nIdx - 258];
-            glyf[ni].name = off !== undefined ? _post.getPascalStringAt(pascalBytes, off) : '';
+        } else if (nameIndex) {
+          for (var ni2 = 0, nl = nameIndex.length; ni2 < nl; ni2++) {
+            var nIdx2 = nameIndex[ni2];
+            if (nIdx2 <= 257) {
+              glyf[ni2].name = _postName.default[nIdx2];
+            } else if (names) {
+              glyf[ni2].name = names[nIdx2 - 258] || '';
+            } else if (pascalBytes && pascalOffsets) {
+              var off2 = pascalOffsets[nIdx2 - 258];
+              glyf[ni2].name = off2 !== undefined ? _post.getPascalStringAt(pascalBytes, off2) : '';
+            }
           }
         }
       }
 
-      /* 优化13+44+62: subset 模式下直接只遍历 subsetMap */
-      if (subsetMap) {
+      /* 优化13+44+62+118: subset 模式下使用密集数组遍历 */
+      if (subsetGids) {
         var subGlyf = [];
-        for (var si in subsetMap) {
-          var siNum = +si;
+        for (var si = 0, sl = subsetGids.length; si < sl; si++) {
+          var siNum = subsetGids[si];
           if (glyf[siNum].compound) {
             (0, _compound2simpleglyf.default)(siNum, ttf, true);
           }

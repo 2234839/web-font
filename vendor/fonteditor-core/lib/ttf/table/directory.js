@@ -36,14 +36,26 @@ var _default = exports.default = _table.default.create('directory', [], {
     reader.offset = offset + numTables * 16;
     return tables;
   },
+  /**
+   * 优化111: 直接 DataView 批量写入，避免 writer 方法调用开销
+   */
   write: function write(writer, ttf) {
     var tables = ttf.support.tables;
+    var view = writer.view;
+    var pos = writer.offset;
     for (var i = 0, l = tables.length; i < l; i++) {
-      writer.writeString((tables[i].name + '    ').slice(0, 4));
-      writer.writeUint32(tables[i].checkSum);
-      writer.writeUint32(tables[i].offset);
-      writer.writeUint32(tables[i].length);
+      var t = tables[i];
+      var name = t.name;
+      /* 4 字节 tag 直接写入 */
+      view.setUint8(pos, name.charCodeAt(0)); pos++;
+      view.setUint8(pos, name.charCodeAt(1)); pos++;
+      view.setUint8(pos, name.charCodeAt(2)); pos++;
+      view.setUint8(pos, name.charCodeAt(3)); pos++;
+      view.setUint32(pos, t.checkSum, false); pos += 4;
+      view.setUint32(pos, t.offset, false); pos += 4;
+      view.setUint32(pos, t.length, false); pos += 4;
     }
+    writer.offset = pos;
     return writer;
   },
   size: function size(ttf) {

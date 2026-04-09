@@ -1,4 +1,4 @@
-import { createMemo, createSignal, onMount, Show, For } from "solid-js";
+import { createMemo, createSignal, createEffect, onMount, Show, For } from "solid-js";
 import { fetchFonts, fetchConfig, type FontInfo, type ServerConfig } from "./api";
 import UploadSection from "./UploadSection";
 import { SelectorRow } from "./FontSelector";
@@ -93,7 +93,7 @@ function App() {
   const [text, set_text] = createSignal("天地无极，乾坤借法");
   const [fonts, set_fonts] = createSignal<FontInfo[]>([]);
   const [selectedFont, set_selectedFont] = createSignal("");
-  const [outType, set_outType] = createSignal<"woff2" | "ttf">("woff2");
+  const [outType, set_outType] = createSignal<"woff2" | "ttf">("ttf");
   const [serverConfig, set_serverConfig] = createSignal<ServerConfig>({
     enableTempUpload: false,
     adminUploadEnabled: false,
@@ -111,9 +111,9 @@ function App() {
       set_outType(config.supportedOutTypes?.[0] || "ttf");
     }
     if (fontList.length > 0) {
-      /** 标语随机使用一个 TTF 字体展示（目前仅 TTF 格式兼容性最佳） */
-      const ttfFonts = fontList.filter((f) => /\.ttf$/i.test(f.name));
-      const randomFont = (ttfFonts.length > 0 ? ttfFonts : fontList)[Math.floor(Math.random() * (ttfFonts.length > 0 ? ttfFonts : fontList).length)];
+      /** 标语随机使用一个可用字体展示 */
+      const usableFonts = fontList.filter((f) => /\.(ttf|otf)$/i.test(f.name));
+      const randomFont = usableFonts[Math.floor(Math.random() * usableFonts.length)];
       (globalThis as any).WebFont?.loadText({
         fontName: randomFont.name,
         text: SLOGAN,
@@ -125,7 +125,7 @@ function App() {
         sloganEl.title = randomFont.name;
       }
 
-      onFontChange(fontList[0].name);
+      set_selectedFont(fontList[0].name);
     }
   });
 
@@ -159,19 +159,33 @@ function App() {
     return Math.max(2, Math.min(lines, 10));
   });
 
-  /** 字体切换时为当前文本加载新字体 */
-  const onFontChange = (font: string) => {
-    set_selectedFont(font);
-    if (!font) return;
+  /** 记录上次加载的 font 和 outType，避免重复加载 */
+  let lastLoadKey = "";
+
+  /** 字体切换或格式切换时重新加载字体 */
+  const reloadFont = (font: string, ot: "woff2" | "ttf") => {
+    const key = `${font}|${ot}`;
+    if (!font || key === lastLoadKey) return;
+    lastLoadKey = key;
     if (textLoader) textLoader.dispose();
     textLoader = (globalThis as any).WebFont?.loadText({
       fontName: font,
       text: text(),
       family: "CustomFont",
+      outType: ot,
     }) ?? null;
     const el = document.getElementById("webfont-preview");
     if (el) el.style.fontFamily = '"CustomFont", sans-serif';
   };
+
+  const onFontChange = (font: string) => {
+    set_selectedFont(font);
+  };
+
+  /** 字体或输出格式变化时重新加载 */
+  createEffect(() => {
+    reloadFont(selectedFont(), outType());
+  });
 
   async function refreshFonts() {
     const fontList = await fetchFonts();

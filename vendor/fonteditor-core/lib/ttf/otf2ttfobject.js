@@ -46,13 +46,11 @@ function otf2ttfobject(otfBuffer, options) {
       g.xMax = box.x + box.width;
       g.yMin = box.y;
       g.yMax = box.y + box.height;
-      g.leftSideBearing = g.xMin;
     } else {
       g.xMin = 0;
       g.xMax = 0;
       g.yMin = 0;
       g.yMax = 0;
-      g.leftSideBearing = 0;
     }
   });
   otfObject.version = 0x1;

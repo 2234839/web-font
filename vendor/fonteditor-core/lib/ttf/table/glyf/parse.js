@@ -16,18 +16,18 @@ var MAX_INSTRUCTION_LENGTH = 5000;
 var MAX_NUMBER_OF_COORDINATES = 20000;
 
 /**
- * 优化9+12+34+41+42: parseSimpleGlyf 消除中间数组，直接 view 批量读取
+ * 优化92+94: parseSimpleGlyf 使用 TypedArray，延迟 contour 构建到 optimize 阶段
  */
 function parseSimpleGlyf(reader, glyf) {
   var offset = reader.offset;
-  var numberOfCoordinates = glyf.endPtsOfContours[glyf.endPtsOfContours.length - 1] + 1;
+  var endPtsOfContours = glyf.endPtsOfContours;
+  var numberOfCoordinates = endPtsOfContours[endPtsOfContours.length - 1] + 1;
 
   if (numberOfCoordinates > MAX_NUMBER_OF_COORDINATES) {
     console.warn('error read glyf coordinates:' + offset);
     return glyf;
   }
 
-  /* 优化34: 缓存 glyFlag 常量 */
   var REPEAT = _glyFlag.default.REPEAT;
   var XSHORT = _glyFlag.default.XSHORT;
   var XSAME = _glyFlag.default.XSAME;
@@ -35,24 +35,22 @@ function parseSimpleGlyf(reader, glyf) {
   var YSAME = _glyFlag.default.YSAME;
   var ONCURVE = _glyFlag.default.ONCURVE;
 
-  /* 优化34+42: 直接 view 读取 flags */
   var view = reader.view;
   var vOffset = view.byteOffset + reader.offset;
-  var flags = new Array(numberOfCoordinates);
-  var i = 0;
-  while (i < numberOfCoordinates) {
+  var flags = new Uint8Array(numberOfCoordinates);
+  var fi = 0;
+  while (fi < numberOfCoordinates) {
     var flag = view.getUint8(vOffset++);
-    flags[i++] = flag;
-    if (flag & REPEAT && i < numberOfCoordinates) {
+    flags[fi++] = flag;
+    if (flag & REPEAT && fi < numberOfCoordinates) {
       var repeat = view.getUint8(vOffset++);
-      for (var j = 0; j < repeat && i < numberOfCoordinates; j++) {
-        flags[i++] = flag;
+      for (var j = 0; j < repeat && fi < numberOfCoordinates; j++) {
+        flags[fi++] = flag;
       }
     }
   }
 
-  /* 优化9+34: 直接构建扁平坐标数组，消除中间对象创建 */
-  var xArr = new Array(numberOfCoordinates);
+  var xArr = new Int32Array(numberOfCoordinates);
   var prevX = 0;
   for (var xi = 0; xi < numberOfCoordinates; xi++) {
     var x = 0;
@@ -70,7 +68,7 @@ function parseSimpleGlyf(reader, glyf) {
     xArr[xi] = prevX;
   }
 
-  var yArr = new Array(numberOfCoordinates);
+  var yArr = new Int32Array(numberOfCoordinates);
   var prevY = 0;
   for (var yi = 0; yi < numberOfCoordinates; yi++) {
     var y = 0;
@@ -90,27 +88,10 @@ function parseSimpleGlyf(reader, glyf) {
 
   reader.offset = vOffset - view.byteOffset;
 
-  /* 优化66: 扁平 contours [x, y, onCurve, x, y, onCurve, ...]，消除大量小对象 */
-  if (numberOfCoordinates > 0) {
-    var endPtsOfContours = glyf.endPtsOfContours;
-    var contours = new Array(endPtsOfContours.length);
-    var start = 0;
-    for (var ci = 0, cl = endPtsOfContours.length; ci < cl; ci++) {
-      var end = endPtsOfContours[ci] + 1;
-      var numPoints = end - start;
-      var contour = new Array(numPoints * 3);
-      var ki = 0;
-      for (var pi = start; pi < end; pi++) {
-        contour[ki++] = xArr[pi];
-        contour[ki++] = yArr[pi];
-        contour[ki++] = !!(flags[pi] & ONCURVE);
-      }
-      contours[ci] = contour;
-      start = end;
-    }
-    glyf.contours = contours;
-    glyf._flatContours = true;
-  }
+  /* 优化94: 保存 TypedArray 坐标数据，延迟 contour 构建到 optimize */
+  glyf._xArr = xArr;
+  glyf._yArr = yArr;
+  glyf._flags = flags;
   return glyf;
 }
 
@@ -256,7 +237,7 @@ function parseGlyf(reader, ttf, offset) {
     reader.offset = vOffset - view.byteOffset;
 
     parseSimpleGlyf(reader, glyf);
-    delete glyf.endPtsOfContours;
+    /* 优化94: 保留 endPtsOfContours 供 optimize 使用，不再删除 */
   } else {
     reader.offset = vOffset - view.byteOffset;
     parseCompoundGlyf(reader, glyf);

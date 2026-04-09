@@ -34,15 +34,18 @@ function write(writer, ttf) {
 
   for (var index = 0, gl = glyfs.length; index < gl; index++) {
     var glyf = glyfs[index];
+    /* 优化117: 缓存 glyfSupport 引用到循环顶部 */
+    var gSupport = glyfSupport[index];
 
     /* 优化51: return → continue */
     if (!glyf.compound && !writeZeroContoursGlyfData && (!glyf.contours || !glyf.contours.length)) {
       continue;
     }
 
-    /* 优化31: header 直接 view 写入 10 字节 */
+    /* 优化31+103: header 直接 view 写入 10 字节，优先使用 _numContours */
     var pos = writer.offset;
-    view.setInt16(pos, glyf.compound ? -1 : (glyf.contours || []).length, false);
+    var numC = glyf._numContours != null ? glyf._numContours : (glyf.contours || []).length;
+    view.setInt16(pos, glyf.compound ? -1 : numC, false);
     view.setInt16(pos + 2, glyf.xMin, false);
     view.setInt16(pos + 4, glyf.yMin, false);
     view.setInt16(pos + 6, glyf.xMax, false);
@@ -96,24 +99,33 @@ function write(writer, ttf) {
         }
       }
     } else {
-      /* 优化32+66: endPtsOfContours 直接 view 写入，支持扁平格式 */
+      /* 优化32+66+103: endPtsOfContours 直接 view 写入，支持 _pointsPerContour */
       var contours = glyf.contours || [];
       var endPts = -1;
-      /* 优化66: 扁平格式 contour.length 是点的3倍 */
-      var isFlat = glyf._flatContours;
-      for (var ci = 0, cl = contours.length; ci < cl; ci++) {
-        endPts += isFlat ? contours[ci].length / 3 : contours[ci].length;
-        view.setUint16(pos, endPts, false);
-        pos += 2;
+      var ppc = glyf._pointsPerContour;
+      if (ppc) {
+        for (var ci = 0, cl = ppc.length; ci < cl; ci++) {
+          endPts += ppc[ci];
+          view.setUint16(pos, endPts, false);
+          pos += 2;
+        }
+      } else {
+        var isFlat = glyf._flatContours;
+        for (var ci2 = 0, cl2 = contours.length; ci2 < cl2; ci2++) {
+          endPts += isFlat ? contours[ci2].length / 3 : contours[ci2].length;
+          view.setUint16(pos, endPts, false);
+          pos += 2;
+        }
       }
 
-      /* 优化25: instructions 批量写入 */
+      /* 优化25+80: instructions 使用 Uint8Array.set 批量写入 */
       if (hinting && glyf.instructions) {
         var instructions = glyf.instructions;
         view.setUint16(pos, instructions.length, false);
         pos += 2;
-        for (var ii = 0, il = instructions.length; ii < il; ii++) {
-          view.setUint8(pos + ii, instructions[ii]);
+        if (instructions.length > 0) {
+          var instrArr = instructions instanceof Uint8Array ? instructions : new Uint8Array(instructions);
+          new Uint8Array(view.buffer, view.byteOffset + pos, instrArr.length).set(instrArr);
         }
         pos += instructions.length;
       } else {
@@ -121,47 +133,57 @@ function write(writer, ttf) {
         pos += 2;
       }
 
-      /* 优化11: flags 批量写入 */
-      var flags = glyfSupport[index].flags || [];
-      for (var fi = 0, fl = flags.length; fi < fl; fi++) {
-        view.setUint8(pos + fi, flags[fi]);
+      /* 优化11+79: flags 使用 Uint8Array.set 批量写入 */
+      var flags = gSupport.flags || [];
+      if (flags.length > 0) {
+        var flagsArr = flags instanceof Uint8Array ? flags : new Uint8Array(flags);
+        new Uint8Array(view.buffer, view.byteOffset + pos, flagsArr.length).set(flagsArr);
       }
-      pos += fl;
+      pos += flags.length;
 
-      /* 优化21: xCoord 直接 view 写入 */
-      var xCoord = glyfSupport[index].xCoord || [];
-      for (var xi = 0, xl = xCoord.length; xi < xl; xi++) {
-        var xv = xCoord[xi];
-        if (0 <= xv && xv <= 0xFF) {
-          view.setUint8(pos, xv);
-          pos += 1;
-        } else {
-          view.setInt16(pos, xv, false);
-          pos += 2;
+      /* 优化21+98+119: xCoord 预编码 Uint8Array 直接 set，或逐个写入 */
+      var support = gSupport;
+      if (support.xEncoded) {
+        new Uint8Array(view.buffer, view.byteOffset + pos, support.xEncoded.length).set(support.xEncoded);
+        pos += support.xEncoded.length;
+      } else {
+        var xCoord = support.xCoord || [];
+        for (var xi = 0, xl = xCoord.length; xi < xl; xi++) {
+          var xv = xCoord[xi];
+          if (0 <= xv && xv <= 0xFF) {
+            view.setUint8(pos, xv);
+            pos += 1;
+          } else {
+            view.setInt16(pos, xv, false);
+            pos += 2;
+          }
         }
       }
 
-      /* 优化21+58: yCoord 直接 view 写入，使用各自的数组长度 */
-      var yCoord = glyfSupport[index].yCoord || [];
-      for (var yi = 0, yl = yCoord.length; yi < yl; yi++) {
-        var yv = yCoord[yi];
-        if (0 <= yv && yv <= 0xFF) {
-          view.setUint8(pos, yv);
-          pos += 1;
-        } else {
-          view.setInt16(pos, yv, false);
-          pos += 2;
+      /* 优化21+58+98+119: yCoord 预编码 Uint8Array 直接 set，或逐个写入 */
+      if (support.yEncoded) {
+        new Uint8Array(view.buffer, view.byteOffset + pos, support.yEncoded.length).set(support.yEncoded);
+        pos += support.yEncoded.length;
+      } else {
+        var yCoord = support.yCoord || [];
+        for (var yi = 0, yl = yCoord.length; yi < yl; yi++) {
+          var yv = yCoord[yi];
+          if (0 <= yv && yv <= 0xFF) {
+            view.setUint8(pos, yv);
+            pos += 1;
+          } else {
+            view.setInt16(pos, yv, false);
+            pos += 2;
+          }
         }
       }
     }
 
-    /* 4字节对齐 */
-    var glyfSize = glyfSupport[index].glyfSize;
+    /* 优化81: 4字节对齐使用 fill(0) 批量填充 */
+    var glyfSize = gSupport.glyfSize;
     if (glyfSize % 4) {
       var pad = 4 - glyfSize % 4;
-      for (var p = 0; p < pad; p++) {
-        view.setUint8(pos + p, 0);
-      }
+      new Uint8Array(view.buffer, view.byteOffset + pos, pad).fill(0);
       pos += pad;
     }
 

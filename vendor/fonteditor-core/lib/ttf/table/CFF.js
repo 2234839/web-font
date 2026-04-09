@@ -110,6 +110,123 @@ function calcCFFSubroutineBias(subrs) {
   }
   return bias;
 }
+
+/**
+ * 解析原始 CFF Top DICT 获取 CID-keyed 字段的偏移
+ * FDArray = 12 36, FDSelect = 12 37, ROS = 12 30
+ *
+ * @param  {Reader} reader 读取器
+ * @param  {number} start   起始偏移
+ * @param  {number} length  大小
+ * @return {Object}         包含 FDArray/FDSelect 偏移的对象
+ */
+function parseRawTopDict(reader, start, length) {
+  if (start) {
+    reader.seek(start);
+  }
+  var entries = [];
+  var operands = [];
+  var lastOffset = reader.offset + length;
+  while (reader.offset < lastOffset) {
+    var op = reader.readUint8();
+    if (op <= 21) {
+      if (op === 12) {
+        op = 1200 + reader.readUint8();
+      }
+      entries.push([op, operands]);
+      operands = [];
+    } else {
+      operands.push(_parseCFFDict.default._parseOperand(reader, op));
+    }
+  }
+  var result = {};
+  for (var i = 0; i < entries.length; i++) {
+    var key = entries[i][0];
+    var values = entries[i][1];
+    result[key] = values.length === 1 ? values[0] : values;
+  }
+  return result;
+}
+
+/**
+ * 解析 FDSelect 表，返回 glyph index → FD index 的映射
+ * 支持 format 0 和 format 3
+ *
+ * @param  {Reader} reader 读取器
+ * @param  {number} offset  FDSelect 相对于 CFF 起始的偏移
+ * @param  {number} nGlyphs glyph 总数
+ * @return {Array}          FD index 数组，fdSelect[i] = glyph i 对应的 FD index
+ */
+function parseFDSelect(reader, offset, nGlyphs) {
+  reader.seek(offset);
+  var format = reader.readUint8();
+  var fdSelect = [];
+
+  if (format === 0) {
+    for (var i = 0; i < nGlyphs; i++) {
+      fdSelect.push(reader.readUint8());
+    }
+  } else if (format === 3) {
+    var nRanges = reader.readUint16();
+    var ranges = [];
+    for (var r = 0; r < nRanges; r++) {
+      ranges.push({
+        first: reader.readUint16(),
+        fd: reader.readUint8()
+      });
+    }
+    /** sentinel = reader.readUint16(); */
+
+    /** 根据 ranges 构建 fdSelect 数组 */
+    for (var i = 0; i < nGlyphs; i++) {
+      var fd = 0;
+      for (var ri = ranges.length - 1; ri >= 0; ri--) {
+        if (i >= ranges[ri].first) {
+          fd = ranges[ri].fd;
+          break;
+        }
+      }
+      fdSelect.push(fd);
+    }
+  }
+
+  return fdSelect;
+}
+
+/**
+ * 解析单个 FD (Font DICT) 的 Private DICT 和 local subrs
+ *
+ * @param  {Reader} reader      读取器
+ * @param  {number} cffOffset   CFF 表起始偏移
+ * @param  {Array}  fdDictData  FD 的原始字节数据
+ * @param  {Array}  strings     CFF 字符串表
+ * @return {Object}             { subrs, subrsBias, defaultWidthX, nominalWidthX }
+ */
+function parseFDPrivate(reader, cffOffset, fdDictData, strings) {
+  var dictReader = new _reader.default(new Uint8Array(fdDictData).buffer);
+  var fdDict = _parseCFFDict.default.parseCFFDict(dictReader, 0, dictReader.length);
+  var result = { subrs: [], subrsBias: 0, defaultWidthX: 0, nominalWidthX: 0 };
+
+  var privateData = fdDict[18];
+  if (privateData && privateData.length >= 2) {
+    var privLength = privateData[0];
+    var privOffset = cffOffset + privateData[1];
+    if (privLength > 0) {
+      var privDict = _parseCFFDict.default.parsePrivateDict(reader, privOffset, privLength, strings);
+      result.defaultWidthX = privDict.defaultWidthX || 0;
+      result.nominalWidthX = privDict.nominalWidthX || 0;
+
+      if (privDict.subrs) {
+        var subrIndex = parseCFFIndex(reader, privOffset + privDict.subrs);
+        result.subrs = subrIndex.objects;
+        result.subrsBias = calcCFFSubroutineBias(result.subrs);
+      }
+    }
+  }
+
+  return result;
+}
+
 var _default = exports.default = _table.default.create('cff', [], {
   read: function read(reader, font) {
     var offset = this.offset;
@@ -132,7 +249,33 @@ var _default = exports.default = _table.default.create('cff', [], {
     var topDict = _parseCFFDict.default.parseTopDict(dictReader, 0, dictReader.length, stringIndex.objects);
     cff.topDict = topDict;
 
-    // 私有字典数据
+    /** 解析原始 Top DICT 获取 CID-keyed 字段 (FDArray/FDSelect) */
+    var rawTopDict = parseRawTopDict(
+      new _reader.default(new Uint8Array(topDictIndex.objects[0]).buffer),
+      0, new Uint8Array(topDictIndex.objects[0]).buffer.byteLength
+    );
+    var fdArrayOffset = rawTopDict[1236]; // 12 36
+    var fdSelectOffset = rawTopDict[1237]; // 12 37
+    var isCID = !!(fdArrayOffset && fdSelectOffset);
+
+    /** 解析 FDSelect 和 FDArray（CID-keyed 字体） */
+    var fdSelect = null;
+    var fdPrivates = null;
+    if (isCID) {
+      var charStringsIndex = parseCFFIndex(reader, offset + topDict.charStrings);
+      var nGlyphs = charStringsIndex.objects.length;
+
+      fdSelect = parseFDSelect(reader, offset + fdSelectOffset, nGlyphs);
+
+      /** 解析 FDArray */
+      var fdArrayIndex = parseCFFIndex(reader, offset + fdArrayOffset);
+      fdPrivates = [];
+      for (var fi = 0; fi < fdArrayIndex.objects.length; fi++) {
+        fdPrivates.push(parseFDPrivate(reader, offset, fdArrayIndex.objects[fi], stringIndex.objects));
+      }
+    }
+
+    // 私有字典数据（非 CID 字体使用）
     var privateDictLength = topDict.private[0];
     var privateDict = {};
     var privateDictOffset;
@@ -146,7 +289,7 @@ var _default = exports.default = _table.default.create('cff', [], {
       cff.nominalWidthX = 0;
     }
 
-    // 私有子glyf数据
+    // 私有子glyf数据（非 CID 字体使用）
     if (privateDict.subrs) {
       var subrOffset = privateDictOffset + privateDict.subrs;
       var subrIndex = parseCFFIndex(reader, subrOffset);
@@ -159,15 +302,12 @@ var _default = exports.default = _table.default.create('cff', [], {
     cff.privateDict = privateDict;
 
     // 解析glyf数据和名字
-    var charStringsIndex = parseCFFIndex(reader, offset + topDict.charStrings);
+    if (!isCID) {
+      var charStringsIndex = parseCFFIndex(reader, offset + topDict.charStrings);
+    }
     var nGlyphs = charStringsIndex.objects.length;
+
     if (topDict.charset < 3) {
-      // @author: fr33z00
-      // See end of chapter 13 (p22) of #5176.CFF.pdf :
-      // Still more optimization is possible by
-      // observing that many fonts adopt one of 3 common charsets. In
-      // these cases the operand to the charset operator in the Top DICT
-      // specifies a predefined charset id, in place of an offset, as shown in table 22
       cff.charset = _cffStandardStrings.default;
     } else {
       cff.charset = (0, _parseCFFCharset.default)(reader, offset + topDict.charset, nGlyphs, stringIndex.objects);
@@ -184,6 +324,26 @@ var _default = exports.default = _table.default.create('cff', [], {
       cff.encoding = (0, _parseCFFEncoding.default)(reader, offset + topDict.encoding);
     }
     cff.glyf = [];
+
+    /**
+     * 为指定 glyph 构建 per-glyph 的 font 对象
+     * CID-keyed 字体使用 FD 对应的 local subrs
+     */
+    function getGlyphFont(glyphIndex) {
+      if (isCID && fdSelect && fdPrivates) {
+        var fdIdx = fdSelect[glyphIndex] || 0;
+        var fd = fdPrivates[fdIdx];
+        return {
+          subrs: fd.subrs,
+          subrsBias: fd.subrsBias,
+          defaultWidthX: fd.defaultWidthX,
+          nominalWidthX: fd.nominalWidthX,
+          gsubrs: cff.gsubrs,
+          gsubrsBias: cff.gsubrsBias
+        };
+      }
+      return cff;
+    }
 
     // only parse subset glyphs
     var subset = font.readOptions.subset;
@@ -204,7 +364,7 @@ var _default = exports.default = _table.default.create('cff', [], {
       font.subsetMap = subsetMap;
       Object.keys(subsetMap).forEach(function (i) {
         i = +i;
-        var glyf = (0, _parseCFFGlyph.default)(charStringsIndex.objects[i], cff, i);
+        var glyf = (0, _parseCFFGlyph.default)(charStringsIndex.objects[i], getGlyphFont(i), i);
         glyf.name = cff.charset[i];
         cff.glyf[i] = glyf;
       });
@@ -212,7 +372,7 @@ var _default = exports.default = _table.default.create('cff', [], {
     // parse all
     else {
       for (var i = 0, l = nGlyphs; i < l; i++) {
-        var glyf = (0, _parseCFFGlyph.default)(charStringsIndex.objects[i], cff, i);
+        var glyf = (0, _parseCFFGlyph.default)(charStringsIndex.objects[i], getGlyphFont(i), i);
         glyf.name = cff.charset[i];
         cff.glyf.push(glyf);
       }

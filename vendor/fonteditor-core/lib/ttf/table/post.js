@@ -41,28 +41,26 @@ var _default = exports.default = _table.default.create('post', [], {
       /* 优化60: 直接 view 批量读取 glyphNameIndex */
       var view = reader.view;
       var vOffset = view.byteOffset + reader.offset;
-      var glyphNameIndex = new Array(numberOfGlyphs);
-      for (var i = 0; i < numberOfGlyphs; i++) {
-        glyphNameIndex[i] = view.getUint16(vOffset, false);
-        vOffset += 2;
-      }
-      var pascalStringOffset = vOffset - view.byteOffset;
+      var pascalStringOffset = reader.offset + numberOfGlyphs * 2;
       var pascalStringLength = ttf.tables.post.length - (pascalStringOffset - this.offset);
       var pascalStringBytes = reader.readBytes(pascalStringOffset, pascalStringLength);
 
-      tbl.nameIndex = glyphNameIndex;
-
-      /* 优化64: subset 模式下保存原始字节，按需解析 */
+      /* 优化87: subset 模式下只读取子集字形的 nameIndex，跳过其余 */
       if (ttf.readOptions && ttf.readOptions.subset) {
         tbl._pascalStringBytes = pascalStringBytes;
-        tbl._pascalStringOffsets = [];
-        var off = 0;
-        for (var j = 0; j < numberOfGlyphs; j++) {
-          tbl._pascalStringOffsets[j] = off;
-          off += 1 + (pascalStringBytes[off] || 0);
-        }
+        tbl._pascalStringOffsets = null;
+        tbl.nameIndex = null;
         tbl.names = null;
+        /* 保存 view 引用和偏移量，供后续按需读取 nameIndex */
+        tbl._nameIndexViewOffset = vOffset;
+        tbl._nameIndexView = view;
       } else {
+        var glyphNameIndex = new Array(numberOfGlyphs);
+        for (var i = 0; i < numberOfGlyphs; i++) {
+          glyphNameIndex[i] = view.getUint16(vOffset, false);
+          vOffset += 2;
+        }
+        tbl.nameIndex = glyphNameIndex;
         tbl.names = _string.default.getPascalString(pascalStringBytes);
       }
     }
@@ -76,27 +74,34 @@ var _default = exports.default = _table.default.create('post', [], {
       format: 3
     };
 
-    writer.writeFixed(post.format);
-    writer.writeFixed(post.italicAngle || 0);
-    writer.writeInt16(post.underlinePosition || 0);
-    writer.writeInt16(post.underlineThickness || 0);
-    writer.writeUint32(post.isFixedPitch || 0);
-    writer.writeUint32(post.minMemType42 || 0);
-    writer.writeUint32(post.maxMemType42 || 0);
-    writer.writeUint32(post.minMemType1 || 0);
-    writer.writeUint32(post.maxMemType1 || 0);
+    /* 优化77: post header 直接 view 写入 32 字节 */
+    var view = writer.view;
+    var pos = writer.offset;
+    view.setInt32(pos, Math.round(post.format * 65536), false); pos += 4;
+    view.setInt32(pos, Math.round((post.italicAngle || 0) * 65536), false); pos += 4;
+    view.setInt16(pos, post.underlinePosition || 0, false); pos += 2;
+    view.setInt16(pos, post.underlineThickness || 0, false); pos += 2;
+    view.setUint32(pos, post.isFixedPitch || 0, false); pos += 4;
+    view.setUint32(pos, post.minMemType42 || 0, false); pos += 4;
+    view.setUint32(pos, post.maxMemType42 || 0, false); pos += 4;
+    view.setUint32(pos, post.minMemType1 || 0, false); pos += 4;
+    view.setUint32(pos, post.maxMemType1 || 0, false); pos += 4;
 
     if (post.format === 2) {
       var numberOfGlyphs = ttf.glyf.length;
-      writer.writeUint16(numberOfGlyphs);
+      view.setUint16(pos, numberOfGlyphs, false); pos += 2;
+      /* 优化77: nameIndex 直接 view 批量写入 */
       var nameIndex = ttf.support.post.nameIndex;
       for (var i = 0, l = nameIndex.length; i < l; i++) {
-        writer.writeUint16(nameIndex[i]);
+        view.setUint16(pos, nameIndex[i], false); pos += 2;
       }
+      writer.offset = pos;
       var names = ttf.support.post.names;
       for (var j = 0, jl = names.length; j < jl; j++) {
         writer.writeBytes(names[j]);
       }
+    } else {
+      writer.offset = pos;
     }
   },
   size: function size(ttf) {
@@ -105,7 +110,9 @@ var _default = exports.default = _table.default.create('post', [], {
     ttf.post.format = ttf.post.format || 3;
     ttf.post.maxMemType1 = numberOfGlyphs;
 
+    /* 优化109: format 3/1 不需要 nameIndex/names 计算 */
     if (ttf.post.format === 3 || ttf.post.format === 1) {
+      ttf.support.post = {};
       return 32;
     }
 

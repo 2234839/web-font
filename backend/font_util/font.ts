@@ -10,7 +10,9 @@ import type { FontEditor } from "../../vendor/fonteditor-core/lib/ttf/font.js";
 export const textToCodePoints = (text: string) =>
   [...text].map((char) => char.codePointAt(0)!);
 
-/** 解析字体并执行 subset（最耗时的步骤） */
+/**
+ * 解析字体并执行 subset（最耗时的步骤）
+ */
 export const createSubsetFont = (
   fontBuffer: ArrayBuffer,
   codePoints: number[],

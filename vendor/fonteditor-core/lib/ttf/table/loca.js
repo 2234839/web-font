@@ -39,7 +39,6 @@ var _default = exports.default = _table.default.create('loca', [], {
     var glyfSupport = ttf.support.glyf;
     var offset = ttf.support.glyf.offset || 0;
     var indexToLocFormat = ttf.head.indexToLocFormat;
-    var sizeRatio = indexToLocFormat === 0 ? 0.5 : 1;
     var numGlyphs = ttf.glyf.length;
     /* 优化29: 直接 view 批量写入 */
     var wView = writer.view;
@@ -49,15 +48,16 @@ var _default = exports.default = _table.default.create('loca', [], {
         wView.setUint32(pos, offset, false);
         pos += 4;
         if (i < numGlyphs) {
-          offset += glyfSupport[i].size * sizeRatio;
+          offset += glyfSupport[i].size;
         }
       }
     } else {
+      /* 优化110: 短格式使用右移替代浮点乘 0.5 */
       for (var j = 0; j <= numGlyphs; j++) {
-        wView.setUint16(pos, offset, false);
+        wView.setUint16(pos, offset >> 1, false);
         pos += 2;
         if (j < numGlyphs) {
-          offset += glyfSupport[j].size * sizeRatio;
+          offset += glyfSupport[j].size;
         }
       }
     }

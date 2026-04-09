@@ -57,19 +57,21 @@ var TTFWriter = exports.default = /*#__PURE__*/function () {
       }
       var checkUnicodeRepeat = {};
 
-      /* 优化4+46: 数字排序 + for 循环 */
-      var glyfs = ttf.glyf;
-      for (var index = 0, gl = glyfs.length; index < gl; index++) {
-        var glyf = glyfs[index];
-        if (glyf.unicode) {
-          glyf.unicode.sort(function (a, b) { return a - b; });
-          var unicode = glyf.unicode;
-          for (var ui = 0, ul = unicode.length; ui < ul; ui++) {
-            var u = unicode[ui];
-            if (checkUnicodeRepeat[u]) {
-              _error.default.raise({ number: 10200, data: index }, index);
-            } else {
-              checkUnicodeRepeat[u] = true;
+      /* 优化112: optimizettf 已排序 unicode 并检查重复，跳过冗余工作 */
+      if (!ttf._unicodeSorted) {
+        var glyfs = ttf.glyf;
+        for (var index = 0, gl = glyfs.length; index < gl; index++) {
+          var glyf = glyfs[index];
+          if (glyf.unicode) {
+            glyf.unicode.sort(function (a, b) { return a - b; });
+            var unicode = glyf.unicode;
+            for (var ui = 0, ul = unicode.length; ui < ul; ui++) {
+              var u = unicode[ui];
+              if (checkUnicodeRepeat[u]) {
+                _error.default.raise({ number: 10200, data: index }, index);
+              } else {
+                checkUnicodeRepeat[u] = true;
+              }
             }
           }
         }
@@ -124,8 +126,9 @@ var TTFWriter = exports.default = /*#__PURE__*/function () {
 
       new _directory.default().write(writer, ttf);
 
-      /* 优化56: forEach → for 循环 */
+      /* 优化56+87: forEach → for 循环，缓存 buffer 引用避免重复 getBuffer() */
       var supportTableList = ttf.support.tables;
+      var buf = writer.getBuffer();
       for (var si = 0, sl = supportTableList.length; si < sl; si++) {
         var table = supportTableList[si];
         var tableStart = writer.offset;
@@ -137,23 +140,23 @@ var TTFWriter = exports.default = /*#__PURE__*/function () {
         if (table.length % 4) {
           writer.writeEmpty(4 - table.length % 4);
         }
-        table.checkSum = (0, _checkSum.default)(writer.getBuffer(), tableStart, table.size);
+        table.checkSum = (0, _checkSum.default)(buf, tableStart, table.size);
       }
 
-      /* 重新写入校验和 */
+      /* 优化111: 重新写入校验和，直接 view 写入 */
+      var csView = writer.view;
       for (var ci = 0, cl = supportTableList.length; ci < cl; ci++) {
         var offset2 = 12 + ci * 16 + 4;
-        writer.writeUint32(supportTableList[ci].checkSum, offset2);
+        csView.setUint32(offset2, supportTableList[ci].checkSum, false);
       }
 
       /* 写入总校验和 */
-      var ttfCheckSum = (0xB1B0AFBA - (0, _checkSum.default)(writer.getBuffer()) + 0x100000000) % 0x100000000;
-      writer.writeUint32(ttfCheckSum, ttfHeadOffset + 8);
+      var ttfCheckSum = (0xB1B0AFBA - (0, _checkSum.default)(buf) + 0x100000000) % 0x100000000;
+      csView.setUint32(ttfHeadOffset + 8, ttfCheckSum, false);
       delete ttf.writeOptions;
       delete ttf.support;
-      var buffer = writer.getBuffer();
       writer.dispose();
-      return buffer;
+      return buf;
     }
   }, {
     key: "prepareDump",

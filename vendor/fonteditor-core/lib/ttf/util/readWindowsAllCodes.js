@@ -12,26 +12,28 @@ exports.default = readWindowsAllCodes;
  */
 
 /**
- * 优化65: format12 二分查找，避免全量展开
+ * 优化65+88: format12 二分查找，支持扁平数组格式
  */
 function lookupFormat12(groups, unicode) {
-  var lo = 0, hi = groups.length - 1;
+  var lo = 0, hi = (groups.length / 3) - 1;
   while (lo <= hi) {
     var mid = (lo + hi) >> 1;
-    var g = groups[mid];
-    if (unicode < g.start) {
+    var gi = mid * 3;
+    var gStart = groups[gi];
+    var gEnd = groups[gi + 1];
+    if (unicode < gStart) {
       hi = mid - 1;
-    } else if (unicode > g.end) {
+    } else if (unicode > gEnd) {
       lo = mid + 1;
     } else {
-      return g.startId + (unicode - g.start);
+      return groups[gi + 2] + (unicode - gStart);
     }
   }
   return -1;
 }
 
 /**
- * 优化65: format4 线性查找 segment
+ * 优化114: format4 二分查找 segment，替代线性扫描
  */
 function lookupFormat4(format4, unicode) {
   var startCode = format4.startCode;
@@ -40,14 +42,28 @@ function lookupFormat4(format4, unicode) {
   var idRangeOffset = format4.idRangeOffset;
   var segCount = format4.segCountX2 / 2;
 
-  for (var i = 0; i < segCount; i++) {
-    if (unicode >= startCode[i] && unicode <= endCode[i]) {
+  var lo = 0, hi = segCount - 1;
+  while (lo <= hi) {
+    var mid = (lo + hi) >> 1;
+    if (unicode < startCode[mid]) {
+      hi = mid - 1;
+    } else if (unicode > endCode[mid]) {
+      lo = mid + 1;
+    } else {
+      var i = mid;
       if (idRangeOffset[i] === 0) {
         return (unicode + idDelta[i]) % 0x10000;
       }
       var graphIdArrayIndexOffset = (format4.glyphIdArrayOffset - format4.idRangeOffsetOffset) / 2;
       var index = i + idRangeOffset[i] / 2 + (unicode - startCode[i]) - graphIdArrayIndexOffset;
-      var graphId = format4.glyphIdArray[index];
+      var graphId;
+      if (format4.glyphIdArray) {
+        graphId = format4.glyphIdArray[index];
+      } else if (format4._cmapView) {
+        graphId = format4._cmapView.getUint16(format4.glyphIdArrayOffset + index * 2, false);
+      } else {
+        return 0;
+      }
       if (graphId !== 0) {
         return (graphId + idDelta[i]) % 0x10000;
       }
@@ -99,15 +115,15 @@ function readWindowsAllCodes(tables, ttf) {
       }
     }
 
-    /* format0 和 format14 仍然需要全量处理（数据量小） */
-    if (format0) {
+    /* 优化93: format0/format14 在 subset 模式下跳过了解析，glyphIdArray/groups 为空 */
+    if (format0 && format0.glyphIdArray) {
       for (var i = 0, l = format0.glyphIdArray.length; i < l; i++) {
         if (format0.glyphIdArray[i]) {
           codes[i] = format0.glyphIdArray[i];
         }
       }
     }
-    if (format14) {
+    if (format14 && format14.groups && format14.groups.length) {
       for (var vi = 0, vl = format14.groups.length; vi < vl; vi++) {
         var vg = format14.groups[vi];
         if (vg.unicode) {
@@ -136,13 +152,25 @@ function readWindowsAllCodes(tables, ttf) {
     }
   }
   if (format12) {
-    for (var gi = 0, gl = format12.nGroups; gi < gl; gi++) {
-      var group = format12.groups[gi];
-      var startId = group.startId;
-      var start = group.start;
-      var end = group.end;
-      for (; start <= end;) {
-        codes[start++] = startId++;
+    var f12Groups = format12.groups;
+    if (format12._flatGroups) {
+      for (var gi = 0, gl = f12Groups.length; gi < gl; gi += 3) {
+        var startId = f12Groups[gi + 2];
+        var start = f12Groups[gi];
+        var end = f12Groups[gi + 1];
+        for (; start <= end;) {
+          codes[start++] = startId++;
+        }
+      }
+    } else {
+      for (var gi2 = 0, gl2 = format12.nGroups; gi2 < gl2; gi2++) {
+        var group = f12Groups[gi2];
+        var startId2 = group.startId;
+        var start2 = group.start;
+        var end2 = group.end;
+        for (; start2 <= end2;) {
+          codes[start2++] = startId2++;
+        }
       }
     }
   } else if (format4) {

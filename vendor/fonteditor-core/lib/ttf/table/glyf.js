@@ -27,18 +27,19 @@ var _default = exports.default = _table.default.create('glyf', [], {
     /* subset */
     var subset = ttf.readOptions.subset;
     if (subset && subset.length > 0) {
-      /* 优化1: subset 转为 Set，O(1) 查找 */
-      var subsetSet = new Set(subset);
+      /* 优化95+118: 直接遍历 subset 数组查找 glyphId，同时构建密集 ID 数组 */
       var subsetMap = { 0: true };
+      var subsetGids = [0];
       var cmap = ttf.cmap;
-
-      /* 优化23: for...in 替代 Object.keys + forEach */
-      for (var c in cmap) {
-        if (subsetSet.has(+c)) {
-          subsetMap[cmap[c]] = true;
+      for (var si = 0, sl = subset.length; si < sl; si++) {
+        var gid = cmap[subset[si]];
+        if (gid !== undefined && !subsetMap[gid]) {
+          subsetMap[gid] = true;
+          subsetGids.push(gid);
         }
       }
       ttf.subsetMap = subsetMap;
+      ttf.subsetGids = subsetGids;
       var parsedGlyfMap = {};
 
       /* 优化43: for...in + for 循环替代 Object.keys + forEach */

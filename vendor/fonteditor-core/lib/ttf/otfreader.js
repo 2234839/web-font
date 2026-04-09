@@ -107,14 +107,22 @@ var OTFReader = exports.default = /*#__PURE__*/function () {
         glyf[i].unicode.push(+c);
       });
 
-      // leftSideBearing
-      font.hmtx.forEach(function (item, i) {
-        if (subsetMap && !subsetMap[i]) {
-          return;
+      /* leftSideBearing / advanceWidth —— 兼容扁平 Int32Array 和对象数组 */
+      var hmtxData = font.hmtx;
+      var isFlat = hmtxData instanceof Int32Array;
+      var hLen = isFlat ? hmtxData.length / 2 : hmtxData.length;
+      for (var hi = 0; hi < hLen; hi++) {
+        if (subsetMap && !subsetMap[hi]) {
+          continue;
         }
-        glyf[i].advanceWidth = glyf[i].advanceWidth || item.advanceWidth || 0;
-        glyf[i].leftSideBearing = item.leftSideBearing;
-      });
+        if (isFlat) {
+          glyf[hi].advanceWidth = hmtxData[hi * 2] || 0;
+          glyf[hi].leftSideBearing = hmtxData[hi * 2 + 1];
+        } else {
+          glyf[hi].advanceWidth = hmtxData[hi].advanceWidth || 0;
+          glyf[hi].leftSideBearing = hmtxData[hi].leftSideBearing;
+        }
+      }
 
       // 设置了subsetMap之后需要选取subset中的字形
       if (subsetMap) {

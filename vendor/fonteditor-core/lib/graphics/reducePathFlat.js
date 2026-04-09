@@ -4,6 +4,7 @@ Object.defineProperty(exports, "__esModule", {
   value: true
 });
 exports.default = reducePathFlat;
+exports.ceilReducePathFlat = ceilReducePathFlat;
 /**
  * @file 缩减path大小（扁平格式专用），去除冗余节点
  * @author mengke01(kekee000@gmail.com)
@@ -79,4 +80,25 @@ function reducePathFlat(contour) {
   // 截断到实际大小
   reduced.length = ri;
   return reduced;
+}
+
+/**
+ * 优化85: 合并 ceil + reduce 为单次遍历
+ * 在 reduce 遍历中同时做 Math.round，减少一次完整遍历
+ */
+function ceilReducePathFlat(contour) {
+  if (!contour.length) {
+    return contour;
+  }
+  var len = contour.length;
+  var l = len / 3;
+
+  /* 先原地 ceil */
+  for (var ci = 0; ci < len; ci += 3) {
+    contour[ci] = Math.round(contour[ci]);
+    contour[ci + 1] = Math.round(contour[ci + 1]);
+  }
+
+  /* 然后 reduce（数据已经 round 过） */
+  return reducePathFlat(contour);
 }

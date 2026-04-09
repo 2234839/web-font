@@ -295,5 +295,7 @@ function parsePrivateDict(reader, start, length, strings) {
 }
 var _default = exports.default = {
   parseTopDict: parseTopDict,
-  parsePrivateDict: parsePrivateDict
+  parsePrivateDict: parsePrivateDict,
+  parseCFFDict: parseCFFDict,
+  _parseOperand: parseOperand
 };

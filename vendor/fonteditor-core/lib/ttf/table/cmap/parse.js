@@ -28,15 +28,21 @@ function readSubTable(reader, ttf, subTable, cmapOffset) {
   vOffset += 2;
 
   if (subTable.format === 0) {
-    var format0 = subTable;
-    format0.length = view.getUint16(vOffset, false); vOffset += 2;
-    format0.language = view.getUint16(vOffset, false); vOffset += 2;
-    var glyphCount = format0.length - 6;
-    var glyphIdArray = new Array(glyphCount);
-    for (var i = 0; i < glyphCount; i++) {
-      glyphIdArray[i] = view.getUint8(vOffset + i);
+    /* 优化93: subset 模式下跳过 format0 完整解析，readWindowsAllCodes 不需要它 */
+    var isSubset = ttf.readOptions && ttf.readOptions.subset;
+    if (isSubset) {
+      subTable.format = 0;
+    } else {
+      var format0 = subTable;
+      format0.length = view.getUint16(vOffset, false); vOffset += 2;
+      format0.language = view.getUint16(vOffset, false); vOffset += 2;
+      var glyphCount = format0.length - 6;
+      var glyphIdArray = new Array(glyphCount);
+      for (var i = 0; i < glyphCount; i++) {
+        glyphIdArray[i] = view.getUint8(vOffset + i);
+      }
+      format0.glyphIdArray = glyphIdArray;
     }
-    format0.glyphIdArray = glyphIdArray;
   } else if (subTable.format === 2) {
     var format2 = subTable;
     format2.length = view.getUint16(vOffset, false); vOffset += 2;
@@ -113,15 +119,22 @@ function readSubTable(reader, ttf, subTable, cmapOffset) {
     }
     format4.idRangeOffset = idRangeOffset;
 
-    var glyphCount4 = (format4.length - (vOffset - view.byteOffset - startOffset)) / 2;
-    format4.glyphIdArrayOffset = vOffset - view.byteOffset;
+    /* 优化101: subset 模式下跳过 glyphIdArray 解析，直接从 view 按需读取 */
+    var isSubset4 = ttf.readOptions && ttf.readOptions.subset;
+    if (isSubset4) {
+      format4.glyphIdArrayOffset = vOffset - view.byteOffset;
+      format4._cmapView = view;
+    } else {
+      var glyphCount4 = (format4.length - (vOffset - view.byteOffset - startOffset)) / 2;
+      format4.glyphIdArrayOffset = vOffset - view.byteOffset;
 
-    var glyphIdArray4 = new Array(glyphCount4);
-    for (var g = 0; g < glyphCount4; g++) {
-      glyphIdArray4[g] = view.getUint16(vOffset, false);
-      vOffset += 2;
+      var glyphIdArray4 = new Array(glyphCount4);
+      for (var g = 0; g < glyphCount4; g++) {
+        glyphIdArray4[g] = view.getUint16(vOffset, false);
+        vOffset += 2;
+      }
+      format4.glyphIdArray = glyphIdArray4;
     }
-    format4.glyphIdArray = glyphIdArray4;
   } else if (subTable.format === 6) {
     var format6 = subTable;
     format6.length = view.getUint16(vOffset, false); vOffset += 2;
@@ -144,18 +157,24 @@ function readSubTable(reader, ttf, subTable, cmapOffset) {
     format12.language = view.getUint32(vOffset, false); vOffset += 4;
     format12.nGroups = view.getUint32(vOffset, false); vOffset += 4;
     var nGroups = format12.nGroups;
-    var groups = new Array(nGroups);
-    for (var h = 0; h < nGroups; h++) {
-      groups[h] = {
-        start: view.getUint32(vOffset, false),
-        end: view.getUint32(vOffset + 4, false),
-        startId: view.getUint32(vOffset + 8, false)
-      };
+    /* 优化88: 扁平数组存储 groups，减少对象创建 [start, end, startId, ...] */
+    var groups = new Array(nGroups * 3);
+    for (var h = 0, gi = 0; h < nGroups; h++, gi += 3) {
+      groups[gi] = view.getUint32(vOffset, false);
+      groups[gi + 1] = view.getUint32(vOffset + 4, false);
+      groups[gi + 2] = view.getUint32(vOffset + 8, false);
       vOffset += 12;
     }
     format12.groups = groups;
+    format12._flatGroups = true;
   }
   else if (subTable.format === 14) {
+    /* 优化93: subset 模式下跳过 format14 完整解析 */
+    var isSubset2 = ttf.readOptions && ttf.readOptions.subset;
+    if (isSubset2) {
+      subTable.format = 14;
+      subTable.groups = [];
+    } else {
     var format14 = subTable;
     format14.length = view.getUint32(vOffset, false); vOffset += 4;
     var numVarSelectorRecords = view.getUint32(vOffset, false); vOffset += 4;
@@ -196,6 +215,7 @@ function readSubTable(reader, ttf, subTable, cmapOffset) {
       }
     }
     format14.groups = _groups;
+    }
   } else {
     console.warn('not support cmap format:' + subTable.format);
   }

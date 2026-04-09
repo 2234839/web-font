@@ -9,6 +9,9 @@ exports.default = write;
  * @author mengke01(kekee000@gmail.com)
  */
 
+/**
+ * 优化108: 接受并行数组 unicodeArr/idArr
+ */
 function writeSubTable0(writer, unicodes) {
   var pos = writer.offset;
   var view = writer.view;
@@ -99,21 +102,29 @@ function write(writer, ttf) {
   var numRecords = 2 + (hasFormat0 ? 1 : 0) + (hasGLyphsOver2Bytes ? 1 : 0);
   view.setUint16(pos, 0, false); pos += 2;
   view.setUint16(pos, numRecords, false); pos += 2;
-  writer.offset = pos;
 
+  /* 优化88: encoding records 直接 view 写入 */
   var headerSize = 4 + numRecords * 8;
   var format4Size = ttf.support.cmap.format4Size;
   var format0Size = ttf.support.cmap.format0Size;
 
-  /** platform 0 (Unicode) 和 platform 3 (Windows) 共享同一个 format 4 subtable */
-  writer.writeUint16(0); writer.writeUint16(3); writer.writeUint32(headerSize);
+  view.setUint16(pos, 0, false); pos += 2;
+  view.setUint16(pos, 3, false); pos += 2;
+  view.setUint32(pos, headerSize, false); pos += 4;
   if (hasFormat0) {
-    writer.writeUint16(1); writer.writeUint16(0); writer.writeUint32(headerSize + format4Size);
+    view.setUint16(pos, 1, false); pos += 2;
+    view.setUint16(pos, 0, false); pos += 2;
+    view.setUint32(pos, headerSize + format4Size, false); pos += 4;
   }
-  writer.writeUint16(3); writer.writeUint16(1); writer.writeUint32(headerSize);
+  view.setUint16(pos, 3, false); pos += 2;
+  view.setUint16(pos, 1, false); pos += 2;
+  view.setUint32(pos, headerSize, false); pos += 4;
   if (hasGLyphsOver2Bytes) {
-    writer.writeUint16(3); writer.writeUint16(10); writer.writeUint32(headerSize + format4Size + format0Size);
+    view.setUint16(pos, 3, false); pos += 2;
+    view.setUint16(pos, 10, false); pos += 2;
+    view.setUint32(pos, headerSize + format4Size + format0Size, false); pos += 4;
   }
+  writer.offset = pos;
 
   writeSubTable4(writer, ttf.support.cmap.format4Segments);
   if (hasFormat0) {

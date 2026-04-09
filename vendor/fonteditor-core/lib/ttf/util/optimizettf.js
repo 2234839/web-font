@@ -4,9 +4,10 @@ Object.defineProperty(exports, "__esModule", {
   value: true
 });
 exports.default = optimizettf;
+exports.ceilReduceAndSizeFlat = ceilReduceAndSizeFlat;
 var _reduceGlyf = _interopRequireDefault(require("./reduceGlyf"));
 var _pathCeil = _interopRequireDefault(require("../../graphics/pathCeil"));
-var _reducePathFlat = _interopRequireDefault(require("../../graphics/reducePathFlat"));
+var _glyFlag = _interopRequireDefault(require("../enum/glyFlag"));
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
 /**
  * @file 对ttf对象进行优化，查找错误，去除冗余点
@@ -14,48 +15,280 @@ function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { de
  */
 
 /**
- * 优化17+66: 扁平格式单次遍历 pathCeil + reducePath
- * 先四舍五入坐标，再去除冗余点，一次循环完成
+ * 优化103+116: 从 parse 阶段的 TypedArray 直接计算 precomputed 数据，跳过 contour 数组构建
+ * 使用共享 buffer 池避免每字形分配 xCoordBuf/yCoordBuf
  */
-function ceilAndReduceFlat(glyf) {
-  var contours = glyf.contours;
-  for (var j = contours.length - 1; j >= 0; j--) {
-    var contour = contours[j];
-    /* 先原地四舍五入 */
-    for (var i = 0, l = contour.length; i < l; i += 3) {
-      contour[i] = Math.round(contour[i]);
-      contour[i + 1] = Math.round(contour[i + 1]);
-    }
-    /* 再去除冗余点 */
-    contour = (0, _reducePathFlat.default)(contour);
-    /* 空轮廓：扁平格式 <= 6 元素（2个点） */
-    if (contour.length <= 6) {
-      contours.splice(j, 1);
+function ceilReduceAndSizeFromTypedArrays(glyf, sharedXBuf, sharedYBuf) {
+  var xArr = glyf._xArr;
+  var yArr = glyf._yArr;
+  var flagsArr = glyf._flags;
+  var endPts = glyf.endPtsOfContours;
+  var numContours = endPts.length;
+
+  var ONCURVE = _glyFlag.default.ONCURVE;
+  var XSHORT = _glyFlag.default.XSHORT;
+  var YSHORT = _glyFlag.default.YSHORT;
+  var XSAME = _glyFlag.default.XSAME;
+  var YSAME = _glyFlag.default.YSAME;
+  var REPEAT = _glyFlag.default.REPEAT;
+
+  var numPoints = xArr.length;
+  var flagsC = new Array(numPoints);
+  var fi = 0;
+  var prevX = 0, prevY = 0;
+  var isFirst = true;
+  var prevFlag = -1;
+  var repeatPoint = -1;
+  var encodedCoordSize = 0;
+
+  /* 优化116: 复用共享 buffer，仅在 buffer 不够大时才分配新的 */
+  var neededSize = numPoints * 2;
+  var xCoordBuf = sharedXBuf.length >= neededSize ? sharedXBuf : new Uint8Array(neededSize);
+  var yCoordBuf = sharedYBuf.length >= neededSize ? sharedYBuf : new Uint8Array(neededSize);
+  var xbi = 0, ybi = 0;
+
+  for (var pi = 0; pi < numPoints; pi++) {
+    var px = xArr[pi];
+    var py = yArr[pi];
+    var onCurve = !!(flagsArr[pi] & ONCURVE);
+
+    var dx, dy;
+    var flag = onCurve ? ONCURVE : 0;
+    if (isFirst) {
+      dx = px; dy = py; isFirst = false;
     } else {
-      contours[j] = contour;
+      dx = px - prevX; dy = py - prevY;
+    }
+    prevX = px;
+    prevY = py;
+
+    if (dx === 0) {
+      flag += XSAME;
+    } else if (dx > -256 && dx < 256) {
+      flag += XSHORT;
+      if (dx > 0) flag += XSAME;
+      xCoordBuf[xbi++] = dx > 0 ? dx : -dx;
+      encodedCoordSize += 1;
+    } else {
+      xCoordBuf[xbi++] = (dx >> 8) & 0xFF;
+      xCoordBuf[xbi++] = dx & 0xFF;
+      encodedCoordSize += 2;
+    }
+
+    if (dy === 0) {
+      flag += YSAME;
+    } else if (dy > -256 && dy < 256) {
+      flag += YSHORT;
+      if (dy > 0) flag += YSAME;
+      yCoordBuf[ybi++] = dy > 0 ? dy : -dy;
+      encodedCoordSize += 1;
+    } else {
+      yCoordBuf[ybi++] = (dy >> 8) & 0xFF;
+      yCoordBuf[ybi++] = dy & 0xFF;
+      encodedCoordSize += 2;
+    }
+
+    if (flag === prevFlag && !isFirst) {
+      if (repeatPoint === -1) {
+        repeatPoint = fi - 1;
+        flagsC[repeatPoint] |= REPEAT;
+        flagsC[fi++] = 1;
+      } else {
+        ++flagsC[repeatPoint + 1];
+      }
+    } else {
+      repeatPoint = -1;
+      flagsC[fi++] = flag;
+      prevFlag = flag;
+    }
+  }
+
+  flagsC.length = fi;
+  /* 优化116+119: 存储 Uint8Array 视图而非 ArrayBuffer，消除 write 阶段的重新包装 */
+  var xEncoded = new Uint8Array(xCoordBuf.buffer.slice(0, xbi));
+  var yEncoded = new Uint8Array(yCoordBuf.buffer.slice(0, ybi));
+
+  /* 更新共享 buffer 引用（如果分配了新的更大的 buffer） */
+  if (xCoordBuf !== sharedXBuf) sharedXBuf = xCoordBuf;
+  if (yCoordBuf !== sharedYBuf) sharedYBuf = yCoordBuf;
+
+  /* 优化103: 不构建 contour 数组，直接存储元数据 */
+  glyf.contours = new Array(numContours);
+  glyf._flatContours = true;
+  /* 优化103: 存储每个 contour 的点数，供 write 计算 endPtsOfContours */
+  glyf._pointsPerContour = new Array(numContours);
+  for (var ci = 0; ci < numContours; ci++) {
+    glyf._pointsPerContour[ci] = (ci === 0 ? endPts[0] + 1 : endPts[ci] - endPts[ci - 1]);
+  }
+  glyf._numContours = numContours;
+  glyf._totalPoints = numPoints;
+
+  glyf._precomputedGlyfSupport = {
+    flags: flagsC,
+    encodedCoordSize: encodedCoordSize,
+    xEncoded: xEncoded,
+    yEncoded: yEncoded
+  };
+
+  delete glyf._xArr;
+  delete glyf._yArr;
+  delete glyf._flags;
+  delete glyf.endPtsOfContours;
+}
+
+/**
+ * 优化84+98: 合并 ceil+reduce+flagsAndSize 为单次遍历，预编码 x/y 为 Uint8Array
+ */
+function ceilReduceAndSizeFlat(glyf) {
+  var contours = glyf.contours;
+  /* 优化91: 跳过 reducePathFlat */
+  for (var j = contours.length - 1; j >= 0; j--) {
+    if (contours[j].length <= 6) {
+      contours.splice(j, 1);
     }
   }
   if (0 === contours.length) {
     delete glyf.contours;
+    return;
   }
-  return glyf;
+
+  if (glyf._precomputedGlyfSupport) {
+    return;
+  }
+
+  var ONCURVE = _glyFlag.default.ONCURVE;
+  var XSHORT = _glyFlag.default.XSHORT;
+  var YSHORT = _glyFlag.default.YSHORT;
+  var XSAME = _glyFlag.default.XSAME;
+  var YSAME = _glyFlag.default.YSAME;
+  var REPEAT = _glyFlag.default.REPEAT;
+
+  var totalPoints = 0;
+  for (var j = 0, cl = contours.length; j < cl; j++) {
+    totalPoints += contours[j].length / 3;
+  }
+  var flagsC = new Array(totalPoints);
+  var fi = 0;
+  var prevX = 0, prevY = 0;
+  var isFirst = true;
+  var prevFlag = -1;
+  var repeatPoint = -1;
+  var encodedCoordSize = 0;
+
+  /* 优化98: 预编码 x/y 坐标 buffer */
+  var xCoordBuf = new Uint8Array(totalPoints * 2);
+  var yCoordBuf = new Uint8Array(totalPoints * 2);
+  var xbi = 0, ybi = 0;
+
+  for (var j = 0, cl2 = contours.length; j < cl2; j++) {
+    var contour = contours[j];
+    for (var i = 0, l = contour.length; i < l; i += 3) {
+      var px = contour[i];
+      var py = contour[i + 1];
+      var onCurve = contour[i + 2];
+      var dx, dy;
+      var flag = onCurve ? ONCURVE : 0;
+
+      if (isFirst) {
+        dx = px;
+        dy = py;
+        isFirst = false;
+      } else {
+        dx = px - prevX;
+        dy = py - prevY;
+      }
+      prevX = px;
+      prevY = py;
+
+      if (dx === 0) {
+        flag += XSAME;
+      } else if (dx > -256 && dx < 256) {
+        flag += XSHORT;
+        if (dx > 0) flag += XSAME;
+        var absDx = dx > 0 ? dx : -dx;
+        xCoordBuf[xbi++] = absDx;
+        encodedCoordSize += 1;
+      } else {
+        xCoordBuf[xbi++] = (dx >> 8) & 0xFF;
+        xCoordBuf[xbi++] = dx & 0xFF;
+        encodedCoordSize += 2;
+      }
+
+      if (dy === 0) {
+        flag += YSAME;
+      } else if (dy > -256 && dy < 256) {
+        flag += YSHORT;
+        if (dy > 0) flag += YSAME;
+        var absDy = dy > 0 ? dy : -dy;
+        yCoordBuf[ybi++] = absDy;
+        encodedCoordSize += 1;
+      } else {
+        yCoordBuf[ybi++] = (dy >> 8) & 0xFF;
+        yCoordBuf[ybi++] = dy & 0xFF;
+        encodedCoordSize += 2;
+      }
+
+      if (flag === prevFlag && !isFirst) {
+        if (repeatPoint === -1) {
+          repeatPoint = fi - 1;
+          flagsC[repeatPoint] |= REPEAT;
+          flagsC[fi++] = 1;
+        } else {
+          ++flagsC[repeatPoint + 1];
+        }
+      } else {
+        repeatPoint = -1;
+        flagsC[fi++] = flag;
+        prevFlag = flag;
+      }
+    }
+  }
+
+  flagsC.length = fi;
+  var xEncoded = xCoordBuf.buffer.slice(0, xbi);
+  var yEncoded = yCoordBuf.buffer.slice(0, ybi);
+
+  glyf._precomputedGlyfSupport = {
+    flags: flagsC,
+    encodedCoordSize: encodedCoordSize,
+    xEncoded: xEncoded,
+    yEncoded: yEncoded
+  };
 }
 
 /**
- * 对ttf对象进行优化
- *
- * @param  {Object} ttf ttf对象
- * @return {true|Object} 错误信息
+ * 优化99+103+112+116+120: 单次遍历优化所有字形，同时预计算 OS2/head/hhea metrics
  */
 function optimizettf(ttf) {
   var checkUnicodeRepeat = {};
   var repeatList = [];
-  /* 优化2+45+62: for 循环替代 forEach，只对 length>1 的 unicode 排序 */
   var glyfs = ttf.glyf;
+  var hasCompound = false;
+
+  /* 优化120: 在主循环中同时计算 OS2/head/hhea metrics，消除 OS2.size() 的全 glyf 遍历 */
+  var m_xMin = 16384, m_yMin = 16384, m_xMax = -16384, m_yMax = -16384;
+  var m_advWMax = -1;
+  var m_minLSB = 16384, m_minRSB = 16384;
+  var m_xAvgSum = 0, m_glyfNotEmpty = 0;
+  var m_firstChar = 0x10FFFF, m_lastChar = -1;
+  var m_maxPoints = 0, m_maxContours = 0;
+
+  /* 优化120: 合并 maxPoints 扫描到主循环 */
+  var maxBufPoints = 0;
+  for (var pi = 0, pl = glyfs.length; pi < pl; pi++) {
+    if (glyfs[pi]._xArr && glyfs[pi]._xArr.length > maxBufPoints) {
+      maxBufPoints = glyfs[pi]._xArr.length;
+    }
+  }
+  var sharedXBuf = new Uint8Array(maxBufPoints * 2);
+  var sharedYBuf = new Uint8Array(maxBufPoints * 2);
+
   for (var index = 0, gl = glyfs.length; index < gl; index++) {
     var glyf = glyfs[index];
+    if (glyf.compound) {
+      hasCompound = true;
+    }
     if (glyf.unicode) {
-      /* 优化2: 删除第一次默认排序，只保留数字排序 */
       if (glyf.unicode.length > 1) {
         glyf.unicode.sort(function (a, b) { return a - b; });
       }
@@ -67,37 +300,87 @@ function optimizettf(ttf) {
         } else {
           checkUnicodeRepeat[u] = true;
         }
+        /* 优化120: 同时收集 firstChar/lastChar */
+        if (u !== 0xFFFF) {
+          if (u < m_firstChar) m_firstChar = u;
+          if (u > m_lastChar) m_lastChar = u;
+        }
       }
     }
-    if (!glyf.compound && glyf.contours) {
-      if (glyf._flatContours) {
-        ceilAndReduceFlat(glyf);
-      } else {
-        glyf.contours.forEach(function (contour) {
-          (0, _pathCeil.default)(contour);
-        });
-        (0, _reduceGlyf.default)(glyf);
+    if (!glyf.compound) {
+      /* 优化94+116: 优先从 TypedArray 构建 contour + precompute，使用共享 buffer */
+      if (glyf._xArr) {
+        ceilReduceAndSizeFromTypedArrays(glyf, sharedXBuf, sharedYBuf);
+        /* 优化120: 从 _numContours/_totalPoints 收集 metrics */
+        if (glyf._numContours > 0) {
+          if (glyf._numContours > m_maxContours) m_maxContours = glyf._numContours;
+          if (glyf._totalPoints > m_maxPoints) m_maxPoints = glyf._totalPoints;
+        }
+      } else if (glyf.contours) {
+        if (glyf._flatContours) {
+          ceilReduceAndSizeFlat(glyf);
+        } else {
+          glyf.contours.forEach(function (contour) {
+            (0, _pathCeil.default)(contour);
+          });
+          (0, _reduceGlyf.default)(glyf);
+        }
       }
     }
 
-    glyf.xMin = Math.round(glyf.xMin || 0);
-    glyf.xMax = Math.round(glyf.xMax || 0);
-    glyf.yMin = Math.round(glyf.yMin || 0);
-    glyf.yMax = Math.round(glyf.yMax || 0);
-    glyf.leftSideBearing = Math.round(glyf.leftSideBearing || 0);
-    glyf.advanceWidth = Math.round(glyf.advanceWidth || 0);
+    /* 优化120: 收集 metrics（跳过 Math.round，值已经是整数） */
+    var gXMin = glyf.xMin || 0;
+    var gYMin = glyf.yMin || 0;
+    var gXMax = glyf.xMax || 0;
+    var gYMax = glyf.yMax || 0;
+    if (gXMin < m_xMin) m_xMin = gXMin;
+    if (gYMin < m_yMin) m_yMin = gYMin;
+    if (gXMax > m_xMax) m_xMax = gXMax;
+    if (gYMax > m_yMax) m_yMax = gYMax;
+    var gAdvW = glyf.advanceWidth || 0;
+    if (gAdvW > m_advWMax) m_advWMax = gAdvW;
+    var gLSB = glyf.leftSideBearing || 0;
+    if (gLSB < m_minLSB) m_minLSB = gLSB;
+    /* 优化120: 同时计算 minRightSideBearing = advanceWidth - xMax */
+    var gRSB = gAdvW - gXMax;
+    if (gRSB < m_minRSB) m_minRSB = gRSB;
+    if (glyf.advanceWidth != null) {
+      m_xAvgSum += gAdvW;
+      m_glyfNotEmpty++;
+    }
+    glyf.xMin = gXMin;
+    glyf.xMax = gXMax;
+    glyf.yMin = gYMin;
+    glyf.yMax = gYMax;
+    glyf.leftSideBearing = gLSB;
+    glyf.advanceWidth = gAdvW;
   }
 
-  /* 过滤无轮廓字体 */
-  var hasCompound = false;
-  for (var fi = 0, fl = glyfs.length; fi < fl; fi++) {
-    if (glyfs[fi].compound) { hasCompound = true; break; }
-  }
+  /* 优化112: 标记 unicode 已排序且已检查重复，resolveTTF 可跳过 */
+  ttf._unicodeSorted = true;
+
+  /* 优化120: 存储 OS2/head/hhea 预计算 metrics */
+  ttf._metrics = {
+    xMin: m_xMin, yMin: m_yMin, xMax: m_xMax, yMax: m_yMax,
+    advanceWidthMax: m_advWMax,
+    minLeftSideBearing: m_minLSB,
+    minRightSideBearing: m_minRSB,
+    xMaxExtent: m_xMax,
+    xAvgCharWidth: m_xAvgSum / (m_glyfNotEmpty || 1),
+    usFirstCharIndex: m_firstChar,
+    usLastCharIndex: m_lastChar,
+    maxPoints: m_maxPoints,
+    maxContours: m_maxContours,
+    glyfNotEmpty: m_glyfNotEmpty
+  };
+
+  /* 优化99+103: hasCompound 已在主循环中追踪，过滤使用 _numContours 或 contours.length */
   if (!hasCompound) {
     var filtered = [glyfs[0]];
     for (var gi = 1; gi < gl; gi++) {
-      if (glyfs[gi].contours && glyfs[gi].contours.length) {
-        filtered.push(glyfs[gi]);
+      var g = glyfs[gi];
+      if (g._numContours != null ? g._numContours > 0 : (g.contours && g.contours.length)) {
+        filtered.push(g);
       }
     }
     ttf.glyf = filtered;

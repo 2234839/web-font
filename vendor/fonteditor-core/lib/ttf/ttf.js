@@ -652,7 +652,7 @@ var TTF = exports.default = /*#__PURE__*/function () {
     value: function sortGlyf() {
       var glyf = this.ttf.glyf;
       if (glyf.length > 1) {
-        /* 优化54: some → for 循环 + unicode 属性缓存 + Math.min.apply → 手动遍历 */
+        /* 优化54: some → for 循环 */
         var hasCompound = false;
         for (var k = 0, kl = glyf.length; k < kl; k++) {
           if (glyf[k].compound) {
@@ -664,21 +664,13 @@ var TTF = exports.default = /*#__PURE__*/function () {
           return -2;
         }
         var notdef = glyf.shift();
+        /* 优化113: unicode 已在 optimizettf 中排序，最小值始终是 unicode[0] */
         glyf.sort(function (a, b) {
           var aU = a.unicode;
           var bU = b.unicode;
-          if ((!aU || !aU.length) && (!bU || !bU.length)) {
-            return 0;
-          } else if ((!aU || !aU.length) && bU) {
-            return 1;
-          } else if (aU && (!bU || !bU.length)) {
-            return -1;
-          }
-          /* 优化3: 手动遍历取最小值 */
-          var aMin = aU[0], bMin = bU[0];
-          for (var ai = 1; ai < aU.length; ai++) { if (aU[ai] < aMin) aMin = aU[ai]; }
-          for (var bi = 1; bi < bU.length; bi++) { if (bU[bi] < bMin) bMin = bU[bi]; }
-          return aMin - bMin;
+          if (!aU || !aU.length) return bU && bU.length ? 1 : 0;
+          if (!bU || !bU.length) return -1;
+          return aU[0] - bU[0];
         });
         glyf.unshift(notdef);
         return glyf;

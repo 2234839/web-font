@@ -19,7 +19,25 @@ function getFlagsAndSize(glyf, glyfSupport, hinting) {
     return 0;
   }
 
-  /* 优化33: 缓存 glyFlag 常量到局部变量 */
+  /* 优化84+98+103: 直接复用 optimize 阶段预计算的 flags/encodedCoordSize + 预编码 buffer */
+  if (glyf._precomputedGlyfSupport) {
+    var pre = glyf._precomputedGlyfSupport;
+    glyfSupport.flags = pre.flags;
+    /* 优化98: 预编码 buffer 直接传递 */
+    if (pre.xEncoded) {
+      glyfSupport.xEncoded = pre.xEncoded;
+      glyfSupport.yEncoded = pre.yEncoded;
+    } else {
+      glyfSupport.xCoord = pre.xCoord;
+      glyfSupport.yCoord = pre.yCoord;
+    }
+    delete glyf._precomputedGlyfSupport;
+    var instructionSize = (hinting && glyf.instructions) ? glyf.instructions.length : 0;
+    /* 优化103: 优先使用 _numContours */
+    var nc = glyf._numContours != null ? glyf._numContours : glyf.contours.length;
+    return 12 + nc * 2 + pre.flags.length + pre.encodedCoordSize + instructionSize;
+  }
+
   var ONCURVE = _glyFlag.default.ONCURVE;
   var XSHORT = _glyFlag.default.XSHORT;
   var YSHORT = _glyFlag.default.YSHORT;
@@ -36,16 +54,13 @@ function getFlagsAndSize(glyf, glyfSupport, hinting) {
   var prevFlag = -1;
   var repeatPoint = -1;
 
-  /* 优化66: 检测扁平格式 */
   var isFlat = glyf._flatContours;
 
-  /* 单次遍历: delta坐标计算 + flag压缩 + 坐标编码 + 大小累加 */
   var encodedCoordSize = 0;
 
   for (var j = 0, cl = contours.length; j < cl; j++) {
     var contour = contours[j];
     if (isFlat) {
-      /* 优化66: 扁平格式，每3个元素为一个点 [x, y, onCurve, ...] */
       for (var i = 0, l = contour.length; i < l; i += 3) {
         var px = contour[i];
         var py = contour[i + 1];
@@ -69,7 +84,7 @@ function getFlagsAndSize(glyf, glyfSupport, hinting) {
         } else if (-0xFF <= dx && dx <= 0xFF) {
           flag += XSHORT;
           if (dx > 0) flag += XSAME;
-          xCoordC.push(Math.abs(dx));
+          xCoordC.push(dx > 0 ? dx : -dx);
           encodedCoordSize += 1;
         } else {
           xCoordC.push(dx);
@@ -81,7 +96,7 @@ function getFlagsAndSize(glyf, glyfSupport, hinting) {
         } else if (-0xFF <= dy && dy <= 0xFF) {
           flag += YSHORT;
           if (dy > 0) flag += YSAME;
-          yCoordC.push(Math.abs(dy));
+          yCoordC.push(dy > 0 ? dy : -dy);
           encodedCoordSize += 1;
         } else {
           yCoordC.push(dy);
@@ -126,7 +141,7 @@ function getFlagsAndSize(glyf, glyfSupport, hinting) {
         } else if (-0xFF <= dx && dx <= 0xFF) {
           flag += XSHORT;
           if (dx > 0) flag += XSAME;
-          xCoordC.push(Math.abs(dx));
+          xCoordC.push(dx > 0 ? dx : -dx);
           encodedCoordSize += 1;
         } else {
           xCoordC.push(dx);
@@ -138,7 +153,7 @@ function getFlagsAndSize(glyf, glyfSupport, hinting) {
         } else if (-0xFF <= dy && dy <= 0xFF) {
           flag += YSHORT;
           if (dy > 0) flag += YSAME;
-          yCoordC.push(Math.abs(dy));
+          yCoordC.push(dy > 0 ? dy : -dy);
           encodedCoordSize += 1;
         } else {
           yCoordC.push(dy);
@@ -167,7 +182,6 @@ function getFlagsAndSize(glyf, glyfSupport, hinting) {
   glyfSupport.yCoord = yCoordC;
 
   var instructionSize = (hinting && glyf.instructions) ? glyf.instructions.length : 0;
-  /* 12 bytes header + endPtsOfContours + flags + encoded coords + instructions */
   return 12 + contours.length * 2 + flagsC.length + encodedCoordSize + instructionSize;
 }
 

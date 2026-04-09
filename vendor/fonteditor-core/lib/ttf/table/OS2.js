@@ -54,118 +54,175 @@ var _default = exports.default = _table.default.create('OS/2', [['version', _str
     return Object.assign(os2Fields, tbl);
   },
   size: function size(ttf) {
-    // 更新其他表的统计信息
-    // header
-    var xMin = 16384;
-    var yMin = 16384;
-    var xMax = -16384;
-    var yMax = -16384;
+    /* 优化120: 使用 optimizettf 预计算的 metrics，跳过全 glyf 遍历 */
+    var metrics = ttf._metrics;
+    var hinting = ttf.writeOptions ? ttf.writeOptions.hinting : false;
 
-    // hhea
+    if (metrics) {
+      var glyfs = ttf.glyf;
+      /* 计算 minRightSideBearing（需要逐字形遍历 advanceWidth - xMax） */
+      var minRightSideBearing = 16384;
+      for (var ri = 0, rl = glyfs.length; ri < rl; ri++) {
+        var rg = glyfs[ri];
+        if (rg.xMax != null) {
+          var rsb = rg.advanceWidth - rg.xMax;
+          if (rsb < minRightSideBearing) minRightSideBearing = rsb;
+        }
+      }
+
+      ttf['OS/2'].version = 0x4;
+      ttf['OS/2'].achVendID = (ttf['OS/2'].achVendID + '    ').slice(0, 4);
+      ttf['OS/2'].xAvgCharWidth = metrics.xAvgCharWidth;
+      ttf['OS/2'].ulUnicodeRange2 = 268435456;
+      ttf['OS/2'].usFirstCharIndex = metrics.usFirstCharIndex;
+      ttf['OS/2'].usLastCharIndex = metrics.usLastCharIndex;
+
+      ttf.hhea.version = ttf.hhea.version || 0x1;
+      ttf.hhea.advanceWidthMax = metrics.advanceWidthMax;
+      ttf.hhea.minLeftSideBearing = metrics.minLeftSideBearing;
+      ttf.hhea.minRightSideBearing = minRightSideBearing;
+      ttf.hhea.xMaxExtent = metrics.xMaxExtent;
+
+      ttf.head.version = ttf.head.version || 0x1;
+      ttf.head.lowestRecPPEM = ttf.head.lowestRecPPEM || 0x8;
+      ttf.head.xMin = metrics.xMin;
+      ttf.head.yMin = metrics.yMin;
+      ttf.head.xMax = metrics.xMax;
+      ttf.head.yMax = metrics.yMax;
+
+      if (ttf.support.head) {
+        var _ttf$support$head = ttf.support.head;
+        if (_ttf$support$head.xMin != null) ttf.head.xMin = _ttf$support$head.xMin;
+        if (_ttf$support$head.yMin != null) ttf.head.yMin = _ttf$support$head.yMin;
+        if (_ttf$support$head.xMax != null) ttf.head.xMax = _ttf$support$head.xMax;
+        if (_ttf$support$head.yMax != null) ttf.head.yMax = _ttf$support$head.yMax;
+      }
+      if (ttf.support.hhea) {
+        var _ttf$support$hhea = ttf.support.hhea;
+        if (_ttf$support$hhea.advanceWidthMax != null) ttf.hhea.advanceWidthMax = _ttf$support$hhea.advanceWidthMax;
+        if (_ttf$support$hhea.xMaxExtent != null) ttf.hhea.xMaxExtent = _ttf$support$hhea.xMaxExtent;
+        if (_ttf$support$hhea.minLeftSideBearing != null) ttf.hhea.minLeftSideBearing = _ttf$support$hhea.minLeftSideBearing;
+        if (_ttf$support$hhea.minRightSideBearing != null) ttf.hhea.minRightSideBearing = _ttf$support$hhea.minRightSideBearing;
+      }
+
+      ttf.maxp = ttf.maxp || {};
+      ttf.support.maxp = {
+        version: 1.0,
+        numGlyphs: ttf.glyf.length,
+        maxPoints: metrics.maxPoints,
+        maxContours: metrics.maxContours,
+        maxCompositePoints: 0,
+        maxCompositeContours: 0,
+        maxZones: ttf.maxp.maxZones || 0,
+        maxTwilightPoints: ttf.maxp.maxTwilightPoints || 0,
+        maxStorage: ttf.maxp.maxStorage || 0,
+        maxFunctionDefs: ttf.maxp.maxFunctionDefs || 0,
+        maxStackElements: ttf.maxp.maxStackElements || 0,
+        maxSizeOfInstructions: 0,
+        maxComponentElements: 0,
+        maxComponentDepth: 0
+      };
+
+      delete ttf._metrics;
+      return _table.default.size.call(this, ttf);
+    }
+
+    /* 无预计算 metrics 时的原始逻辑 */
+    var xMin = 16384, yMin = 16384, xMax = -16384, yMax = -16384;
     var advanceWidthMax = -1;
     var minLeftSideBearing = 16384;
     var minRightSideBearing = 16384;
     var xMaxExtent = -16384;
-
-    // os2 count
     var xAvgCharWidth = 0;
     var usFirstCharIndex = 0x10FFFF;
     var usLastCharIndex = -1;
-
-    // maxp
-    var maxPoints = 0;
-    var maxContours = 0;
-    var maxCompositePoints = 0;
-    var maxCompositeContours = 0;
+    var maxPoints = 0, maxContours = 0;
+    var maxCompositePoints = 0, maxCompositeContours = 0;
     var maxSizeOfInstructions = 0;
     var maxComponentElements = 0;
-    var glyfNotEmpty = 0; // 非空glyf
-    var hinting = ttf.writeOptions ? ttf.writeOptions.hinting : false;
+    var glyfNotEmpty = 0;
 
-    // 计算instructions和functiondefs
     if (hinting) {
-      if (ttf.cvt) {
-        maxSizeOfInstructions = Math.max(maxSizeOfInstructions, ttf.cvt.length);
-      }
-      if (ttf.prep) {
-        maxSizeOfInstructions = Math.max(maxSizeOfInstructions, ttf.prep.length);
-      }
-      if (ttf.fpgm) {
-        maxSizeOfInstructions = Math.max(maxSizeOfInstructions, ttf.fpgm.length);
-      }
+      if (ttf.cvt) maxSizeOfInstructions = Math.max(maxSizeOfInstructions, ttf.cvt.length);
+      if (ttf.prep) maxSizeOfInstructions = Math.max(maxSizeOfInstructions, ttf.prep.length);
+      if (ttf.fpgm) maxSizeOfInstructions = Math.max(maxSizeOfInstructions, ttf.fpgm.length);
     }
-    ttf.glyf.forEach(function (glyf) {
-      // 统计control point信息
+    var glyfs = ttf.glyf;
+    for (var gi = 0, gl = glyfs.length; gi < gl; gi++) {
+      var glyf = glyfs[gi];
       if (glyf.compound) {
         var compositeContours = 0;
         var compositePoints = 0;
-        glyf.glyfs.forEach(function (g) {
-          var cglyf = ttf.glyf[g.glyphIndex];
-          if (!cglyf) {
-            return;
+        var subGlyfs = glyf.glyfs;
+        for (var sg = 0, sgl = subGlyfs.length; sg < sgl; sg++) {
+          var cglyf = ttf.glyf[subGlyfs[sg].glyphIndex];
+          if (!cglyf) continue;
+          if (cglyf._numContours != null) {
+            compositeContours += cglyf._numContours;
+            compositePoints += cglyf._totalPoints;
+          } else {
+            var cContours = cglyf.contours;
+            if (cContours) {
+              compositeContours += cContours.length;
+              if (cContours.length) {
+                var cIsFlat = cglyf._flatContours;
+                for (var cc = 0, ccl = cContours.length; cc < ccl; cc++) {
+                  compositePoints += cIsFlat ? cContours[cc].length / 3 : cContours[cc].length;
+                }
+              }
+            }
           }
-          compositeContours += cglyf.contours ? cglyf.contours.length : 0;
-          if (cglyf.contours && cglyf.contours.length) {
-            cglyf.contours.forEach(function (contour) {
-              compositePoints += contour.length;
-            });
-          }
-        });
-        maxComponentElements = Math.max(maxComponentElements, glyf.glyfs.length);
+        }
+        maxComponentElements = Math.max(maxComponentElements, subGlyfs.length);
         maxCompositePoints = Math.max(maxCompositePoints, compositePoints);
         maxCompositeContours = Math.max(maxCompositeContours, compositeContours);
-      }
-      // 简单图元
-      else if (glyf.contours && glyf.contours.length) {
-        maxContours = Math.max(maxContours, glyf.contours.length);
+      } else if (glyf._numContours != null && glyf._numContours > 0) {
+        /* 优化106: 使用 _numContours/_totalPoints 快速路径 */
+        maxContours = Math.max(maxContours, glyf._numContours);
+        maxPoints = Math.max(maxPoints, glyf._totalPoints);
+      } else if (glyf.contours && glyf.contours.length) {
+        var gContours = glyf.contours;
+        maxContours = Math.max(maxContours, gContours.length);
         var points = 0;
-        glyf.contours.forEach(function (contour) {
-          points += contour.length;
-        });
+        var isFlat = glyf._flatContours;
+        for (var ci = 0, cil = gContours.length; ci < cil; ci++) {
+          points += isFlat ? gContours[ci].length / 3 : gContours[ci].length;
+        }
         maxPoints = Math.max(maxPoints, points);
       }
       if (hinting && glyf.instructions) {
         maxSizeOfInstructions = Math.max(maxSizeOfInstructions, glyf.instructions.length);
       }
-
-      // 统计边界信息
-      if (null != glyf.xMin && glyf.xMin < xMin) {
-        xMin = glyf.xMin;
-      }
-      if (null != glyf.yMin && glyf.yMin < yMin) {
-        yMin = glyf.yMin;
-      }
-      if (null != glyf.xMax && glyf.xMax > xMax) {
-        xMax = glyf.xMax;
-      }
-      if (null != glyf.yMax && glyf.yMax > yMax) {
-        yMax = glyf.yMax;
-      }
+      var gXMin = glyf.xMin;
+      var gYMin = glyf.yMin;
+      var gXMax = glyf.xMax;
+      var gYMax = glyf.yMax;
+      if (null != gXMin && gXMin < xMin) xMin = gXMin;
+      if (null != gYMin && gYMin < yMin) yMin = gYMin;
+      if (null != gXMax && gXMax > xMax) xMax = gXMax;
+      if (null != gYMax && gYMax > yMax) yMax = gYMax;
       advanceWidthMax = Math.max(advanceWidthMax, glyf.advanceWidth);
       minLeftSideBearing = Math.min(minLeftSideBearing, glyf.leftSideBearing);
-      if (null != glyf.xMax) {
-        minRightSideBearing = Math.min(minRightSideBearing, glyf.advanceWidth - glyf.xMax);
-        xMaxExtent = Math.max(xMaxExtent, glyf.xMax);
+      if (null != gXMax) {
+        minRightSideBearing = Math.min(minRightSideBearing, glyf.advanceWidth - gXMax);
+        xMaxExtent = Math.max(xMaxExtent, gXMax);
       }
       if (null != glyf.advanceWidth) {
         xAvgCharWidth += glyf.advanceWidth;
         glyfNotEmpty++;
       }
       var unicodes = glyf.unicode;
-      if (typeof glyf.unicode === 'number') {
-        unicodes = [glyf.unicode];
-      }
+      if (typeof unicodes === 'number') unicodes = [unicodes];
       if (Array.isArray(unicodes)) {
-        unicodes.forEach(function (unicode) {
-          if (unicode !== 0xFFFF) {
-            usFirstCharIndex = Math.min(usFirstCharIndex, unicode);
-            usLastCharIndex = Math.max(usLastCharIndex, unicode);
+        for (var ui = 0, ul = unicodes.length; ui < ul; ui++) {
+          if (unicodes[ui] !== 0xFFFF) {
+            if (unicodes[ui] < usFirstCharIndex) usFirstCharIndex = unicodes[ui];
+            if (unicodes[ui] > usLastCharIndex) usLastCharIndex = unicodes[ui];
           }
-        });
+        }
       }
-    });
+    }
 
-    // 重新设置version 4
     ttf['OS/2'].version = 0x4;
     ttf['OS/2'].achVendID = (ttf['OS/2'].achVendID + '    ').slice(0, 4);
     ttf['OS/2'].xAvgCharWidth = xAvgCharWidth / (glyfNotEmpty || 1);
@@ -173,14 +230,12 @@ var _default = exports.default = _table.default.create('OS/2', [['version', _str
     ttf['OS/2'].usFirstCharIndex = usFirstCharIndex;
     ttf['OS/2'].usLastCharIndex = usLastCharIndex;
 
-    // rewrite hhea
     ttf.hhea.version = ttf.hhea.version || 0x1;
     ttf.hhea.advanceWidthMax = advanceWidthMax;
     ttf.hhea.minLeftSideBearing = minLeftSideBearing;
     ttf.hhea.minRightSideBearing = minRightSideBearing;
     ttf.hhea.xMaxExtent = xMaxExtent;
 
-    // rewrite head
     ttf.head.version = ttf.head.version || 0x1;
     ttf.head.lowestRecPPEM = ttf.head.lowestRecPPEM || 0x8;
     ttf.head.xMin = xMin;
@@ -188,47 +243,20 @@ var _default = exports.default = _table.default.create('OS/2', [['version', _str
     ttf.head.xMax = xMax;
     ttf.head.yMax = yMax;
 
-    // head rewrite
     if (ttf.support.head) {
-      var _ttf$support$head = ttf.support.head,
-        _xMin = _ttf$support$head.xMin,
-        _yMin = _ttf$support$head.yMin,
-        _xMax = _ttf$support$head.xMax,
-        _yMax = _ttf$support$head.yMax;
-      if (_xMin != null) {
-        ttf.head.xMin = _xMin;
-      }
-      if (_yMin != null) {
-        ttf.head.yMin = _yMin;
-      }
-      if (_xMax != null) {
-        ttf.head.xMax = _xMax;
-      }
-      if (_yMax != null) {
-        ttf.head.yMax = _yMax;
-      }
+      var _ttf$support$head = ttf.support.head;
+      if (_ttf$support$head.xMin != null) ttf.head.xMin = _ttf$support$head.xMin;
+      if (_ttf$support$head.yMin != null) ttf.head.yMin = _ttf$support$head.yMin;
+      if (_ttf$support$head.xMax != null) ttf.head.xMax = _ttf$support$head.xMax;
+      if (_ttf$support$head.yMax != null) ttf.head.yMax = _ttf$support$head.yMax;
     }
-    // hhea rewrite
     if (ttf.support.hhea) {
-      var _ttf$support$hhea = ttf.support.hhea,
-        _advanceWidthMax = _ttf$support$hhea.advanceWidthMax,
-        _xMaxExtent = _ttf$support$hhea.xMaxExtent,
-        _minLeftSideBearing = _ttf$support$hhea.minLeftSideBearing,
-        _minRightSideBearing = _ttf$support$hhea.minRightSideBearing;
-      if (_advanceWidthMax != null) {
-        ttf.hhea.advanceWidthMax = _advanceWidthMax;
-      }
-      if (_xMaxExtent != null) {
-        ttf.hhea.xMaxExtent = _xMaxExtent;
-      }
-      if (_minLeftSideBearing != null) {
-        ttf.hhea.minLeftSideBearing = _minLeftSideBearing;
-      }
-      if (_minRightSideBearing != null) {
-        ttf.hhea.minRightSideBearing = _minRightSideBearing;
-      }
+      var _ttf$support$hhea = ttf.support.hhea;
+      if (_ttf$support$hhea.advanceWidthMax != null) ttf.hhea.advanceWidthMax = _ttf$support$hhea.advanceWidthMax;
+      if (_ttf$support$hhea.xMaxExtent != null) ttf.hhea.xMaxExtent = _ttf$support$hhea.xMaxExtent;
+      if (_ttf$support$hhea.minLeftSideBearing != null) ttf.hhea.minLeftSideBearing = _ttf$support$hhea.minLeftSideBearing;
+      if (_ttf$support$hhea.minRightSideBearing != null) ttf.hhea.minRightSideBearing = _ttf$support$hhea.minRightSideBearing;
     }
-    // 这里根据存储的maxp来设置新的maxp，避免重复计算maxp
     ttf.maxp = ttf.maxp || {};
     ttf.support.maxp = {
       version: 1.0,

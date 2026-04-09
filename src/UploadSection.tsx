@@ -3,8 +3,7 @@ import { uploadFont, type UploadResult, type ServerConfig } from "./api";
 
 const ACCEPT = ".ttf,.otf,.woff,.woff2";
 
-/** 目前仅 TTF 格式兼容性最佳，上传其他格式可能无法正常使用 */
-const UPLOAD_TIP = "当前仅 TTF 格式兼容性最佳，建议上传 .ttf 字体文件";
+const UPLOAD_TIP = "支持 .ttf 和 .otf 格式，建议上传 .ttf 字体文件以获得最佳兼容性";
 
 const btn = {
   padding: "6px 20px",
