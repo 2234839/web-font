@@ -17,7 +17,7 @@ const s = {
     margin: "0 0 4px 0",
   } as const,
   desc: {
-    "font-size": "14px",
+    "font-size": "24px",
     color: "#888",
     margin: "0 0 36px 0",
   } as const,
@@ -97,11 +97,26 @@ function App() {
     adminUploadEnabled: false,
   });
 
+  const SLOGAN = "如清风似闪电，超级快的字体子集化裁剪";
+
   onMount(async () => {
     const [fontList, config] = await Promise.all([fetchFonts().catch(() => []), fetchConfig().catch(() => ({ enableTempUpload: false, adminUploadEnabled: false }))]);
     set_fonts(fontList);
     set_serverConfig(config);
     if (fontList.length > 0) {
+      /** 标语随机使用一个字体展示 */
+      const randomFont = fontList[Math.floor(Math.random() * fontList.length)];
+      (globalThis as any).WebFont?.loadText({
+        fontName: randomFont.name,
+        text: SLOGAN,
+        family: "SloganFont",
+      });
+      const sloganEl = document.getElementById("slogan");
+      if (sloganEl) {
+        sloganEl.style.fontFamily = '"SloganFont", sans-serif';
+        sloganEl.title = randomFont.name;
+      }
+
       onFontChange(fontList[0].name);
     }
   });
@@ -161,7 +176,6 @@ function App() {
     <div style={s.wrap}>
       <div style={{ display: "flex", "align-items": "center", "justify-content": "space-between" }}>
         <h1 style={s.h1}>Web Font</h1>
-        <p style={{ "font-size": "13px", color: "#bbb", margin: "0" }}>如清风似闪电，超级快的字体子集化裁剪</p>
         <a
           href="https://github.com/2234839/web-font"
           target="_blank"
@@ -172,7 +186,7 @@ function App() {
           Star on GitHub
         </a>
       </div>
-      <p style={s.desc}>输入文本，获取仅包含所需字符的子集字体 CSS</p>
+      <p id="slogan" style={s.desc}>{SLOGAN}</p>
 
       <section style={s.section}>
         <label style={s.label}>选择字体</label>
