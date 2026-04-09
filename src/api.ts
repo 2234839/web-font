@@ -6,6 +6,7 @@ export interface FontInfo {
 export interface ServerConfig {
   enableTempUpload: boolean;
   adminUploadEnabled: boolean;
+  supportedOutTypes: ("woff2" | "ttf")[];
 }
 
 export interface UploadResult {

@@ -199,11 +199,14 @@ async function handleListFonts(req: Request, res: Response) {
 
 /** GET /api/config — 返回公开配置 */
 async function handleGetConfig(req: Request, res: Response) {
+  const isLlrt = release_name === "llrt";
   return {
     req,
     res: jsonResponse({
       enableTempUpload,
       adminUploadEnabled: !!adminApiKey,
+      /** LLRT 不支持 wasm，无法输出 woff2 */
+      supportedOutTypes: isLlrt ? ["ttf"] : ["woff2", "ttf"],
     }),
   };
 }

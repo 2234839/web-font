@@ -1,6 +1,7 @@
 import { createMemo, createSignal, onMount, Show, For } from "solid-js";
 import { fetchFonts, fetchConfig, type FontInfo, type ServerConfig } from "./api";
 import UploadSection from "./UploadSection";
+import { SelectorRow } from "./FontSelector";
 
 const s = {
   wrap: {
@@ -92,9 +93,11 @@ function App() {
   const [text, set_text] = createSignal("天地无极，乾坤借法");
   const [fonts, set_fonts] = createSignal<FontInfo[]>([]);
   const [selectedFont, set_selectedFont] = createSignal("");
+  const [outType, set_outType] = createSignal<"woff2" | "ttf">("woff2");
   const [serverConfig, set_serverConfig] = createSignal<ServerConfig>({
     enableTempUpload: false,
     adminUploadEnabled: false,
+    supportedOutTypes: ["woff2", "ttf"],
   });
 
   const SLOGAN = "如清风似闪电，超级快的字体子集化裁剪";
@@ -103,6 +106,10 @@ function App() {
     const [fontList, config] = await Promise.all([fetchFonts().catch(() => []), fetchConfig().catch(() => ({ enableTempUpload: false, adminUploadEnabled: false }))]);
     set_fonts(fontList);
     set_serverConfig(config);
+    /** 服务端不支持当前 outType 时自动回退 */
+    if (!config.supportedOutTypes?.includes(outType())) {
+      set_outType(config.supportedOutTypes?.[0] || "ttf");
+    }
     if (fontList.length > 0) {
       /** 标语随机使用一个字体展示 */
       const randomFont = fontList[Math.floor(Math.random() * fontList.length)];
@@ -123,10 +130,11 @@ function App() {
 
   const cssStyle = createMemo(() => {
     const font = selectedFont();
+    const ot = outType();
     if (!font) return "";
     return `@font-face {
   font-family: "CustomFont";
-  src: url("${location.origin}/api?font=${font}&text=${encodeURIComponent(text())}&outType=woff2") format("woff2");
+  src: url("${location.origin}/api?font=${font}&text=${encodeURIComponent(text())}&outType=${ot}") format("${ot}");
 }
 .custom-font {
   color: red;
@@ -189,21 +197,14 @@ function App() {
       <p id="slogan" style={s.desc}>{SLOGAN}</p>
 
       <section style={s.section}>
-        <label style={s.label}>选择字体</label>
-        <select
-          style={s.select}
-          value={selectedFont()}
-          onChange={(e) => onFontChange(e.target.value)}
-        >
-          <option value="">-- 请选择 --</option>
-          <For each={fonts()}>
-            {(f) => (
-              <option value={f.name}>
-                {f.name} ({f.dir})
-              </option>
-            )}
-          </For>
-        </select>
+        <SelectorRow
+          fonts={fonts()}
+          selectedFont={selectedFont()}
+          onFontChange={onFontChange}
+          supportedOutTypes={serverConfig().supportedOutTypes || ["woff2", "ttf"]}
+          outType={outType()}
+          onOutTypeChange={set_outType}
+        />
       </section>
 
       <section style={s.section}>
@@ -228,9 +229,10 @@ function App() {
               <button
                 style={{ ...s.btn, padding: "3px 12px", "font-size": "12px" }}
                 onClick={() => {
+                  const ot = outType();
                   const a = document.createElement("a");
-                  a.href = `/api?font=${selectedFont()}&text=${encodeURIComponent(text())}&outType=woff2`;
-                  a.download = selectedFont().replace(/\.[^.]+$/, "") + "_subset.woff2";
+                  a.href = `/api?font=${selectedFont()}&text=${encodeURIComponent(text())}&outType=${ot}`;
+                  a.download = selectedFont().replace(/\.[^.]+$/, "") + `_subset.${ot}`;
                   a.click();
                 }}
               >
