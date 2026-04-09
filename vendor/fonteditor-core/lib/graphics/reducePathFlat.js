@@ -1,0 +1,82 @@
+"use strict";
+
+Object.defineProperty(exports, "__esModule", {
+  value: true
+});
+exports.default = reducePathFlat;
+/**
+ * @file 缩减path大小（扁平格式专用），去除冗余节点
+ * @author mengke01(kekee000@gmail.com)
+ */
+
+/**
+ * 缩减glyf，去除冗余节点（扁平格式 [x, y, onCurve, ...]）
+ * 懒分配：首个点被移除前不分配 reduced 数组，大多数 contour 无冗余点可直接返回
+ */
+function reducePathFlat(contour) {
+  if (!contour.length) {
+    return contour;
+  }
+  var len = contour.length;
+  var l = len / 3;
+  /** 懒分配：仅在首个被保留的点出现时才创建 reduced 数组 */
+  var reduced = null;
+  var ri = 0;
+  var removed = 0;
+  // 段1: i=0（首点，prev 是尾点）
+  var px = contour[0], py = contour[1], po = contour[2];
+  var prevX = contour[(l - 1) * 3], prevY = contour[(l - 1) * 3 + 1], prevO = contour[(l - 1) * 3 + 2];
+  var nextX = contour[3], nextY = contour[4], nextO = contour[5];
+
+  var dx = px - nextX;
+  var dy = py - nextY;
+  if ((po && nextO || !po && !nextO) && dx * dx + dy * dy <= 1) { removed++; }
+  else {
+    var cross = (nextY - py) * (prevX - px) - (prevY - py) * (nextX - px);
+    if (prevO && nextO && cross > -0.001 && cross < 0.001) { removed++; }
+    else {
+      reduced = new Array(len);
+      reduced[ri++] = px; reduced[ri++] = py; reduced[ri++] = po;
+    }
+  }
+  // 段2: i=1..l-2（中间点，prev/next 简单偏移）
+  for (var i = 1; i < l - 1; i++) {
+    var pi = i * 3;
+    px = contour[pi]; py = contour[pi + 1]; po = contour[pi + 2];
+    prevX = contour[pi - 3]; prevY = contour[pi - 2]; prevO = contour[pi - 1];
+    nextX = contour[pi + 3]; nextY = contour[pi + 4]; nextO = contour[pi + 5];
+
+    dx = px - nextX;
+    dy = py - nextY;
+    if ((po && nextO || !po && !nextO) && dx * dx + dy * dy <= 1) { removed++; continue; }
+    cross = (nextY - py) * (prevX - px) - (prevY - py) * (nextX - px);
+    if (prevO && nextO && cross > -0.001 && cross < 0.001) { removed++; continue; }
+
+    if (!reduced) reduced = new Array(len);
+    reduced[ri++] = px; reduced[ri++] = py; reduced[ri++] = po;
+  }
+  // 段3: i=l-1（尾点，next 是首点）
+  if (l > 1) {
+    var pi = (l - 1) * 3;
+    px = contour[pi]; py = contour[pi + 1]; po = contour[pi + 2];
+    prevX = contour[pi - 3]; prevY = contour[pi - 2]; prevO = contour[pi - 1];
+    nextX = contour[0]; nextY = contour[1]; nextO = contour[2];
+
+    dx = px - nextX;
+    dy = py - nextY;
+    if ((po && nextO || !po && !nextO) && dx * dx + dy * dy <= 1) { removed++; }
+    else {
+      cross = (nextY - py) * (prevX - px) - (prevY - py) * (nextX - px);
+      if (prevO && nextO && cross > -0.001 && cross < 0.001) { removed++; }
+      else {
+        if (!reduced) reduced = new Array(len);
+        reduced[ri++] = px; reduced[ri++] = py; reduced[ri++] = po;
+      }
+    }
+  }
+  // 没有任何缩减，直接返回原数组避免拷贝
+  if (!reduced) return contour;
+  // 截断到实际大小
+  reduced.length = ri;
+  return reduced;
+}

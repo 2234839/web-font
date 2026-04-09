@@ -9,7 +9,7 @@
  */
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { performance } from "node:perf_hooks";
-import { Font } from "fonteditor-core";
+import { Font } from "./vendor/fonteditor-core/lib/ttf/font.js";
 import { Canvas, FontLibrary } from "skia-canvas";
 
 const FONT_PATH = "font/令东齐伋复刻体.ttf";

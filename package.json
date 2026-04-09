@@ -15,18 +15,20 @@
     "release": "pnpm build && pnpm build_backend && pnpm docker_build && pnpm docker_push"
   },
   "dependencies": {
-    "fonteditor-core": "file:./vendor/fonteditor-core",
     "solid-js": "^1.9.12",
     "web-streams-polyfill": "^4.2.0"
   },
   "devDependencies": {
     "@types/node": "^25.5.2",
+    "@xmldom/xmldom": "^0.9.9",
+    "jsdom": "^29.0.2",
     "skia-canvas": "^3.0.8",
     "tsup": "^8.5.1",
     "typescript": "^6.0.2",
     "undici": "^8.0.2",
     "vite": "^8.0.7",
     "vite-plugin-pilot": "^1.0.19",
-    "vite-plugin-solid": "^2.11.12"
+    "vite-plugin-solid": "^2.11.12",
+    "vitest": "^4.1.3"
   }
 }

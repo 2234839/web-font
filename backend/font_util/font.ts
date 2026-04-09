@@ -1,4 +1,5 @@
-import { Font, type FontEditor } from "fonteditor-core";
+import { Font } from "../../vendor/fonteditor-core/lib/ttf/font.js";
+import type { FontEditor } from "../../vendor/fonteditor-core/lib/ttf/font.js";
 
 /**
  * 字体裁剪的所有可配置步骤

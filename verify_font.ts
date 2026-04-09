@@ -10,7 +10,7 @@
  *   2. 渲染相似度对比（skia-canvas 渲染，SSIM 相似度阈值）
  */
 import { readFile, writeFile, mkdir } from "node:fs/promises";
-import { Font } from "fonteditor-core";
+import { Font } from "./vendor/fonteditor-core/lib/ttf/font.js";
 import { Canvas, FontLibrary } from "skia-canvas";
 
 const isBaseline = process.argv[2] === "baseline";
@@ -96,15 +96,25 @@ function calculateSSIM(a: Uint8Array, b: Uint8Array): number {
 function extractFontData(font: any) {
   const d = font.data;
   const glyf = d.glyf.map((g: any, i: number) => {
-    const contourHeads = g.contours
-      ? g.contours.map((c: any[]) =>
-          c.slice(0, 3).map((p: any) => [p.x, p.y, !!p.onCurve])
-        )
-      : [];
+    /** 兼容扁平格式 [x,y,onCurve,...] 和对象格式 [{x,y,onCurve},...] */
+    const toPoints = (c: any[]) => {
+      if (!c || !c.length) return [];
+      if (typeof c[0] === "number") {
+        const pts: [number, number, boolean][] = [];
+        for (let k = 0; k < c.length; k += 3) pts.push([c[k], c[k + 1], !!c[k + 2]]);
+        return pts;
+      }
+      return c.slice(0, 3).map((p: any) => [p.x, p.y, !!p.onCurve] as [number, number, boolean]);
+    };
+    const contourHeads = g.contours ? g.contours.map(toPoints) : [];
+    const pointCount = (c: any[]) => {
+      if (!c || !c.length) return 0;
+      return typeof c[0] === "number" ? c.length / 3 : c.length;
+    };
     return {
       index: i,
       contours: g.contours?.length || 0,
-      pts: g.contours ? g.contours.reduce((s: number, c: any[]) => s + c.length, 0) : 0,
+      pts: g.contours ? g.contours.reduce((s: number, c: any[]) => s + pointCount(c), 0) : 0,
       compound: !!g.compound,
       unicode: g.unicode ? [...g.unicode].sort((a: number, b: number) => a - b) : [],
       advanceWidth: g.advanceWidth,
