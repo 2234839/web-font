@@ -161,6 +161,7 @@ function App() {
     <div style={s.wrap}>
       <div style={{ display: "flex", "align-items": "center", "justify-content": "space-between" }}>
         <h1 style={s.h1}>Web Font</h1>
+        <p style={{ "font-size": "13px", color: "#bbb", margin: "0" }}>如清风似闪电，超级快的字体子集化裁剪</p>
         <a
           href="https://github.com/2234839/web-font"
           target="_blank"
