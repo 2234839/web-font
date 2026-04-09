@@ -38,15 +38,15 @@ const s = {
   } as const,
   textarea: {
     width: "100%",
-    height: "72px",
     padding: "8px 12px",
     "font-size": "32px",
     border: "1px solid #d9d9d9",
     "border-radius": "6px",
-    resize: "vertical",
+    resize: "none",
     "box-sizing": "border-box",
     outline: "none",
     color: "#e74c3c",
+    "line-height": "1.4",
   } as const,
   pre: {
     background: "#f7f7f8",
@@ -102,7 +102,7 @@ function App() {
     set_fonts(fontList);
     set_serverConfig(config);
     if (fontList.length > 0) {
-      set_selectedFont(fontList[0].name);
+      onFontChange(fontList[0].name);
     }
   });
 
@@ -119,28 +119,41 @@ function App() {
 }`;
   });
 
-  /** 字体切换时使用 SDK 重新加载 */
-  const prevFontRef = { value: "" };
-  createMemo(() => {
-    const font = selectedFont();
-    if (!font) return;
-    if (font !== prevFontRef.value) {
-      prevFontRef.value = font;
-      const el = document.getElementById("webfont-preview");
-      if (el) el.style.fontFamily = 'inherit';
-      (globalThis as any).WebFont?.loadFont({
-        fontName: font,
-        selector: "#webfont-preview",
-        family: "CustomFont",
-      });
-    }
+  /** loadText loader 引用，字体或文本变化时增量加载 */
+  let textLoader: { update: (text: string) => void; dispose: () => void } | null = null;
+
+  /** 文本变化时增量加载字体 */
+  const onTextChange = (value: string) => {
+    set_text(value);
+    if (!textLoader) return;
+    textLoader.update(value);
+  };
+
+  /** 根据文本行数动态计算 textarea 高度 */
+  const textareaRows = createMemo(() => {
+    const lines = text().split("\n").length;
+    return Math.max(2, Math.min(lines, 10));
   });
+
+  /** 字体切换时为当前文本加载新字体 */
+  const onFontChange = (font: string) => {
+    set_selectedFont(font);
+    if (!font) return;
+    if (textLoader) textLoader.dispose();
+    textLoader = (globalThis as any).WebFont?.loadText({
+      fontName: font,
+      text: text(),
+      family: "CustomFont",
+    }) ?? null;
+    const el = document.getElementById("webfont-preview");
+    if (el) el.style.fontFamily = '"CustomFont", sans-serif';
+  };
 
   async function refreshFonts() {
     const fontList = await fetchFonts();
     set_fonts(fontList);
     if (fontList.length > 0 && !selectedFont()) {
-      set_selectedFont(fontList[0].name);
+      onFontChange(fontList[0].name);
     }
   }
 
@@ -165,7 +178,7 @@ function App() {
         <select
           style={s.select}
           value={selectedFont()}
-          onChange={(e) => set_selectedFont(e.target.value)}
+          onChange={(e) => onFontChange(e.target.value)}
         >
           <option value="">-- 请选择 --</option>
           <For each={fonts()}>
@@ -185,8 +198,9 @@ function App() {
           style={{
             ...s.textarea,
           }}
+          rows={textareaRows()}
           value={text()}
-          onInput={(e) => set_text(e.target.value)}
+          onInput={(e) => onTextChange(e.target.value)}
           placeholder="在此输入文本..."
         />
       </section>
@@ -242,15 +256,17 @@ function App() {
 .title { font-family: "MyFont"; }
 </style>
 <h1 class="title">你的文字</h1>`}</pre>
-        <p style={{ "margin-top": "12px" }}><b>进阶用法（推荐）：</b>动态内容场景下，使用 JS SDK 自动监听元素文字变化，按需增量加载字体片段，不会出现全量字体闪烁。<a href="/webfont-sdk.js" download="webfont-sdk.js">下载 SDK</a></p>
+        <p style={{ "margin-top": "12px" }}><b>JS SDK（推荐）：</b>增量加载字体片段，按需请求，不会出现全量字体闪烁。<a href="/webfont-sdk.js" download="webfont-sdk.js">下载 SDK</a></p>
         <pre style={{ ...s.pre, "font-size": "12px", "margin-top": "4px" }}>{`<script src="${location.origin}/webfont-sdk.js"><\/script>
 <script>
   WebFont.loadFont({
-    fontName: "${selectedFont()}",
-    selector: ".title",
+    fontName: "字体文件名.ttf",
+    selector: ".my-element",
     family: "MyFont",
+    interval: 1000,
   });
 <\/script>`}</pre>
+        <p style={{ "margin-top": "8px" }}>还支持 <code>WebFont.observeFont()</code>（MutationObserver 事件驱动）和 <code>WebFont.loadText()</code>（手动传文本）两种方式，多种方式可同时使用，SDK 内部自动按字体去重增量加载。</p>
       </section>
 
       <footer style={{ "margin-top": "48px", "padding-top": "16px", "border-top": "1px solid #eee", "font-size": "12px", color: "#999", "text-align": "center" }}>
