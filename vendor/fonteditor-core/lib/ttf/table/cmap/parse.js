@@ -20,165 +20,159 @@ function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { de
  * @param {number} cmapOffset 子表的偏移
  */
 function readSubTable(reader, ttf, subTable, cmapOffset) {
-  var i;
-  var l;
-  var glyphIdArray;
   var startOffset = cmapOffset + subTable.offset;
-  var glyphCount;
-  subTable.format = reader.readUint16(startOffset);
+  /* 优化59: 直接 view 批量读取，避免逐个 readUint8/readUint16/readUint32 */
+  var view = reader.view;
+  var vOffset = view.byteOffset + startOffset;
+  subTable.format = view.getUint16(vOffset, false);
+  vOffset += 2;
 
-  // 0～256 紧凑排列
   if (subTable.format === 0) {
     var format0 = subTable;
-    // 跳过format字段
-    format0.length = reader.readUint16();
-    format0.language = reader.readUint16();
-    glyphIdArray = [];
-    for (i = 0, l = format0.length - 6; i < l; i++) {
-      glyphIdArray.push(reader.readUint8());
+    format0.length = view.getUint16(vOffset, false); vOffset += 2;
+    format0.language = view.getUint16(vOffset, false); vOffset += 2;
+    var glyphCount = format0.length - 6;
+    var glyphIdArray = new Array(glyphCount);
+    for (var i = 0; i < glyphCount; i++) {
+      glyphIdArray[i] = view.getUint8(vOffset + i);
     }
     format0.glyphIdArray = glyphIdArray;
   } else if (subTable.format === 2) {
     var format2 = subTable;
-    // 跳过format字段
-    format2.length = reader.readUint16();
-    format2.language = reader.readUint16();
-    var subHeadKeys = [];
-    var maxSubHeadKey = 0; // 最大索引
-    var maxPos = -1; // 最大位置
-    for (var _i = 0, _l = 256; _i < _l; _i++) {
-      subHeadKeys[_i] = reader.readUint16() / 8;
+    format2.length = view.getUint16(vOffset, false); vOffset += 2;
+    format2.language = view.getUint16(vOffset, false); vOffset += 2;
+    var subHeadKeys = new Array(256);
+    var maxSubHeadKey = 0;
+    var maxPos = -1;
+    for (var _i = 0; _i < 256; _i++) {
+      subHeadKeys[_i] = view.getUint16(vOffset, false) / 8;
       if (subHeadKeys[_i] > maxSubHeadKey) {
         maxSubHeadKey = subHeadKeys[_i];
         maxPos = _i;
       }
+      vOffset += 2;
     }
-    var subHeads = [];
-    for (i = 0; i <= maxSubHeadKey; i++) {
-      subHeads[i] = {
-        firstCode: reader.readUint16(),
-        entryCount: reader.readUint16(),
-        idDelta: reader.readUint16(),
-        idRangeOffset: (reader.readUint16() - (maxSubHeadKey - i) * 8 - 2) / 2
+    var subHeads = new Array(maxSubHeadKey + 1);
+    for (var j = 0; j <= maxSubHeadKey; j++) {
+      subHeads[j] = {
+        firstCode: view.getUint16(vOffset, false),
+        entryCount: view.getUint16(vOffset + 2, false),
+        idDelta: view.getUint16(vOffset + 4, false),
+        idRangeOffset: (view.getUint16(vOffset + 6, false) - (maxSubHeadKey - j) * 8 - 2) / 2
       };
+      vOffset += 8;
     }
-    glyphCount = (startOffset + format2.length - reader.offset) / 2;
-    var glyphs = [];
-    for (i = 0; i < glyphCount; i++) {
-      glyphs[i] = reader.readUint16();
+    var glyphCount2 = (startOffset + format2.length - (vOffset - view.byteOffset)) / 2;
+    var glyphs = new Array(glyphCount2);
+    for (var k = 0; k < glyphCount2; k++) {
+      glyphs[k] = view.getUint16(vOffset, false);
+      vOffset += 2;
     }
     format2.subHeadKeys = subHeadKeys;
     format2.maxPos = maxPos;
     format2.subHeads = subHeads;
     format2.glyphs = glyphs;
   }
-  // 双字节编码，非紧凑排列
   else if (subTable.format === 4) {
     var format4 = subTable;
-    // 跳过format字段
-    format4.length = reader.readUint16();
-    format4.language = reader.readUint16();
-    format4.segCountX2 = reader.readUint16();
-    format4.searchRange = reader.readUint16();
-    format4.entrySelector = reader.readUint16();
-    format4.rangeShift = reader.readUint16();
+    format4.length = view.getUint16(vOffset, false); vOffset += 2;
+    format4.language = view.getUint16(vOffset, false); vOffset += 2;
+    format4.segCountX2 = view.getUint16(vOffset, false); vOffset += 2;
+    format4.searchRange = view.getUint16(vOffset, false); vOffset += 2;
+    format4.entrySelector = view.getUint16(vOffset, false); vOffset += 2;
+    format4.rangeShift = view.getUint16(vOffset, false); vOffset += 2;
     var segCount = format4.segCountX2 / 2;
 
-    // end code
-    var endCode = [];
-    for (i = 0; i < segCount; ++i) {
-      endCode.push(reader.readUint16());
+    var endCode = new Array(segCount);
+    for (var e = 0; e < segCount; e++) {
+      endCode[e] = view.getUint16(vOffset, false);
+      vOffset += 2;
     }
     format4.endCode = endCode;
-    format4.reservedPad = reader.readUint16();
+    format4.reservedPad = view.getUint16(vOffset, false); vOffset += 2;
 
-    // start code
-    var startCode = [];
-    for (i = 0; i < segCount; ++i) {
-      startCode.push(reader.readUint16());
+    var startCode = new Array(segCount);
+    for (var s = 0; s < segCount; s++) {
+      startCode[s] = view.getUint16(vOffset, false);
+      vOffset += 2;
     }
     format4.startCode = startCode;
 
-    // idDelta
-    var idDelta = [];
-    for (i = 0; i < segCount; ++i) {
-      idDelta.push(reader.readUint16());
+    var idDelta = new Array(segCount);
+    for (var d = 0; d < segCount; d++) {
+      idDelta[d] = view.getUint16(vOffset, false);
+      vOffset += 2;
     }
     format4.idDelta = idDelta;
-    format4.idRangeOffsetOffset = reader.offset;
+    format4.idRangeOffsetOffset = vOffset - view.byteOffset;
 
-    // idRangeOffset
-    var idRangeOffset = [];
-    for (i = 0; i < segCount; ++i) {
-      idRangeOffset.push(reader.readUint16());
+    var idRangeOffset = new Array(segCount);
+    for (var r = 0; r < segCount; r++) {
+      idRangeOffset[r] = view.getUint16(vOffset, false);
+      vOffset += 2;
     }
     format4.idRangeOffset = idRangeOffset;
 
-    // 总长度 - glyphIdArray起始偏移/2
-    glyphCount = (format4.length - (reader.offset - startOffset)) / 2;
+    var glyphCount4 = (format4.length - (vOffset - view.byteOffset - startOffset)) / 2;
+    format4.glyphIdArrayOffset = vOffset - view.byteOffset;
 
-    // 记录array offset
-    format4.glyphIdArrayOffset = reader.offset;
-
-    // glyphIdArray
-    glyphIdArray = [];
-    for (i = 0; i < glyphCount; ++i) {
-      glyphIdArray.push(reader.readUint16());
+    var glyphIdArray4 = new Array(glyphCount4);
+    for (var g = 0; g < glyphCount4; g++) {
+      glyphIdArray4[g] = view.getUint16(vOffset, false);
+      vOffset += 2;
     }
-    format4.glyphIdArray = glyphIdArray;
+    format4.glyphIdArray = glyphIdArray4;
   } else if (subTable.format === 6) {
     var format6 = subTable;
-    format6.length = reader.readUint16();
-    format6.language = reader.readUint16();
-    format6.firstCode = reader.readUint16();
-    format6.entryCount = reader.readUint16();
-
-    // 记录array offset
-    format6.glyphIdArrayOffset = reader.offset;
-    var glyphIndexArray = [];
+    format6.length = view.getUint16(vOffset, false); vOffset += 2;
+    format6.language = view.getUint16(vOffset, false); vOffset += 2;
+    format6.firstCode = view.getUint16(vOffset, false); vOffset += 2;
+    format6.entryCount = view.getUint16(vOffset, false); vOffset += 2;
+    format6.glyphIdArrayOffset = vOffset - view.byteOffset;
     var entryCount = format6.entryCount;
-    // 读取字符分组
-    for (i = 0; i < entryCount; ++i) {
-      glyphIndexArray.push(reader.readUint16());
+    var glyphIndexArray = new Array(entryCount);
+    for (var f = 0; f < entryCount; f++) {
+      glyphIndexArray[f] = view.getUint16(vOffset, false);
+      vOffset += 2;
     }
     format6.glyphIdArray = glyphIndexArray;
   }
-  // defines segments for sparse representation in 4-byte character space
   else if (subTable.format === 12) {
     var format12 = subTable;
-    format12.reserved = reader.readUint16();
-    format12.length = reader.readUint32();
-    format12.language = reader.readUint32();
-    format12.nGroups = reader.readUint32();
-    var groups = [];
+    format12.reserved = view.getUint16(vOffset, false); vOffset += 2;
+    format12.length = view.getUint32(vOffset, false); vOffset += 4;
+    format12.language = view.getUint32(vOffset, false); vOffset += 4;
+    format12.nGroups = view.getUint32(vOffset, false); vOffset += 4;
     var nGroups = format12.nGroups;
-    // 读取字符分组
-    for (i = 0; i < nGroups; ++i) {
-      var group = {};
-      group.start = reader.readUint32();
-      group.end = reader.readUint32();
-      group.startId = reader.readUint32();
-      groups.push(group);
+    var groups = new Array(nGroups);
+    for (var h = 0; h < nGroups; h++) {
+      groups[h] = {
+        start: view.getUint32(vOffset, false),
+        end: view.getUint32(vOffset + 4, false),
+        startId: view.getUint32(vOffset + 8, false)
+      };
+      vOffset += 12;
     }
     format12.groups = groups;
   }
-  // format 14
   else if (subTable.format === 14) {
     var format14 = subTable;
-    format14.length = reader.readUint32();
-    var numVarSelectorRecords = reader.readUint32();
+    format14.length = view.getUint32(vOffset, false); vOffset += 4;
+    var numVarSelectorRecords = view.getUint32(vOffset, false); vOffset += 4;
     var _groups = [];
-    var offset = reader.offset;
-    for (var _i2 = 0; _i2 < numVarSelectorRecords; _i2++) {
-      var varSelector = reader.readUint24(offset);
-      var defaultUVSOffset = reader.readUint32(offset + 3);
-      var nonDefaultUVSOffset = reader.readUint32(offset + 7);
-      offset += 11;
+    var absOffset = vOffset;
+    for (var vs = 0; vs < numVarSelectorRecords; vs++) {
+      var varSelector = (view.getUint8(absOffset) << 16) + (view.getUint8(absOffset + 1) << 8) + view.getUint8(absOffset + 2);
+      var defaultUVSOffset = view.getUint32(absOffset + 3, false);
+      var nonDefaultUVSOffset = view.getUint32(absOffset + 7, false);
+      absOffset += 11;
       if (defaultUVSOffset) {
-        var numUnicodeValueRanges = reader.readUint32(startOffset + defaultUVSOffset);
-        for (var j = 0; j < numUnicodeValueRanges; j++) {
-          var startUnicode = reader.readUint24();
-          var additionalCount = reader.readUint8();
+        var numUnicodeValueRanges = view.getUint32(view.byteOffset + startOffset + defaultUVSOffset, false);
+        var duvsOffset = view.byteOffset + startOffset + defaultUVSOffset + 4;
+        for (var dj = 0; dj < numUnicodeValueRanges; dj++) {
+          var startUnicode = (view.getUint8(duvsOffset) << 16) + (view.getUint8(duvsOffset + 1) << 8) + view.getUint8(duvsOffset + 2);
+          var additionalCount = view.getUint8(duvsOffset + 3);
+          duvsOffset += 4;
           _groups.push({
             start: startUnicode,
             end: startUnicode + additionalCount,
@@ -187,10 +181,12 @@ function readSubTable(reader, ttf, subTable, cmapOffset) {
         }
       }
       if (nonDefaultUVSOffset) {
-        var numUVSMappings = reader.readUint32(startOffset + nonDefaultUVSOffset);
-        for (var _j = 0; _j < numUVSMappings; _j++) {
-          var unicode = reader.readUint24();
-          var glyphId = reader.readUint16();
+        var numUVSMappings = view.getUint32(view.byteOffset + startOffset + nonDefaultUVSOffset, false);
+        var nuvsOffset = view.byteOffset + startOffset + nonDefaultUVSOffset + 4;
+        for (var nj = 0; nj < numUVSMappings; nj++) {
+          var unicode = (view.getUint8(nuvsOffset) << 16) + (view.getUint8(nuvsOffset + 1) << 8) + view.getUint8(nuvsOffset + 2);
+          var glyphId = view.getUint16(nuvsOffset + 3, false);
+          nuvsOffset += 5;
           _groups.push({
             unicode: unicode,
             glyphId: glyphId,
@@ -204,27 +200,28 @@ function readSubTable(reader, ttf, subTable, cmapOffset) {
     console.warn('not support cmap format:' + subTable.format);
   }
 }
+
 function parse(reader, ttf) {
   var tcmap = {};
-  // eslint-disable-next-line no-invalid-this
   var cmapOffset = this.offset;
   reader.seek(cmapOffset);
-  tcmap.version = reader.readUint16(); // 编码方式
-  var numberSubtables = tcmap.numberSubtables = reader.readUint16(); // 表个数
+  tcmap.version = reader.readUint16();
+  var numberSubtables = tcmap.numberSubtables = reader.readUint16();
 
-  var subTables = tcmap.tables = []; // 名字表
-  var offset = reader.offset;
-
-  // 使用offset读取，以便于查找
-  for (var i = 0, l = numberSubtables; i < l; i++) {
+  var subTables = tcmap.tables = [];
+  /* 优化59: 直接 view 读取子表目录 */
+  var view = reader.view;
+  var dirOffset = view.byteOffset + reader.offset;
+  for (var i = 0; i < numberSubtables; i++) {
     var subTable = {};
-    subTable.platformID = reader.readUint16(offset);
-    subTable.encodingID = reader.readUint16(offset + 2);
-    subTable.offset = reader.readUint32(offset + 4);
+    subTable.platformID = view.getUint16(dirOffset, false);
+    subTable.encodingID = view.getUint16(dirOffset + 2, false);
+    subTable.offset = view.getUint32(dirOffset + 4, false);
     readSubTable(reader, ttf, subTable, cmapOffset);
     subTables.push(subTable);
-    offset += 8;
+    dirOffset += 8;
   }
+  reader.offset = dirOffset - view.byteOffset;
   var cmap = (0, _readWindowsAllCodes.default)(subTables, ttf);
   return cmap;
 }

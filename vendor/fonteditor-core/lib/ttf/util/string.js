@@ -181,16 +181,22 @@ var _default = exports.default = {
    * @return {Array.<string>} 读取后的字符串数组
    */
   getPascalString: function getPascalString(byteArray) {
+    /* 优化63: Array.push + fromCharCode.apply 替代逐字拼接 */
     var strArray = [];
     var i = 0;
     var l = byteArray.length;
     while (i < l) {
       var strLength = byteArray[i++];
-      var str = '';
-      while (strLength-- > 0 && i < l) {
-        str += String.fromCharCode(byteArray[i++]);
+      if (strLength === 0) {
+        strArray.push('');
+        continue;
       }
-      // 这里需要将unicode转换成js编码
+      var chars = new Array(strLength);
+      var end = Math.min(i + strLength, l);
+      for (var j = 0; i < end; j++, i++) {
+        chars[j] = byteArray[i];
+      }
+      var str = String.fromCharCode.apply(null, chars);
       str = stringify(str);
       strArray.push(str);
     }

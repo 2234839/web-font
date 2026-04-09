@@ -15,17 +15,24 @@ var _default = exports.default = _table.default.create('loca', [], {
   read: function read(reader, ttf) {
     var offset = this.offset;
     var indexToLocFormat = ttf.head.indexToLocFormat;
-    // indexToLocFormat有2字节和4字节的区别
-    var type = _struct.default.names[indexToLocFormat === 0 ? _struct.default.Uint16 : _struct.default.Uint32];
-    var size = indexToLocFormat === 0 ? 2 : 4; // 字节大小
-    var sizeRatio = indexToLocFormat === 0 ? 2 : 1; // 真实地址偏移
-    var wordOffset = [];
-    reader.seek(offset);
+    /* 优化7: 直接 view 批量读取，预分配数组 */
     var numGlyphs = ttf.maxp.numGlyphs;
-    for (var i = 0; i < numGlyphs; ++i) {
-      wordOffset.push(reader.read(type, offset, false) * sizeRatio);
-      offset += size;
+    var wordOffset = new Array(numGlyphs);
+    var view = reader.view;
+    if (indexToLocFormat === 0) {
+      var vOffset = view.byteOffset + offset;
+      for (var i = 0; i < numGlyphs; i++) {
+        wordOffset[i] = view.getUint16(vOffset, false) * 2;
+        vOffset += 2;
+      }
+    } else {
+      var vOffset2 = view.byteOffset + offset;
+      for (var j = 0; j < numGlyphs; j++) {
+        wordOffset[j] = view.getUint32(vOffset2, false);
+        vOffset2 += 4;
+      }
     }
+    reader.offset = offset + (indexToLocFormat === 0 ? numGlyphs * 2 : numGlyphs * 4);
     return wordOffset;
   },
   write: function write(writer, ttf) {
@@ -34,21 +41,27 @@ var _default = exports.default = _table.default.create('loca', [], {
     var indexToLocFormat = ttf.head.indexToLocFormat;
     var sizeRatio = indexToLocFormat === 0 ? 0.5 : 1;
     var numGlyphs = ttf.glyf.length;
-    for (var i = 0; i < numGlyphs; ++i) {
-      if (indexToLocFormat) {
-        writer.writeUint32(offset);
-      } else {
-        writer.writeUint16(offset);
-      }
-      offset += glyfSupport[i].size * sizeRatio;
-    }
-
-    // write extra
+    /* 优化29: 直接 view 批量写入 */
+    var wView = writer.view;
+    var pos = writer.offset;
     if (indexToLocFormat) {
-      writer.writeUint32(offset);
+      for (var i = 0; i <= numGlyphs; i++) {
+        wView.setUint32(pos, offset, false);
+        pos += 4;
+        if (i < numGlyphs) {
+          offset += glyfSupport[i].size * sizeRatio;
+        }
+      }
     } else {
-      writer.writeUint16(offset);
+      for (var j = 0; j <= numGlyphs; j++) {
+        wView.setUint16(pos, offset, false);
+        pos += 2;
+        if (j < numGlyphs) {
+          offset += glyfSupport[j].size * sizeRatio;
+        }
+      }
     }
+    writer.offset = pos;
     return writer;
   },
   size: function size(ttf) {

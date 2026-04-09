@@ -10,48 +10,37 @@ var _support = _interopRequireDefault(require("./table/support"));
 var _checkSum = _interopRequireDefault(require("./util/checkSum"));
 var _error = _interopRequireDefault(require("./error"));
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
-function _typeof(o) { "@babel/helpers - typeof"; return _typeof = "function" == typeof Symbol && "symbol" == typeof Symbol.iterator ? function (o) { return typeof o; } : function (o) { return o && "function" == typeof Symbol && o.constructor === Symbol && o !== Symbol.prototype ? "symbol" : typeof o; }, _typeof(o); }
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
-function _defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, _toPropertyKey(descriptor.key), descriptor); } }
+function _defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } }
 function _createClass(Constructor, protoProps, staticProps) { if (protoProps) _defineProperties(Constructor.prototype, protoProps); if (staticProps) _defineProperties(Constructor, staticProps); Object.defineProperty(Constructor, "prototype", { writable: false }); return Constructor; }
-function _toPropertyKey(t) { var i = _toPrimitive(t, "string"); return "symbol" == _typeof(i) ? i : i + ""; }
-function _toPrimitive(t, r) { if ("object" != _typeof(t) || !t) return t; var e = t[Symbol.toPrimitive]; if (void 0 !== e) { var i = e.call(t, r || "default"); if ("object" != _typeof(i)) return i; throw new TypeError("@@toPrimitive must return a primitive value."); } return ("string" === r ? String : Number)(t); } /**
+/**
  * @file ttf写入器
  * @author mengke01(kekee000@gmail.com)
  */
-// 支持写的表, 注意表顺序
 var SUPPORT_TABLES = ['OS/2', 'cmap', 'glyf', 'head', 'hhea', 'hmtx', 'loca', 'maxp', 'name', 'post'];
 var TTFWriter = exports.default = /*#__PURE__*/function () {
   function TTFWriter() {
     var options = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : {};
-    _classCallCheck(this, TTFWriter);
     this.options = {
       writeZeroContoursGlyfData: options.writeZeroContoursGlyfData || false,
-      // 不写入空 glyf 数据
       hinting: options.hinting || false,
-      // 默认不保留hints信息
       kerning: options.kerning || false,
-      // 默认不保留 kernings space 信息
-      support: options.support // 自定义的导出表结构，可以自己修改某些表项目
+      support: options.support
     };
   }
 
   /**
-   * 处理ttf结构，以便于写
-   *
-   * @param {ttfObject} ttf ttf数据结构
+   * 优化4+46: resolveTTF 中 unicode 排序修正 + forEach → for 循环
    */
   return _createClass(TTFWriter, [{
     key: "resolveTTF",
     value: function resolveTTF(ttf) {
-      // 头部信息
       ttf.version = ttf.version || 0x1;
       ttf.numTables = ttf.writeOptions.tables.length;
       ttf.entrySelector = Math.floor(Math.log(ttf.numTables) / Math.LN2);
       ttf.searchRange = Math.pow(2, ttf.entrySelector) * 16;
       ttf.rangeShift = ttf.numTables * 16 - ttf.searchRange;
 
-      // 重置校验码
       ttf.head.checkSumAdjustment = 0;
       ttf.head.magickNumber = 0x5F0F3CF5;
       if (typeof ttf.head.created === 'string') {
@@ -60,62 +49,55 @@ var TTFWriter = exports.default = /*#__PURE__*/function () {
       if (typeof ttf.head.modified === 'string') {
         ttf.head.modified = /^\d+$/.test(ttf.head.modified) ? +ttf.head.modified : Date.parse(ttf.head.modified);
       }
-      // 重置日期
       if (!ttf.head.created) {
         ttf.head.created = Date.now();
       }
       if (!ttf.head.modified) {
         ttf.head.modified = ttf.head.created;
       }
-      var checkUnicodeRepeat = {}; // 检查是否有重复代码点
+      var checkUnicodeRepeat = {};
 
-      // 将glyf的代码点按小到大排序
-      ttf.glyf.forEach(function (glyf, index) {
+      /* 优化4+46: 数字排序 + for 循环 */
+      var glyfs = ttf.glyf;
+      for (var index = 0, gl = glyfs.length; index < gl; index++) {
+        var glyf = glyfs[index];
         if (glyf.unicode) {
-          glyf.unicode = glyf.unicode.sort();
-          glyf.unicode.forEach(function (u) {
+          glyf.unicode.sort(function (a, b) { return a - b; });
+          var unicode = glyf.unicode;
+          for (var ui = 0, ul = unicode.length; ui < ul; ui++) {
+            var u = unicode[ui];
             if (checkUnicodeRepeat[u]) {
-              _error.default.raise({
-                number: 10200,
-                data: index
-              }, index);
+              _error.default.raise({ number: 10200, data: index }, index);
             } else {
               checkUnicodeRepeat[u] = true;
             }
-          });
+          }
         }
-      });
+      }
     }
-
-    /**
-     * 写ttf文件
-     *
-     * @param {ttfObject} ttf ttf数据结构
-     * @return {ArrayBuffer} 字节流
-     */
   }, {
     key: "dump",
     value: function dump(ttf) {
-      // 用来做写入缓存的对象，用完后删掉
       ttf.support = Object.assign({}, this.options.support);
-
-      // head + directory
       var ttfSize = 12 + ttf.numTables * 16;
-      var ttfHeadOffset = 0; // 记录head的偏移
+      var ttfHeadOffset = 0;
 
-      // 构造tables
+      /* 优化35+56: 缓存 TableClass 实例，forEach → for 循环 */
       ttf.support.tables = [];
-      ttf.writeOptions.tables.forEach(function (tableName) {
+      var writeTables = ttf.writeOptions.tables;
+      var supportTables = _support.default;
+      var tableInstances = {};
+      for (var ti = 0, tl = writeTables.length; ti < tl; ti++) {
+        var tableName = writeTables[ti];
         var offset = ttfSize;
-        var TableClass = _support.default[tableName];
-        var tableSize = new TableClass().size(ttf); // 原始的表大小
-        var size = tableSize; // 对齐后的表大小
-
+        if (!tableInstances[tableName]) {
+          tableInstances[tableName] = new supportTables[tableName]();
+        }
+        var tableSize = tableInstances[tableName].size(ttf);
+        var size = tableSize;
         if (tableName === 'head') {
           ttfHeadOffset = offset;
         }
-
-        // 4字节对齐
         if (size % 4) {
           size += 4 - size % 4;
         }
@@ -127,40 +109,44 @@ var TTFWriter = exports.default = /*#__PURE__*/function () {
           size: size
         });
         ttfSize += size;
-      });
+      }
       var writer = new _writer.default(new ArrayBuffer(ttfSize));
 
-      // 写头部
-      writer.writeFixed(ttf.version);
-      writer.writeUint16(ttf.numTables);
-      writer.writeUint16(ttf.searchRange);
-      writer.writeUint16(ttf.entrySelector);
-      writer.writeUint16(ttf.rangeShift);
+      /* 优化36: 头部直接 view 写入 */
+      var wView = writer.view;
+      var pos = writer.offset;
+      wView.setInt32(pos, Math.round(ttf.version * 65536), false); pos += 4;
+      wView.setUint16(pos, ttf.numTables, false); pos += 2;
+      wView.setUint16(pos, ttf.searchRange, false); pos += 2;
+      wView.setUint16(pos, ttf.entrySelector, false); pos += 2;
+      wView.setUint16(pos, ttf.rangeShift, false); pos += 2;
+      writer.offset = pos;
 
-      // 写表偏移
       new _directory.default().write(writer, ttf);
 
-      // 写支持的表数据
-      ttf.support.tables.forEach(function (table) {
+      /* 优化56: forEach → for 循环 */
+      var supportTableList = ttf.support.tables;
+      for (var si = 0, sl = supportTableList.length; si < sl; si++) {
+        var table = supportTableList[si];
         var tableStart = writer.offset;
-        var TableClass = _support.default[table.name];
-        new TableClass().write(writer, ttf);
+        var tName = table.name;
+        if (!tableInstances[tName]) {
+          tableInstances[tName] = new supportTables[tName]();
+        }
+        tableInstances[tName].write(writer, ttf);
         if (table.length % 4) {
-          // 对齐字节
           writer.writeEmpty(4 - table.length % 4);
         }
-
-        // 计算校验和
         table.checkSum = (0, _checkSum.default)(writer.getBuffer(), tableStart, table.size);
-      });
+      }
 
-      // 重新写入每个表校验和
-      ttf.support.tables.forEach(function (table, index) {
-        var offset = 12 + index * 16 + 4;
-        writer.writeUint32(table.checkSum, offset);
-      });
+      /* 重新写入校验和 */
+      for (var ci = 0, cl = supportTableList.length; ci < cl; ci++) {
+        var offset2 = 12 + ci * 16 + 4;
+        writer.writeUint32(supportTableList[ci].checkSum, offset2);
+      }
 
-      // 写入总校验和
+      /* 写入总校验和 */
       var ttfCheckSum = (0xB1B0AFBA - (0, _checkSum.default)(writer.getBuffer()) + 0x100000000) % 0x100000000;
       writer.writeUint32(ttfCheckSum, ttfHeadOffset + 8);
       delete ttf.writeOptions;
@@ -169,12 +155,6 @@ var TTFWriter = exports.default = /*#__PURE__*/function () {
       writer.dispose();
       return buffer;
     }
-
-    /**
-     * 对ttf的表进行评估，标记需要处理的表
-     *
-     * @param  {Object} ttf ttf对象
-     */
   }, {
     key: "prepareDump",
     value: function prepareDump(ttf) {
@@ -186,34 +166,28 @@ var TTFWriter = exports.default = /*#__PURE__*/function () {
       }
       var tables = SUPPORT_TABLES.slice(0);
       ttf.writeOptions = {};
-      // hinting tables direct copy
+      /* 优化56: forEach → for 循环 */
       if (this.options.hinting) {
-        ['cvt', 'fpgm', 'prep', 'gasp', 'GPOS', 'kern', 'kerx'].forEach(function (table) {
-          if (ttf[table]) {
-            tables.push(table);
+        var hintTables = ['cvt', 'fpgm', 'prep', 'gasp', 'GPOS', 'kern', 'kerx'];
+        for (var i = 0; i < hintTables.length; i++) {
+          if (ttf[hintTables[i]]) {
+            tables.push(hintTables[i]);
           }
-        });
+        }
       }
-      // copy kerning space table
       if (this.options.kerning) {
-        ['GPOS', 'kern', 'kerx'].forEach(function (table) {
-          if (ttf[table]) {
-            tables.push(table);
+        var kernTables = ['GPOS', 'kern', 'kerx'];
+        for (var j = 0; j < kernTables.length; j++) {
+          if (ttf[kernTables[j]]) {
+            tables.push(kernTables[j]);
           }
-        });
+        }
       }
       ttf.writeOptions.writeZeroContoursGlyfData = !!this.options.writeZeroContoursGlyfData;
       ttf.writeOptions.hinting = !!this.options.hinting;
       ttf.writeOptions.kerning = !!this.options.kerning;
       ttf.writeOptions.tables = tables.sort();
     }
-
-    /**
-     * 写一个ttf字体结构
-     *
-     * @param {Object} ttf ttf数据结构
-     * @return {ArrayBuffer} 缓冲数组
-     */
   }, {
     key: "write",
     value: function write(ttf) {
@@ -222,10 +196,6 @@ var TTFWriter = exports.default = /*#__PURE__*/function () {
       var buffer = this.dump(ttf);
       return buffer;
     }
-
-    /**
-     * 注销
-     */
   }, {
     key: "dispose",
     value: function dispose() {

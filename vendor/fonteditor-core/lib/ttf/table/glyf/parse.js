@@ -12,113 +12,101 @@ function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { de
  * @author mengke01(kekee000@gmail.com)
  */
 
-var MAX_INSTRUCTION_LENGTH = 5000; // 设置instructions阈值防止读取错误
-var MAX_NUMBER_OF_COORDINATES = 20000; // 设置坐标最大个数阈值，防止glyf读取错误
+var MAX_INSTRUCTION_LENGTH = 5000;
+var MAX_NUMBER_OF_COORDINATES = 20000;
 
 /**
- * 读取简单字形
- *
- * @param {Reader} reader Reader对象
- * @param {Object} glyf 空glyf
- * @return {Object} 解析后的glyf
+ * 优化9+12+34+41+42: parseSimpleGlyf 消除中间数组，直接 view 批量读取
  */
 function parseSimpleGlyf(reader, glyf) {
   var offset = reader.offset;
-
-  // 轮廓点个数
   var numberOfCoordinates = glyf.endPtsOfContours[glyf.endPtsOfContours.length - 1] + 1;
 
-  // 判断坐标是否超过最大个数
   if (numberOfCoordinates > MAX_NUMBER_OF_COORDINATES) {
     console.warn('error read glyf coordinates:' + offset);
     return glyf;
   }
 
-  // 获取flag标志
-  var i;
-  var length;
-  var flags = [];
-  var flag;
-  i = 0;
-  while (i < numberOfCoordinates) {
-    flag = reader.readUint8();
-    flags.push(flag);
-    i++;
+  /* 优化34: 缓存 glyFlag 常量 */
+  var REPEAT = _glyFlag.default.REPEAT;
+  var XSHORT = _glyFlag.default.XSHORT;
+  var XSAME = _glyFlag.default.XSAME;
+  var YSHORT = _glyFlag.default.YSHORT;
+  var YSAME = _glyFlag.default.YSAME;
+  var ONCURVE = _glyFlag.default.ONCURVE;
 
-    // 标志位3重复flag
-    if (flag & _glyFlag.default.REPEAT && i < numberOfCoordinates) {
-      // 重复个数
-      var repeat = reader.readUint8();
-      for (var j = 0; j < repeat; j++) {
-        flags.push(flag);
-        i++;
+  /* 优化34+42: 直接 view 读取 flags */
+  var view = reader.view;
+  var vOffset = view.byteOffset + reader.offset;
+  var flags = new Array(numberOfCoordinates);
+  var i = 0;
+  while (i < numberOfCoordinates) {
+    var flag = view.getUint8(vOffset++);
+    flags[i++] = flag;
+    if (flag & REPEAT && i < numberOfCoordinates) {
+      var repeat = view.getUint8(vOffset++);
+      for (var j = 0; j < repeat && i < numberOfCoordinates; j++) {
+        flags[i++] = flag;
       }
     }
   }
 
-  // 坐标集合
-  var coordinates = [];
-  var xCoordinates = [];
+  /* 优化9+34: 直接构建扁平坐标数组，消除中间对象创建 */
+  var xArr = new Array(numberOfCoordinates);
   var prevX = 0;
-  var x;
-  for (i = 0, length = flags.length; i < length; ++i) {
-    x = 0;
-    flag = flags[i];
-
-    // 标志位1
-    // If set, the corresponding y-coordinate is 1 byte long, not 2
-    if (flag & _glyFlag.default.XSHORT) {
-      x = reader.readUint8();
-
-      // 标志位5
-      x = flag & _glyFlag.default.XSAME ? x : -1 * x;
-    }
-    // 与上一值一致
-    else if (flag & _glyFlag.default.XSAME) {
+  for (var xi = 0; xi < numberOfCoordinates; xi++) {
+    var x = 0;
+    var xflag = flags[xi];
+    if (xflag & XSHORT) {
+      x = view.getUint8(vOffset++);
+      x = (xflag & XSAME) ? x : -x;
+    } else if (xflag & XSAME) {
       x = 0;
-    }
-    // 新值
-    else {
-      x = reader.readInt16();
+    } else {
+      x = view.getInt16(vOffset);
+      vOffset += 2;
     }
     prevX += x;
-    xCoordinates[i] = prevX;
-    coordinates[i] = {
-      x: prevX,
-      y: 0
-    };
-    if (flag & _glyFlag.default.ONCURVE) {
-      coordinates[i].onCurve = true;
-    }
-  }
-  var yCoordinates = [];
-  var prevY = 0;
-  var y;
-  for (i = 0, length = flags.length; i < length; i++) {
-    y = 0;
-    flag = flags[i];
-    if (flag & _glyFlag.default.YSHORT) {
-      y = reader.readUint8();
-      y = flag & _glyFlag.default.YSAME ? y : -1 * y;
-    } else if (flag & _glyFlag.default.YSAME) {
-      y = 0;
-    } else {
-      y = reader.readInt16();
-    }
-    prevY += y;
-    yCoordinates[i] = prevY;
-    if (coordinates[i]) {
-      coordinates[i].y = prevY;
-    }
+    xArr[xi] = prevX;
   }
 
-  // 计算轮廓集合
-  if (coordinates.length) {
+  var yArr = new Array(numberOfCoordinates);
+  var prevY = 0;
+  for (var yi = 0; yi < numberOfCoordinates; yi++) {
+    var y = 0;
+    var yflag = flags[yi];
+    if (yflag & YSHORT) {
+      y = view.getUint8(vOffset++);
+      y = (yflag & YSAME) ? y : -y;
+    } else if (yflag & YSAME) {
+      y = 0;
+    } else {
+      y = view.getInt16(vOffset);
+      vOffset += 2;
+    }
+    prevY += y;
+    yArr[yi] = prevY;
+  }
+
+  reader.offset = vOffset - view.byteOffset;
+
+  /* 优化9: 一次遍历构建 contours，消除中间数组 */
+  if (numberOfCoordinates > 0) {
     var endPtsOfContours = glyf.endPtsOfContours;
-    var contours = [];
-    contours.push(coordinates.slice(0, endPtsOfContours[0] + 1));
-    for (i = 1, length = endPtsOfContours.length; i < length; i++) {
-      contours.push(coordinates.slice(endPtsOfContours[i - 1] + 1, endPtsOfContours[i] + 1));
+    var contours = new Array(endPtsOfContours.length);
+    var start = 0;
+    for (var ci = 0, cl = endPtsOfContours.length; ci < cl; ci++) {
+      var end = endPtsOfContours[ci] + 1;
+      var contour = new Array(end - start);
+      for (var pi = start; pi < end; pi++) {
+        contour[pi - start] = {
+          x: xArr[pi],
+          y: yArr[pi],
+          onCurve: !!(flags[pi] & ONCURVE)
+        };
+      }
+      contours[ci] = contour;
+      start = end;
     }
     glyf.contours = contours;
   }
@@ -127,18 +115,23 @@ function parseSimpleGlyf(reader, glyf) {
 
 /**
  * 读取复合字形
- *
- * @param {Reader} reader Reader对象
- * @param {Object} glyf glyf对象
- * @return {Object} glyf对象
  */
 function parseCompoundGlyf(reader, glyf) {
   glyf.compound = true;
   glyf.glyfs = [];
   var flags;
   var g;
+  var ARG_1_AND_2_ARE_WORDS = _componentFlag.default.ARG_1_AND_2_ARE_WORDS;
+  var ROUND_XY_TO_GRID = _componentFlag.default.ROUND_XY_TO_GRID;
+  var WE_HAVE_A_SCALE = _componentFlag.default.WE_HAVE_A_SCALE;
+  var WE_HAVE_AN_X_AND_Y_SCALE = _componentFlag.default.WE_HAVE_AN_X_AND_Y_SCALE;
+  var WE_HAVE_A_TWO_BY_TWO = _componentFlag.default.WE_HAVE_A_TWO_BY_TWO;
+  var ARGS_ARE_XY_VALUES = _componentFlag.default.ARGS_ARE_XY_VALUES;
+  var USE_MY_METRICS = _componentFlag.default.USE_MY_METRICS;
+  var OVERLAP_COMPOUND = _componentFlag.default.OVERLAP_COMPOUND;
+  var MORE_COMPONENTS = _componentFlag.default.MORE_COMPONENTS;
+  var WE_HAVE_INSTRUCTIONS = _componentFlag.default.WE_HAVE_INSTRUCTIONS;
 
-  // 读取复杂字形
   do {
     flags = reader.readUint16();
     g = {};
@@ -150,32 +143,32 @@ function parseCompoundGlyf(reader, glyf) {
     var scaleY = 16384;
     var scale01 = 0;
     var scale10 = 0;
-    if (_componentFlag.default.ARG_1_AND_2_ARE_WORDS & flags) {
+    if (ARG_1_AND_2_ARE_WORDS & flags) {
       arg1 = reader.readInt16();
       arg2 = reader.readInt16();
     } else {
       arg1 = reader.readInt8();
       arg2 = reader.readInt8();
     }
-    if (_componentFlag.default.ROUND_XY_TO_GRID & flags) {
+    if (ROUND_XY_TO_GRID & flags) {
       arg1 = Math.round(arg1);
       arg2 = Math.round(arg2);
     }
-    if (_componentFlag.default.WE_HAVE_A_SCALE & flags) {
+    if (WE_HAVE_A_SCALE & flags) {
       scaleX = reader.readInt16();
       scaleY = scaleX;
-    } else if (_componentFlag.default.WE_HAVE_AN_X_AND_Y_SCALE & flags) {
+    } else if (WE_HAVE_AN_X_AND_Y_SCALE & flags) {
       scaleX = reader.readInt16();
       scaleY = reader.readInt16();
-    } else if (_componentFlag.default.WE_HAVE_A_TWO_BY_TWO & flags) {
+    } else if (WE_HAVE_A_TWO_BY_TWO & flags) {
       scaleX = reader.readInt16();
       scale01 = reader.readInt16();
       scale10 = reader.readInt16();
       scaleY = reader.readInt16();
     }
-    if (_componentFlag.default.ARGS_ARE_XY_VALUES & flags) {
-      g.useMyMetrics = !!flags & _componentFlag.default.USE_MY_METRICS;
-      g.overlapCompound = !!flags & _componentFlag.default.OVERLAP_COMPOUND;
+    if (ARGS_ARE_XY_VALUES & flags) {
+      g.useMyMetrics = !!(flags & USE_MY_METRICS);
+      g.overlapCompound = !!(flags & OVERLAP_COMPOUND);
       g.transform = {
         a: Math.round(10000 * scaleX / 16384) / 10000,
         b: Math.round(10000 * scale01 / 16384) / 10000,
@@ -196,13 +189,13 @@ function parseCompoundGlyf(reader, glyf) {
       };
     }
     glyf.glyfs.push(g);
-  } while (_componentFlag.default.MORE_COMPONENTS & flags);
-  if (_componentFlag.default.WE_HAVE_INSTRUCTIONS & flags) {
+  } while (MORE_COMPONENTS & flags);
+  if (WE_HAVE_INSTRUCTIONS & flags) {
     var length = reader.readUint16();
     if (length < MAX_INSTRUCTION_LENGTH) {
-      var instructions = [];
+      var instructions = new Array(length);
       for (var i = 0; i < length; ++i) {
-        instructions.push(reader.readUint8());
+        instructions[i] = reader.readUint8();
       }
       glyf.instructions = instructions;
     } else {
@@ -213,36 +206,33 @@ function parseCompoundGlyf(reader, glyf) {
 }
 
 /**
- * 解析glyf轮廓
- *
- * @param  {Reader} reader 读取器
- * @param  {Object} ttf    ttf对象
- * @param  {number=} offset 偏移
- * @return {Object}        glyf对象
+ * 优化41: header 和 endPtsOfContours 直接 view 批量读取
+ * 优化12: 非 hinting 模式跳过 instructions
  */
 function parseGlyf(reader, ttf, offset) {
   if (null != offset) {
     reader.seek(offset);
   }
   var glyf = {};
-  var i;
-  var length;
-  var instructions;
+  var hinting = ttf.readOptions ? ttf.readOptions.hinting : false;
 
-  // 边界值
-  var numberOfContours = reader.readInt16();
-  glyf.xMin = reader.readInt16();
-  glyf.yMin = reader.readInt16();
-  glyf.xMax = reader.readInt16();
-  glyf.yMax = reader.readInt16();
+  /* 优化41: 直接 view 读取 header 的 10 字节 */
+  var view = reader.view;
+  var vOffset = view.byteOffset + reader.offset;
+  var numberOfContours = view.getInt16(vOffset, false);
+  glyf.xMin = view.getInt16(vOffset + 2, false);
+  glyf.yMin = view.getInt16(vOffset + 4, false);
+  glyf.xMax = view.getInt16(vOffset + 6, false);
+  glyf.yMax = view.getInt16(vOffset + 8, false);
+  vOffset += 10;
 
-  // 读取简单字形
   if (numberOfContours >= 0) {
-    // endPtsOfConturs
-    glyf.endPtsOfContours = [];
+    /* 优化41: endPtsOfContours 预分配 + 直接 view 读取 */
     if (numberOfContours > 0) {
-      for (i = 0; i < numberOfContours; i++) {
-        glyf.endPtsOfContours.push(reader.readUint16());
+      glyf.endPtsOfContours = new Array(numberOfContours);
+      for (var i = 0; i < numberOfContours; i++) {
+        glyf.endPtsOfContours[i] = view.getUint16(vOffset, false);
+        vOffset += 2;
       }
     } else {
       delete glyf.xMin;
@@ -251,23 +241,23 @@ function parseGlyf(reader, ttf, offset) {
       delete glyf.yMax;
     }
 
-    // instructions
-    length = reader.readUint16();
-    if (length) {
-      // range错误
-      if (length < MAX_INSTRUCTION_LENGTH) {
-        instructions = [];
-        for (i = 0; i < length; ++i) {
-          instructions.push(reader.readUint8());
-        }
-        glyf.instructions = instructions;
-      } else {
-        console.warn(length);
+    /* 优化12+42: 非 hinting 模式只跳过 instructions */
+    var instrLength = view.getUint16(vOffset, false);
+    vOffset += 2;
+    if (hinting && instrLength && instrLength < MAX_INSTRUCTION_LENGTH) {
+      var instructions = new Array(instrLength);
+      for (var j = 0; j < instrLength; j++) {
+        instructions[j] = view.getUint8(vOffset + j);
       }
+      glyf.instructions = instructions;
     }
+    vOffset += instrLength;
+    reader.offset = vOffset - view.byteOffset;
+
     parseSimpleGlyf(reader, glyf);
     delete glyf.endPtsOfContours;
   } else {
+    reader.offset = vOffset - view.byteOffset;
     parseCompoundGlyf(reader, glyf);
   }
   return glyf;

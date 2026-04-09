@@ -17,48 +17,51 @@ var _default = exports.default = _table.default.create('hmtx', [], {
     var offset = this.offset;
     reader.seek(offset);
     var numOfLongHorMetrics = ttf.hhea.numOfLongHorMetrics;
-    var hMetrics = [];
-    var i;
-    var hMetric;
-    for (i = 0; i < numOfLongHorMetrics; ++i) {
-      hMetric = {};
-      hMetric.advanceWidth = reader.readUint16();
-      hMetric.leftSideBearing = reader.readInt16();
-      hMetrics.push(hMetric);
+    var numGlyphs = ttf.maxp.numGlyphs;
+    var hMetrics = new Array(numGlyphs);
+    /* 优化10: 直接 view 批量读取 */
+    var view = reader.view;
+    var vOffset = view.byteOffset + offset;
+    for (var i = 0; i < numOfLongHorMetrics; i++) {
+      hMetrics[i] = {
+        advanceWidth: view.getUint16(vOffset, false),
+        leftSideBearing: view.getInt16(vOffset + 2, false)
+      };
+      vOffset += 4;
     }
-
-    // 最后一个宽度
     var advanceWidth = hMetrics[numOfLongHorMetrics - 1].advanceWidth;
-    var numOfLast = ttf.maxp.numGlyphs - numOfLongHorMetrics;
-
-    // 获取后续的hmetrics
-    for (i = 0; i < numOfLast; ++i) {
-      hMetric = {};
-      hMetric.advanceWidth = advanceWidth;
-      hMetric.leftSideBearing = reader.readInt16();
-      hMetrics.push(hMetric);
+    var numOfLast = numGlyphs - numOfLongHorMetrics;
+    for (var j = 0; j < numOfLast; j++) {
+      hMetrics[numOfLongHorMetrics + j] = {
+        advanceWidth: advanceWidth,
+        leftSideBearing: view.getInt16(vOffset, false)
+      };
+      vOffset += 2;
     }
+    reader.offset = offset + numOfLongHorMetrics * 4 + numOfLast * 2;
     return hMetrics;
   },
   write: function write(writer, ttf) {
     var i;
     var numOfLongHorMetrics = ttf.hhea.numOfLongHorMetrics;
-    for (i = 0; i < numOfLongHorMetrics; ++i) {
-      writer.writeUint16(ttf.glyf[i].advanceWidth);
-      writer.writeInt16(ttf.glyf[i].leftSideBearing);
+    /* 优化30: 直接 view 批量写入 */
+    var wView = writer.view;
+    var pos = writer.offset;
+    for (i = 0; i < numOfLongHorMetrics; i++) {
+      wView.setUint16(pos, ttf.glyf[i].advanceWidth, false);
+      wView.setInt16(pos + 2, ttf.glyf[i].leftSideBearing, false);
+      pos += 4;
     }
-
-    // 最后一个宽度
     var numOfLast = ttf.glyf.length - numOfLongHorMetrics;
-    for (i = 0; i < numOfLast; ++i) {
-      writer.writeInt16(ttf.glyf[numOfLongHorMetrics + i].leftSideBearing);
+    for (i = 0; i < numOfLast; i++) {
+      wView.setInt16(pos, ttf.glyf[numOfLongHorMetrics + i].leftSideBearing, false);
+      pos += 2;
     }
+    writer.offset = pos;
     return writer;
   },
   size: function size(ttf) {
-    // 计算同最后一个advanceWidth相等的元素个数
     var numOfLast = 0;
-    // 最后一个advanceWidth
     var advanceWidth = ttf.glyf[ttf.glyf.length - 1].advanceWidth;
     for (var i = ttf.glyf.length - 2; i >= 0; i--) {
       if (advanceWidth === ttf.glyf[i].advanceWidth) {

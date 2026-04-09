@@ -17,15 +17,23 @@ var _default = exports.default = _table.default.create('directory', [], {
     var tables = {};
     var numTables = ttf.numTables;
     var offset = this.offset;
-    for (var i = offset, l = numTables * 16; i < l; i += 16) {
-      var name = reader.readString(i, 4).trim();
+    /* 优化26: 直接 view 批量读取 */
+    var view = reader.view;
+    var vOffset = view.byteOffset + offset;
+    for (var i = 0; i < numTables; i++) {
+      var name = String.fromCharCode(
+        view.getUint8(vOffset), view.getUint8(vOffset + 1),
+        view.getUint8(vOffset + 2), view.getUint8(vOffset + 3)
+      ).trim();
       tables[name] = {
         name: name,
-        checkSum: reader.readUint32(i + 4),
-        offset: reader.readUint32(i + 8),
-        length: reader.readUint32(i + 12)
+        checkSum: view.getUint32(vOffset + 4, false),
+        offset: view.getUint32(vOffset + 8, false),
+        length: view.getUint32(vOffset + 12, false)
       };
+      vOffset += 16;
     }
+    reader.offset = offset + numTables * 16;
     return tables;
   },
   write: function write(writer, ttf) {

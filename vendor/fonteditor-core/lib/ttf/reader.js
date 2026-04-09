@@ -72,23 +72,28 @@ var Reader = exports.default = /*#__PURE__*/function () {
   return _createClass(Reader, [{
     key: "read",
     value: function read(type, offset, littleEndian) {
-      // 使用当前位移
       if (undefined === offset) {
         offset = this.offset;
       }
-
-      // 使用小尾
       if (undefined === littleEndian) {
         littleEndian = this.littleEndian;
       }
-
-      // 扩展方法
       if (undefined === dataType[type]) {
         return this['read' + type](offset, littleEndian);
       }
       var size = dataType[type];
       this.offset = offset + size;
-      return this.view['get' + type](offset, littleEndian);
+      /* 优化20: switch 直接分发，避免动态属性查找 */
+      switch (type) {
+        case 'Int8': return this.view.getInt8(offset, littleEndian);
+        case 'Uint8': return this.view.getUint8(offset, littleEndian);
+        case 'Int16': return this.view.getInt16(offset, littleEndian);
+        case 'Uint16': return this.view.getUint16(offset, littleEndian);
+        case 'Int32': return this.view.getInt32(offset, littleEndian);
+        case 'Uint32': return this.view.getUint32(offset, littleEndian);
+        case 'Float32': return this.view.getFloat32(offset, littleEndian);
+        case 'Float64': return this.view.getFloat64(offset, littleEndian);
+      }
     }
 
     /**
@@ -109,12 +114,10 @@ var Reader = exports.default = /*#__PURE__*/function () {
       if (length < 0 || offset + length > this.length) {
         _error.default.raise(10001, this.length, offset + length);
       }
-      var buffer = [];
-      for (var i = 0; i < length; ++i) {
-        buffer.push(this.view.getUint8(offset + i));
-      }
+      /* 优化68: Uint8Array.slice 批量读取，替代逐字节 push */
+      var bytes = new Uint8Array(this.view.buffer, this.view.byteOffset + offset, length).slice();
       this.offset = offset + length;
-      return buffer;
+      return bytes;
     }
 
     /**
@@ -135,13 +138,15 @@ var Reader = exports.default = /*#__PURE__*/function () {
       if (length < 0 || offset + length > this.length) {
         _error.default.raise(10001, this.length, offset + length);
       }
-      var value = '';
+      /* 优化22: 批量读取字节后构建字符串，替代逐字节 readUint8 */
+      var chars = new Array(length);
+      var viewOffset = this.view.byteOffset + offset;
+      var buf = this.view.buffer;
       for (var i = 0; i < length; ++i) {
-        var c = this.readUint8(offset + i);
-        value += String.fromCharCode(c);
+        chars[i] = buf.charCodeAt ? String.fromCharCode(buf.charCodeAt(viewOffset + i)) : String.fromCharCode(new Uint8Array(buf, viewOffset + i, 1)[0]);
       }
       this.offset = offset + length;
-      return value;
+      return chars.join('');
     }
 
     /**
@@ -238,12 +243,12 @@ var Reader = exports.default = /*#__PURE__*/function () {
       delete this.view;
     }
   }]);
-}(); // 直接支持的数据类型 — 直接绑定，避免 curry 闭包开销
-Object.keys(dataType).forEach(function (type) {
-  var size = dataType[type];
-  Reader.prototype['read' + type] = function (offset) {
-    if (offset === undefined) offset = this.offset;
-    this.offset = offset + size;
-    return this.view['get' + type](offset, this.littleEndian);
-  };
-});
+}(); // 优化19+20: 直接绑定方法 + switch 分发，避免 curry 闭包和动态属性查找
+Reader.prototype.readInt8 = function(offset) { if (offset === undefined) offset = this.offset; this.offset = offset + 1; return this.view.getInt8(offset, this.littleEndian); };
+Reader.prototype.readUint8 = function(offset) { if (offset === undefined) offset = this.offset; this.offset = offset + 1; return this.view.getUint8(offset, this.littleEndian); };
+Reader.prototype.readInt16 = function(offset) { if (offset === undefined) offset = this.offset; this.offset = offset + 2; return this.view.getInt16(offset, this.littleEndian); };
+Reader.prototype.readUint16 = function(offset) { if (offset === undefined) offset = this.offset; this.offset = offset + 2; return this.view.getUint16(offset, this.littleEndian); };
+Reader.prototype.readInt32 = function(offset) { if (offset === undefined) offset = this.offset; this.offset = offset + 4; return this.view.getInt32(offset, this.littleEndian); };
+Reader.prototype.readUint32 = function(offset) { if (offset === undefined) offset = this.offset; this.offset = offset + 4; return this.view.getUint32(offset, this.littleEndian); };
+Reader.prototype.readFloat32 = function(offset) { if (offset === undefined) offset = this.offset; this.offset = offset + 4; return this.view.getFloat32(offset, this.littleEndian); };
+Reader.prototype.readFloat64 = function(offset) { if (offset === undefined) offset = this.offset; this.offset = offset + 8; return this.view.getFloat64(offset, this.littleEndian); };

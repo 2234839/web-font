@@ -65,23 +65,28 @@ var Writer = /*#__PURE__*/function () {
   return _createClass(Writer, [{
     key: "write",
     value: function write(type, value, offset, littleEndian) {
-      // 使用当前位移
       if (undefined === offset) {
         offset = this.offset;
       }
-
-      // 使用小尾
       if (undefined === littleEndian) {
         littleEndian = this.littleEndian;
       }
-
-      // 扩展方法
       if (undefined === dataType[type]) {
         return this['write' + type](value, offset, littleEndian);
       }
       var size = dataType[type];
       this.offset = offset + size;
-      this.view['set' + type](offset, value, littleEndian);
+      /* 优化20: switch 直接分发，避免动态属性查找 */
+      switch (type) {
+        case 'Int8': this.view.setInt8(offset, value, littleEndian); break;
+        case 'Uint8': this.view.setUint8(offset, value, littleEndian); break;
+        case 'Int16': this.view.setInt16(offset, value, littleEndian); break;
+        case 'Uint16': this.view.setUint16(offset, value, littleEndian); break;
+        case 'Int32': this.view.setInt32(offset, value, littleEndian); break;
+        case 'Uint32': this.view.setUint32(offset, value, littleEndian); break;
+        case 'Float32': this.view.setFloat32(offset, value, littleEndian); break;
+        case 'Float64': this.view.setFloat64(offset, value, littleEndian); break;
+      }
       return this;
     }
 
@@ -97,7 +102,6 @@ var Writer = /*#__PURE__*/function () {
     key: "writeBytes",
     value: function writeBytes(value, length, offset) {
       length = length || value.byteLength || value.length;
-      var i;
       if (!length) {
         return this;
       }
@@ -107,16 +111,11 @@ var Writer = /*#__PURE__*/function () {
       if (length < 0 || offset + length > this.length) {
         _error.default.raise(10002, this.length, offset + length);
       }
-      var littleEndian = this.littleEndian;
+      /* 优化5: Uint8Array.set 批量写入，替代逐字节循环 */
       if (value instanceof ArrayBuffer) {
-        var view = new DataView(value, 0, length);
-        for (i = 0; i < length; ++i) {
-          this.view.setUint8(offset + i, view.getUint8(i, littleEndian), littleEndian);
-        }
+        new Uint8Array(this.view.buffer, this.view.byteOffset + offset, length).set(new Uint8Array(value, 0, length));
       } else {
-        for (i = 0; i < length; ++i) {
-          this.view.setUint8(offset + i, value[i], littleEndian);
-        }
+        new Uint8Array(this.view.buffer, this.view.byteOffset + offset, length).set(value instanceof Uint8Array ? value : new Uint8Array(value), 0);
       }
       this.offset = offset + length;
       return this;
@@ -138,10 +137,8 @@ var Writer = /*#__PURE__*/function () {
       if (undefined === offset) {
         offset = this.offset;
       }
-      var littleEndian = this.littleEndian;
-      for (var i = 0; i < length; ++i) {
-        this.view.setUint8(offset + i, 0, littleEndian);
-      }
+      /* 优化5: fill(0) 批量填充，替代逐字节循环 */
+      new Uint8Array(this.view.buffer, this.view.byteOffset + offset, length).fill(0);
       this.offset = offset + length;
       return this;
     }
@@ -164,21 +161,21 @@ var Writer = /*#__PURE__*/function () {
       if (undefined === offset) {
         offset = this.offset;
       }
-
       // eslint-disable-next-line no-control-regex
       length = length || str.replace(/[^\x00-\xff]/g, '11').length;
       if (length < 0 || offset + length > this.length) {
         _error.default.raise(10002, this.length, offset + length);
       }
-      this.seek(offset);
+      /* 优化28: 直接 view 写入，替代逐字节 writeUint8/writeUint16 */
+      var pos = offset;
       for (var i = 0, l = str.length, charCode; i < l; ++i) {
         charCode = str.charCodeAt(i) || 0;
         if (charCode > 127) {
-          // unicode编码可能会超出2字节,
-          // 写入与编码有关系，此处不做处理
-          this.writeUint16(charCode);
+          this.view.setUint16(pos, charCode, this.littleEndian);
+          pos += 2;
         } else {
-          this.writeUint8(charCode);
+          this.view.setUint8(pos, charCode);
+          pos += 1;
         }
       }
       this.offset = offset + length;
@@ -299,8 +296,13 @@ var Writer = /*#__PURE__*/function () {
       delete this.view;
     }
   }]);
-}(); // 直接支持的数据类型
-Object.keys(dataType).forEach(function (type) {
-  Writer.prototype['write' + type] = (0, _lang.curry)(Writer.prototype.write, type);
-});
+}(); // 优化19: 直接绑定方法，避免 curry 闭包开销
+Writer.prototype.writeInt8 = function(value, offset) { if (offset === undefined) offset = this.offset; this.offset = offset + 1; this.view.setInt8(offset, value, this.littleEndian); return this; };
+Writer.prototype.writeUint8 = function(value, offset) { if (offset === undefined) offset = this.offset; this.offset = offset + 1; this.view.setUint8(offset, value, this.littleEndian); return this; };
+Writer.prototype.writeInt16 = function(value, offset) { if (offset === undefined) offset = this.offset; this.offset = offset + 2; this.view.setInt16(offset, value, this.littleEndian); return this; };
+Writer.prototype.writeUint16 = function(value, offset) { if (offset === undefined) offset = this.offset; this.offset = offset + 2; this.view.setUint16(offset, value, this.littleEndian); return this; };
+Writer.prototype.writeInt32 = function(value, offset) { if (offset === undefined) offset = this.offset; this.offset = offset + 4; this.view.setInt32(offset, value, this.littleEndian); return this; };
+Writer.prototype.writeUint32 = function(value, offset) { if (offset === undefined) offset = this.offset; this.offset = offset + 4; this.view.setUint32(offset, value, this.littleEndian); return this; };
+Writer.prototype.writeFloat32 = function(value, offset) { if (offset === undefined) offset = this.offset; this.offset = offset + 4; this.view.setFloat32(offset, value, this.littleEndian); return this; };
+Writer.prototype.writeFloat64 = function(value, offset) { if (offset === undefined) offset = this.offset; this.offset = offset + 8; this.view.setFloat64(offset, value, this.littleEndian); return this; };
 var _default = exports.default = Writer;

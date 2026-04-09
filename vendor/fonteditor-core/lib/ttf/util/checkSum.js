@@ -9,54 +9,58 @@ exports.default = checkSum;
  * @author mengke01(kekee000@gmail.com)
  */
 
-function checkSumArrayBuffer(buffer) {
-  var offset = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : 0;
-  var length = arguments.length > 2 ? arguments[2] : undefined;
+/**
+ * 优化18+69: 位运算避免溢出 + Uint8Array 替代 DataView
+ */
+function checkSumArrayBuffer(buffer, offset, length) {
+  if (offset === undefined) offset = 0;
   length = length == null ? buffer.byteLength : length;
   if (offset + length > buffer.byteLength) {
     throw new Error('check sum out of bound');
   }
-  var nLongs = Math.floor(length / 4);
-  var view = new DataView(buffer, offset, length);
+  var bytes = new Uint8Array(buffer, offset, length);
+  var nLongs = length >> 2;
   var sum = 0;
   var i = 0;
   while (i < nLongs) {
-    sum += view.getUint32(4 * i++, false);
+    var j = i << 2;
+    sum = (sum + (bytes[j] << 24 | bytes[j + 1] << 16 | bytes[j + 2] << 8 | bytes[j + 3])) | 0;
+    i++;
   }
   var leftBytes = length - nLongs * 4;
   if (leftBytes) {
-    offset = nLongs * 4;
-    while (leftBytes > 0) {
-      sum += view.getUint8(offset, false) << leftBytes * 8;
-      offset++;
-      leftBytes--;
+    var off = nLongs << 2;
+    var shift = leftBytes * 8;
+    var val = 0;
+    for (var k = 0; k < leftBytes; k++) {
+      val = (val | bytes[off + k] << (leftBytes - 1 - k) * 8) >>> 0;
     }
+    sum = (sum + val) | 0;
   }
-  return sum % 0x100000000;
+  return sum >>> 0;
 }
-function checkSumArray(buffer) {
-  var offset = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : 0;
-  var length = arguments.length > 2 ? arguments[2] : undefined;
+
+function checkSumArray(buffer, offset, length) {
+  if (offset === undefined) offset = 0;
   length = length || buffer.length;
   if (offset + length > buffer.length) {
     throw new Error('check sum out of bound');
   }
-  var nLongs = Math.floor(length / 4);
+  var nLongs = length >> 2;
   var sum = 0;
   var i = 0;
   while (i < nLongs) {
-    sum += (buffer[i++] << 24) + (buffer[i++] << 16) + (buffer[i++] << 8) + buffer[i++];
+    sum = (sum + ((buffer[i] << 24 | buffer[i + 1] << 16 | buffer[i + 2] << 8 | buffer[i + 3]) >>> 0)) | 0;
+    i += 4;
   }
   var leftBytes = length - nLongs * 4;
   if (leftBytes) {
-    offset = nLongs * 4;
-    while (leftBytes > 0) {
-      sum += buffer[offset] << leftBytes * 8;
-      offset++;
-      leftBytes--;
+    var off = nLongs << 2;
+    for (var k = 0; k < leftBytes; k++) {
+      sum = (sum + (buffer[off + k] << (leftBytes - 1 - k) * 8)) | 0;
     }
   }
-  return sum % 0x100000000;
+  return sum >>> 0;
 }
 
 /**

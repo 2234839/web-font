@@ -652,23 +652,33 @@ var TTF = exports.default = /*#__PURE__*/function () {
     value: function sortGlyf() {
       var glyf = this.ttf.glyf;
       if (glyf.length > 1) {
-        // 如果存在复合字形则退出
-        if (glyf.some(function (a) {
-          return a.compound;
-        })) {
+        /* 优化54: some → for 循环 + unicode 属性缓存 + Math.min.apply → 手动遍历 */
+        var hasCompound = false;
+        for (var k = 0, kl = glyf.length; k < kl; k++) {
+          if (glyf[k].compound) {
+            hasCompound = true;
+            break;
+          }
+        }
+        if (hasCompound) {
           return -2;
         }
         var notdef = glyf.shift();
-        // 按代码点排序, 首先将空字形排到最后，然后按照unicode第一个编码进行排序
         glyf.sort(function (a, b) {
-          if ((!a.unicode || !a.unicode.length) && (!b.unicode || !b.unicode.length)) {
+          var aU = a.unicode;
+          var bU = b.unicode;
+          if ((!aU || !aU.length) && (!bU || !bU.length)) {
             return 0;
-          } else if ((!a.unicode || !a.unicode.length) && b.unicode) {
+          } else if ((!aU || !aU.length) && bU) {
             return 1;
-          } else if (a.unicode && (!b.unicode || !b.unicode.length)) {
+          } else if (aU && (!bU || !bU.length)) {
             return -1;
           }
-          return Math.min.apply(null, a.unicode) - Math.min.apply(null, b.unicode);
+          /* 优化3: 手动遍历取最小值 */
+          var aMin = aU[0], bMin = bU[0];
+          for (var ai = 1; ai < aU.length; ai++) { if (aU[ai] < aMin) aMin = aU[ai]; }
+          for (var bi = 1; bi < bU.length; bi++) { if (bU[bi] < bMin) bMin = bU[bi]; }
+          return aMin - bMin;
         });
         glyf.unshift(notdef);
         return glyf;
