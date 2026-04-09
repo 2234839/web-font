@@ -343,12 +343,18 @@ var WebFont = (function () {
 
     processText(loader, options.text);
 
+    var disposed = false;
+
     return {
       update: function (text) {
+        if (disposed) return;
         processText(loader, text);
       },
       dispose: function () {
-        /* loadText 不独占样式，样式由 loader 统一管理 */
+        if (disposed) return;
+        disposed = true;
+        /** 移除该 loader 注入的所有 @font-face 样式，避免同名 family 的 CSS 优先级冲突 */
+        destroyLoader(fontKey(fontName, family));
       }
     };
   }
