@@ -3,6 +3,9 @@ import { uploadFont, type UploadResult, type ServerConfig } from "./api";
 
 const ACCEPT = ".ttf,.otf,.woff,.woff2";
 
+/** 目前仅 TTF 格式兼容性最佳，上传其他格式可能无法正常使用 */
+const UPLOAD_TIP = "当前仅 TTF 格式兼容性最佳，建议上传 .ttf 字体文件";
+
 const btn = {
   padding: "6px 20px",
   "font-size": "14px",
@@ -173,6 +176,9 @@ export default function UploadSection(props: { config: ServerConfig; onUploaded:
     <Show when={canUpload()}>
       <section style={section}>
         <label style={{ ...label, "font-size": "14px", "font-weight": 500, "margin-bottom": "12px" }}>上传字体</label>
+        <div style={{ "font-size": "12px", color: "#e6a700", "margin-bottom": "12px" }}>
+          {UPLOAD_TIP}
+        </div>
 
         <Show when={temp.msg()}>
           {(m) => (

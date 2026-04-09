@@ -111,8 +111,9 @@ function App() {
       set_outType(config.supportedOutTypes?.[0] || "ttf");
     }
     if (fontList.length > 0) {
-      /** 标语随机使用一个字体展示 */
-      const randomFont = fontList[Math.floor(Math.random() * fontList.length)];
+      /** 标语随机使用一个 TTF 字体展示（目前仅 TTF 格式兼容性最佳） */
+      const ttfFonts = fontList.filter((f) => /\.ttf$/i.test(f.name));
+      const randomFont = (ttfFonts.length > 0 ? ttfFonts : fontList)[Math.floor(Math.random() * (ttfFonts.length > 0 ? ttfFonts : fontList).length)];
       (globalThis as any).WebFont?.loadText({
         fontName: randomFont.name,
         text: SLOGAN,
