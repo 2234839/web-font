@@ -38,14 +38,14 @@ function compound2simpleglyf(glyf, ttf, recrusive) {
   var contoursList = {};
   (0, _transformGlyfContours.default)(glyf, ttf, contoursList, glyfIndex);
   if (recrusive) {
-    Object.keys(contoursList).forEach(function (index) {
-      var target = ttf.glyf[index];
-      (0, _compound2simple.default)(target, contoursList[index]);
-      /* 优化66: 检测扁平格式并设置标记 */
+    /* 优化62: for...in 替代 Object.keys + forEach */
+    for (var idx in contoursList) {
+      var target = ttf.glyf[idx];
+      (0, _compound2simple.default)(target, contoursList[idx]);
       if (target.contours && target.contours.length && typeof target.contours[0][0] === 'number') {
         target._flatContours = true;
       }
-    });
+    }
   } else {
     (0, _compound2simple.default)(glyf, contoursList[glyfIndex]);
     /* 优化66: 检测扁平格式并设置标记 */

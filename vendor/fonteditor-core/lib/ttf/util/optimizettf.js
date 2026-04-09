@@ -48,53 +48,59 @@ function ceilAndReduceFlat(glyf) {
  * @return {true|Object} 错误信息
  */
 function optimizettf(ttf) {
-  var checkUnicodeRepeat = {}; // 检查是否有重复代码点
+  var checkUnicodeRepeat = {};
   var repeatList = [];
-  ttf.glyf.forEach(function (glyf, index) {
+  /* 优化2+45+62: for 循环替代 forEach，只对 length>1 的 unicode 排序 */
+  var glyfs = ttf.glyf;
+  for (var index = 0, gl = glyfs.length; index < gl; index++) {
+    var glyf = glyfs[index];
     if (glyf.unicode) {
-      glyf.unicode = glyf.unicode.sort();
-
-      // 将glyf的代码点按小到大排序
-      glyf.unicode.sort(function (a, b) {
-        return a - b;
-      }).forEach(function (u) {
+      /* 优化2: 删除第一次默认排序，只保留数字排序 */
+      if (glyf.unicode.length > 1) {
+        glyf.unicode.sort(function (a, b) { return a - b; });
+      }
+      var unicode = glyf.unicode;
+      for (var ui = 0, ul = unicode.length; ui < ul; ui++) {
+        var u = unicode[ui];
         if (checkUnicodeRepeat[u]) {
           repeatList.push(index);
         } else {
           checkUnicodeRepeat[u] = true;
         }
-      });
+      }
     }
     if (!glyf.compound && glyf.contours) {
       if (glyf._flatContours) {
-        /* 优化17+66: 扁平格式单次遍历 pathCeil + reduceGlyf */
         ceilAndReduceFlat(glyf);
       } else {
-        /* 整数化 */
         glyf.contours.forEach(function (contour) {
           (0, _pathCeil.default)(contour);
         });
-        /* 缩减glyf */
         (0, _reduceGlyf.default)(glyf);
       }
     }
 
-    // 整数化
     glyf.xMin = Math.round(glyf.xMin || 0);
     glyf.xMax = Math.round(glyf.xMax || 0);
     glyf.yMin = Math.round(glyf.yMin || 0);
     glyf.yMax = Math.round(glyf.yMax || 0);
     glyf.leftSideBearing = Math.round(glyf.leftSideBearing || 0);
     glyf.advanceWidth = Math.round(glyf.advanceWidth || 0);
-  });
+  }
 
-  // 过滤无轮廓字体，如果存在复合字形不进行过滤
-  if (!ttf.glyf.some(function (a) {
-    return a.compound;
-  })) {
-    ttf.glyf = ttf.glyf.filter(function (glyf, index) {
-      return index === 0 || glyf.contours && glyf.contours.length;
-    });
+  /* 过滤无轮廓字体 */
+  var hasCompound = false;
+  for (var fi = 0, fl = glyfs.length; fi < fl; fi++) {
+    if (glyfs[fi].compound) { hasCompound = true; break; }
+  }
+  if (!hasCompound) {
+    var filtered = [glyfs[0]];
+    for (var gi = 1; gi < gl; gi++) {
+      if (glyfs[gi].contours && glyfs[gi].contours.length) {
+        filtered.push(glyfs[gi]);
+      }
+    }
+    ttf.glyf = filtered;
   }
   if (!repeatList.length) {
     return true;

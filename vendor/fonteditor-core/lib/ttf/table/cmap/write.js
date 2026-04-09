@@ -9,152 +9,107 @@ exports.default = write;
  * @author mengke01(kekee000@gmail.com)
  */
 
-/**
- * 创建`子表0`
- *
- * @param {Writer} writer 写对象
- * @param {Array} unicodes unicodes列表
- * @return {Writer}
- */
 function writeSubTable0(writer, unicodes) {
-  writer.writeUint16(0); // format
-  writer.writeUint16(262); // length
-  writer.writeUint16(0); // language
+  var pos = writer.offset;
+  var view = writer.view;
+  view.setUint16(pos, 0, false); pos += 2;
+  view.setUint16(pos, 262, false); pos += 2;
+  view.setUint16(pos, 0, false); pos += 2;
 
-  // Array of unicodes 0..255
   var i = -1;
-  var unicode;
-  while (unicode = unicodes.shift()) {
+  for (var j = 0; j < unicodes.length; j++) {
+    var unicode = unicodes[j];
     while (++i < unicode[0]) {
-      writer.writeUint8(0);
+      view.setUint8(pos++, 0);
     }
-    writer.writeUint8(unicode[1]);
+    view.setUint8(pos++, unicode[1]);
     i = unicode[0];
   }
   while (++i < 256) {
-    writer.writeUint8(0);
+    view.setUint8(pos++, 0);
   }
+  writer.offset = pos;
   return writer;
 }
 
-/**
- * 创建`子表4`
- *
- * @param {Writer} writer 写对象
- * @param {Array} segments 分块编码列表
- * @return {Writer}
- */
 function writeSubTable4(writer, segments) {
-  writer.writeUint16(4); // format
-  writer.writeUint16(24 + segments.length * 8); // length
-  writer.writeUint16(0); // language
-
+  var pos = writer.offset;
+  var view = writer.view;
   var segCount = segments.length + 1;
   var maxExponent = Math.floor(Math.log(segCount) / Math.LN2);
   var searchRange = 2 * Math.pow(2, maxExponent);
-  writer.writeUint16(segCount * 2); // segCountX2
-  writer.writeUint16(searchRange); // searchRange
-  writer.writeUint16(maxExponent); // entrySelector
-  writer.writeUint16(2 * segCount - searchRange); // rangeShift
 
-  // end list
-  segments.forEach(function (segment) {
-    writer.writeUint16(segment.end);
-  });
-  writer.writeUint16(0xFFFF); // end code
-  writer.writeUint16(0); // reservedPad
+  view.setUint16(pos, 4, false); pos += 2;
+  view.setUint16(pos, 24 + segments.length * 8, false); pos += 2;
+  view.setUint16(pos, 0, false); pos += 2;
+  view.setUint16(pos, segCount * 2, false); pos += 2;
+  view.setUint16(pos, searchRange, false); pos += 2;
+  view.setUint16(pos, maxExponent, false); pos += 2;
+  view.setUint16(pos, 2 * segCount - searchRange, false); pos += 2;
 
-  // start list
-  segments.forEach(function (segment) {
-    writer.writeUint16(segment.start);
-  });
-  writer.writeUint16(0xFFFF); // start code
-
-  // id delta
-  segments.forEach(function (segment) {
-    writer.writeUint16(segment.delta);
-  });
-  writer.writeUint16(1);
-
-  // Array of range offsets, it doesn't matter when deltas present
-  for (var i = 0, l = segments.length; i < l; i++) {
-    writer.writeUint16(0);
+  for (var i = 0; i < segments.length; i++) {
+    view.setUint16(pos, segments[i].end, false); pos += 2;
   }
-  writer.writeUint16(0); // rangeOffsetArray should be finished with 0
+  view.setUint16(pos, 0xFFFF, false); pos += 2;
+  view.setUint16(pos, 0, false); pos += 2;
 
+  for (var j = 0; j < segments.length; j++) {
+    view.setUint16(pos, segments[j].start, false); pos += 2;
+  }
+  view.setUint16(pos, 0xFFFF, false); pos += 2;
+
+  for (var k = 0; k < segments.length; k++) {
+    view.setUint16(pos, segments[k].delta, false); pos += 2;
+  }
+  view.setUint16(pos, 1, false); pos += 2;
+
+  for (var m = 0; m < segments.length; m++) {
+    view.setUint16(pos, 0, false); pos += 2;
+  }
+  view.setUint16(pos, 0, false); pos += 2;
+
+  writer.offset = pos;
   return writer;
 }
 
-/**
- * 创建`子表12`
- *
- * @param {Writer} writer 写对象
- * @param {Array} segments 分块编码列表
- * @return {Writer}
- */
 function writeSubTable12(writer, segments) {
-  writer.writeUint16(12); // format
-  writer.writeUint16(0); // reserved
-  writer.writeUint32(16 + segments.length * 12); // length
-  writer.writeUint32(0); // language
-  writer.writeUint32(segments.length); // nGroups
+  var pos = writer.offset;
+  var view = writer.view;
+  view.setUint16(pos, 12, false); pos += 2;
+  view.setUint16(pos, 0, false); pos += 2;
+  view.setUint32(pos, 16 + segments.length * 12, false); pos += 4;
+  view.setUint32(pos, 0, false); pos += 4;
+  view.setUint32(pos, segments.length, false); pos += 4;
 
-  segments.forEach(function (segment) {
-    writer.writeUint32(segment.start);
-    writer.writeUint32(segment.end);
-    writer.writeUint32(segment.startId);
-  });
+  for (var i = 0; i < segments.length; i++) {
+    view.setUint32(pos, segments[i].start, false); pos += 4;
+    view.setUint32(pos, segments[i].end, false); pos += 4;
+    view.setUint32(pos, segments[i].startId, false); pos += 4;
+  }
+  writer.offset = pos;
   return writer;
 }
 
-/**
- * 写subtableheader
- *
- * @param {Writer} writer Writer对象
- * @param {number} platform 平台
- * @param {number} encoding 编码
- * @param {number} offset 偏移
- * @return {Writer}
- */
-function writeSubTableHeader(writer, platform, encoding, offset) {
-  writer.writeUint16(platform); // platform
-  writer.writeUint16(encoding); // encoding
-  writer.writeUint32(offset); // offset
-  return writer;
-}
-
-/**
- * 写cmap表数据
- *
- * @param  {Object} writer 写入器
- * @param  {Object} ttf    ttf对象
- * @return {Object}        写入器
- */
 function write(writer, ttf) {
   var hasGLyphsOver2Bytes = ttf.support.cmap.hasGLyphsOver2Bytes;
+  var pos = writer.offset;
+  var view = writer.view;
 
-  // write table header.
-  writer.writeUint16(0); // version
-  writer.writeUint16(hasGLyphsOver2Bytes ? 4 : 3); // count
+  view.setUint16(pos, 0, false); pos += 2;
+  view.setUint16(pos, hasGLyphsOver2Bytes ? 4 : 3, false); pos += 2;
+  writer.offset = pos;
 
-  // header size
   var subTableOffset = 4 + (hasGLyphsOver2Bytes ? 32 : 24);
   var format4Size = ttf.support.cmap.format4Size;
   var format0Size = ttf.support.cmap.format0Size;
 
-  // subtable 4, unicode
-  writeSubTableHeader(writer, 0, 3, subTableOffset);
-
-  // subtable 0, mac standard
-  writeSubTableHeader(writer, 1, 0, subTableOffset + format4Size);
-
-  // subtable 4, windows standard
-  writeSubTableHeader(writer, 3, 1, subTableOffset);
+  writer.writeUint16(0); writer.writeUint16(3); writer.writeUint32(subTableOffset);
+  writer.writeUint16(1); writer.writeUint16(0); writer.writeUint32(subTableOffset + format4Size);
+  writer.writeUint16(3); writer.writeUint16(1); writer.writeUint32(subTableOffset);
   if (hasGLyphsOver2Bytes) {
-    writeSubTableHeader(writer, 3, 10, subTableOffset + format4Size + format0Size);
+    writer.writeUint16(3); writer.writeUint16(10); writer.writeUint32(subTableOffset + format4Size + format0Size);
   }
 
-  // write tables, order of table seem to be magic, it is taken from TTX tool
   writeSubTable4(writer, ttf.support.cmap.format4Segments);
   writeSubTable0(writer, ttf.support.cmap.format0Segments);
   if (hasGLyphsOver2Bytes) {

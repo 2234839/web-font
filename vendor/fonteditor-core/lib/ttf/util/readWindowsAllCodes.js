@@ -9,10 +9,53 @@ exports.default = readWindowsAllCodes;
 /**
  * @file 读取windows支持的字符集
  * @author mengke01(kekee000@gmail.com)
- *
- * @see
- * https://developer.apple.com/fonts/TrueType-Reference-Manual/RM06/Chap6cmap.html
  */
+
+/**
+ * 优化65: format12 二分查找，避免全量展开
+ */
+function lookupFormat12(groups, unicode) {
+  var lo = 0, hi = groups.length - 1;
+  while (lo <= hi) {
+    var mid = (lo + hi) >> 1;
+    var g = groups[mid];
+    if (unicode < g.start) {
+      hi = mid - 1;
+    } else if (unicode > g.end) {
+      lo = mid + 1;
+    } else {
+      return g.startId + (unicode - g.start);
+    }
+  }
+  return -1;
+}
+
+/**
+ * 优化65: format4 线性查找 segment
+ */
+function lookupFormat4(format4, unicode) {
+  var startCode = format4.startCode;
+  var endCode = format4.endCode;
+  var idDelta = format4.idDelta;
+  var idRangeOffset = format4.idRangeOffset;
+  var segCount = format4.segCountX2 / 2;
+
+  for (var i = 0; i < segCount; i++) {
+    if (unicode >= startCode[i] && unicode <= endCode[i]) {
+      if (idRangeOffset[i] === 0) {
+        return (unicode + idDelta[i]) % 0x10000;
+      }
+      var graphIdArrayIndexOffset = (format4.glyphIdArrayOffset - format4.idRangeOffsetOffset) / 2;
+      var index = i + idRangeOffset[i] / 2 + (unicode - startCode[i]) - graphIdArrayIndexOffset;
+      var graphId = format4.glyphIdArray[index];
+      if (graphId !== 0) {
+        return (graphId + idDelta[i]) % 0x10000;
+      }
+      return 0;
+    }
+  }
+  return -1;
+}
 
 /**
  * 读取ttf中windows字符表的字符
@@ -23,49 +66,78 @@ exports.default = readWindowsAllCodes;
  */
 function readWindowsAllCodes(tables, ttf) {
   var codes = {};
+  var subset = ttf.readOptions && ttf.readOptions.subset;
 
-  // 读取windows unicode 编码段
-  var format0 = tables.find(function (item) {
-    return item.format === 0;
-  });
+  /* 优化65: 合并5次 tables.find 为单次遍历 */
+  var format0 = null, format12 = null, format4 = null, format2 = null, format14 = null;
+  for (var fi = 0; fi < tables.length; fi++) {
+    var t = tables[fi];
+    if (t.format === 0 && !format0) format0 = t;
+    else if (t.platformID === 3 && t.encodingID === 10 && t.format === 12 && !format12) format12 = t;
+    else if (t.platformID === 3 && t.encodingID === 1 && t.format === 4 && !format4) format4 = t;
+    else if (t.platformID === 3 && t.encodingID === 3 && t.format === 2 && !format2) format2 = t;
+    else if (t.platformID === 0 && t.encodingID === 5 && t.format === 14 && !format14) format14 = t;
+  }
 
-  // 读取windows unicode 编码段
-  var format12 = tables.find(function (item) {
-    return item.platformID === 3 && item.encodingID === 10 && item.format === 12;
-  });
-  var format4 = tables.find(function (item) {
-    return item.platformID === 3 && item.encodingID === 1 && item.format === 4;
-  });
-  var format2 = tables.find(function (item) {
-    return item.platformID === 3 && item.encodingID === 3 && item.format === 2;
-  });
-  var format14 = tables.find(function (item) {
-    return item.platformID === 0 && item.encodingID === 5 && item.format === 14;
-  });
+  /* 优化65: subset 模式 - 只查找 subset 字符的 glyphId */
+  if (subset && subset.length > 0) {
+    if (format12) {
+      for (var si = 0, sl = subset.length; si < sl; si++) {
+        var u = subset[si];
+        if (u < 0x10000 && format4) {
+          var gid = lookupFormat4(format4, u);
+          if (gid >= 0) { codes[u] = gid; continue; }
+        }
+        var gid12 = lookupFormat12(format12.groups, u);
+        if (gid12 >= 0) { codes[u] = gid12; }
+      }
+    } else if (format4) {
+      for (var si2 = 0, sl2 = subset.length; si2 < sl2; si2++) {
+        var u2 = subset[si2];
+        var gid4 = lookupFormat4(format4, u2);
+        if (gid4 >= 0) { codes[u2] = gid4; }
+      }
+    }
+
+    /* format0 和 format14 仍然需要全量处理（数据量小） */
+    if (format0) {
+      for (var i = 0, l = format0.glyphIdArray.length; i < l; i++) {
+        if (format0.glyphIdArray[i]) {
+          codes[i] = format0.glyphIdArray[i];
+        }
+      }
+    }
+    if (format14) {
+      for (var vi = 0, vl = format14.groups.length; vi < vl; vi++) {
+        var vg = format14.groups[vi];
+        if (vg.unicode) {
+          codes[vg.unicode] = vg.glyphId;
+        }
+      }
+    }
+
+    return codes;
+  }
+
+  /* 非subset模式 - 全量展开（原始逻辑） */
   if (format0) {
-    for (var i = 0, l = format0.glyphIdArray.length; i < l; i++) {
-      if (format0.glyphIdArray[i]) {
-        codes[i] = format0.glyphIdArray[i];
+    for (var i2 = 0, l2 = format0.glyphIdArray.length; i2 < l2; i2++) {
+      if (format0.glyphIdArray[i2]) {
+        codes[i2] = format0.glyphIdArray[i2];
       }
     }
   }
-
-  // format 14 support
   if (format14) {
-    for (var _i = 0, _l = format14.groups.length; _i < _l; _i++) {
-      var _format14$groups$_i = format14.groups[_i],
-        unicode = _format14$groups$_i.unicode,
-        glyphId = _format14$groups$_i.glyphId;
-      if (unicode) {
-        codes[unicode] = glyphId;
+    for (var vi2 = 0, vl2 = format14.groups.length; vi2 < vl2; vi2++) {
+      var vg2 = format14.groups[vi2];
+      if (vg2.unicode) {
+        codes[vg2.unicode] = vg2.glyphId;
       }
     }
   }
-
-  // 读取format12表
   if (format12) {
-    for (var _i2 = 0, _l2 = format12.nGroups; _i2 < _l2; _i2++) {
-      var group = format12.groups[_i2];
+    for (var gi = 0, gl = format12.nGroups; gi < gl; gi++) {
+      var group = format12.groups[gi];
       var startId = group.startId;
       var start = group.start;
       var end = group.end;
@@ -73,25 +145,18 @@ function readWindowsAllCodes(tables, ttf) {
         codes[start++] = startId++;
       }
     }
-  }
-  // 读取format4表
-  else if (format4) {
+  } else if (format4) {
     var segCount = format4.segCountX2 / 2;
-    // graphIdArray 和idRangeOffset的偏移量
     var graphIdArrayIndexOffset = (format4.glyphIdArrayOffset - format4.idRangeOffsetOffset) / 2;
-    for (var _i3 = 0; _i3 < segCount; ++_i3) {
-      // 读取单个字符
-      for (var _start = format4.startCode[_i3], _end = format4.endCode[_i3]; _start <= _end; ++_start) {
-        // range offset = 0
-        if (format4.idRangeOffset[_i3] === 0) {
-          codes[_start] = (_start + format4.idDelta[_i3]) % 0x10000;
-        }
-        // rely on to glyphIndexArray
-        else {
-          var index = _i3 + format4.idRangeOffset[_i3] / 2 + (_start - format4.startCode[_i3]) - graphIdArrayIndexOffset;
+    for (var si3 = 0; si3 < segCount; ++si3) {
+      for (var _start = format4.startCode[si3], _end = format4.endCode[si3]; _start <= _end; ++_start) {
+        if (format4.idRangeOffset[si3] === 0) {
+          codes[_start] = (_start + format4.idDelta[si3]) % 0x10000;
+        } else {
+          var index = si3 + format4.idRangeOffset[si3] / 2 + (_start - format4.startCode[si3]) - graphIdArrayIndexOffset;
           var graphId = format4.glyphIdArray[index];
           if (graphId !== 0) {
-            codes[_start] = (graphId + format4.idDelta[_i3]) % 0x10000;
+            codes[_start] = (graphId + format4.idDelta[si3]) % 0x10000;
           } else {
             codes[_start] = 0;
           }
@@ -99,32 +164,26 @@ function readWindowsAllCodes(tables, ttf) {
       }
     }
     delete codes[65535];
-  }
-  // 读取format2表
-  // see https://github.com/fontforge/fontforge/blob/master/fontforge/parsettf.c
-  else if (format2) {
+  } else if (format2) {
     var subHeadKeys = format2.subHeadKeys;
     var subHeads = format2.subHeads;
     var glyphs = format2.glyphs;
     var numGlyphs = ttf.maxp.numGlyphs;
     var _index = 0;
-    for (var _i4 = 0; _i4 < 256; _i4++) {
-      // 单字节编码
-      if (subHeadKeys[_i4] === 0) {
-        if (_i4 >= format2.maxPos) {
+    for (var bi = 0; bi < 256; bi++) {
+      if (subHeadKeys[bi] === 0) {
+        if (bi >= format2.maxPos) {
           _index = 0;
-        } else if (_i4 < subHeads[0].firstCode || _i4 >= subHeads[0].firstCode + subHeads[0].entryCount || subHeads[0].idRangeOffset + (_i4 - subHeads[0].firstCode) >= glyphs.length) {
+        } else if (bi < subHeads[0].firstCode || bi >= subHeads[0].firstCode + subHeads[0].entryCount || subHeads[0].idRangeOffset + (bi - subHeads[0].firstCode) >= glyphs.length) {
           _index = 0;
-        } else if ((_index = glyphs[subHeads[0].idRangeOffset + (_i4 - subHeads[0].firstCode)]) !== 0) {
+        } else if ((_index = glyphs[subHeads[0].idRangeOffset + (bi - subHeads[0].firstCode)]) !== 0) {
           _index = _index + subHeads[0].idDelta;
         }
-
-        // 单字节解码
         if (_index !== 0 && _index < numGlyphs) {
-          codes[_i4] = _index;
+          codes[bi] = _index;
         }
       } else {
-        var k = subHeadKeys[_i4];
+        var k = subHeadKeys[bi];
         for (var j = 0, entryCount = subHeads[k].entryCount; j < entryCount; j++) {
           if (subHeads[k].idRangeOffset + j >= glyphs.length) {
             _index = 0;
@@ -132,7 +191,7 @@ function readWindowsAllCodes(tables, ttf) {
             _index = _index + subHeads[k].idDelta;
           }
           if (_index !== 0 && _index < numGlyphs) {
-            var _unicode = (_i4 << 8 | j + subHeads[k].firstCode) % 0xffff;
+            var _unicode = (bi << 8 | j + subHeads[k].firstCode) % 0xffff;
             codes[_unicode] = _index;
           }
         }

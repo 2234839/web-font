@@ -24,47 +24,43 @@ var _default = exports.default = _table.default.create('glyf', [], {
     var glyphs = [];
     reader.seek(startOffset);
 
-    // subset
+    /* subset */
     var subset = ttf.readOptions.subset;
     if (subset && subset.length > 0) {
-      var subsetMap = {
-        0: true // 设置.notdef
-      };
-      subsetMap[0] = true;
-      // subset map
+      /* 优化1: subset 转为 Set，O(1) 查找 */
+      var subsetSet = new Set(subset);
+      var subsetMap = { 0: true };
       var cmap = ttf.cmap;
 
-      // unicode to index
-      Object.keys(cmap).forEach(function (c) {
-        if (subset.indexOf(+c) > -1) {
-          var _i = cmap[c];
-          subsetMap[_i] = true;
+      /* 优化23: for...in 替代 Object.keys + forEach */
+      for (var c in cmap) {
+        if (subsetSet.has(+c)) {
+          subsetMap[cmap[c]] = true;
         }
-      });
+      }
       ttf.subsetMap = subsetMap;
       var parsedGlyfMap = {};
-      // 循环解析subset相关的glyf，包括复合字形相关的字形
-      var travelsParse = function travels(subsetMap) {
+
+      /* 优化43: for...in + for 循环替代 Object.keys + forEach */
+      var travelsParse = function travels(sMap) {
         var newSubsetMap = {};
-        Object.keys(subsetMap).forEach(function (i) {
-          var index = +i;
+        for (var idx in sMap) {
+          var index = +idx;
           parsedGlyfMap[index] = true;
-          // 当前的和下一个一样，或者最后一个无轮廓
           if (loca[index] === loca[index + 1]) {
-            glyphs[index] = {
-              contours: []
-            };
+            glyphs[index] = { contours: [] };
           } else {
             glyphs[index] = (0, _parse.default)(reader, ttf, startOffset + loca[index]);
           }
           if (glyphs[index].compound) {
-            glyphs[index].glyfs.forEach(function (g) {
-              if (!parsedGlyfMap[g.glyphIndex]) {
-                newSubsetMap[g.glyphIndex] = true;
+            var glyfs = glyphs[index].glyfs;
+            for (var gi = 0, gl = glyfs.length; gi < gl; gi++) {
+              if (!parsedGlyfMap[glyfs[gi].glyphIndex]) {
+                newSubsetMap[glyfs[gi].glyphIndex] = true;
               }
-            });
+            }
           }
-        });
+        }
         if (!(0, _lang.isEmptyObject)(newSubsetMap)) {
           travels(newSubsetMap);
         }
@@ -73,25 +69,18 @@ var _default = exports.default = _table.default.create('glyf', [], {
       return glyphs;
     }
 
-    // 解析字体轮廓, 前n-1个
-    var i;
-    var l;
-    for (i = 0, l = numGlyphs - 1; i < l; i++) {
-      // 当前的和下一个一样，或者最后一个无轮廓
+    /* 解析字体轮廓, 前n-1个 */
+    for (var i = 0, l = numGlyphs - 1; i < l; i++) {
       if (loca[i] === loca[i + 1]) {
-        glyphs[i] = {
-          contours: []
-        };
+        glyphs[i] = { contours: [] };
       } else {
         glyphs[i] = (0, _parse.default)(reader, ttf, startOffset + loca[i]);
       }
     }
 
-    // 最后一个轮廓
+    /* 最后一个轮廓 */
     if (ttf.tables.glyf.length - loca[i] < 5) {
-      glyphs[i] = {
-        contours: []
-      };
+      glyphs[i] = { contours: [] };
     } else {
       glyphs[i] = (0, _parse.default)(reader, ttf, startOffset + loca[i]);
     }
