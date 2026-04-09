@@ -320,6 +320,16 @@ function optimizettf(ttf) {
         if (glyf._flatContours) {
           ceilReduceAndSizeFlat(glyf);
         } else {
+          /* 对象 contours 格式也需要收集 maxPoints/maxContours */
+          var numC = glyf.contours.length;
+          if (numC > 0) {
+            if (numC > m_maxContours) m_maxContours = numC;
+            var totalPts = 0;
+            for (var ci = 0; ci < numC; ci++) {
+              totalPts += glyf.contours[ci].length;
+            }
+            if (totalPts > m_maxPoints) m_maxPoints = totalPts;
+          }
           glyf.contours.forEach(function (contour) {
             (0, _pathCeil.default)(contour);
           });

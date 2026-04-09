@@ -21,50 +21,48 @@ function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { de
 /**
  * 将 CFF contour 转换为标准 [onCurve, offCurve, offCurve, onCurve, ...] 序列
  * 处理隐含端点和连续 offCurve 点的情况
+ * 优化：原地操作 otfContour，减少中间数组分配
  */
 function normalizeContour(otfContour) {
-  if (!otfContour.length) return [];
+  var len = otfContour.length;
+  if (len < 2) return otfContour;
 
-  var points = [];
-  for (var i = 0; i < otfContour.length; i++) {
-    var p = otfContour[i];
-    points.push({ x: p.x, y: p.y, onCurve: !!p.onCurve });
+  /** 确保 onCurve 标志规范化 */
+  for (var i = 0; i < len; i++) {
+    otfContour[i].onCurve = !!otfContour[i].onCurve;
   }
 
-  if (points.length < 2) return points;
-
   /** 如果第一个点不是 onCurve，需要回绕处理 */
-  if (!points[0].onCurve) {
-    var last = points[points.length - 1];
+  if (!otfContour[0].onCurve) {
+    var last = otfContour[len - 1];
     if (last.onCurve) {
-      /** 隐含端点 = 最后一个 onCurve 点（回绕起点） */
-      points.unshift({ x: last.x, y: last.y, onCurve: true });
+      otfContour.unshift({ x: last.x, y: last.y, onCurve: true });
     } else {
-      /** 首尾都是 offCurve，隐含端点 = 首尾中点 */
-      points.unshift({
-        x: (points[0].x + last.x) * 0.5,
-        y: (points[0].y + last.y) * 0.5,
+      otfContour.unshift({
+        x: (otfContour[0].x + last.x) * 0.5,
+        y: (otfContour[0].y + last.y) * 0.5,
         onCurve: true
       });
     }
+    len = otfContour.length;
   }
 
   /** 处理连续的 offCurve 点：在它们之间插入隐含端点 */
-  var normalized = [];
-  for (var i = 0; i < points.length; i++) {
-    var p = points[i];
-    normalized.push(p);
-    if (!p.onCurve && i + 1 < points.length && !points[i + 1].onCurve) {
-      /** 两个连续 offCurve，隐含端点 = 中点 */
-      normalized.push({
-        x: (p.x + points[i + 1].x) * 0.5,
-        y: (p.y + points[i + 1].y) * 0.5,
+  for (var i = 0; i < len; i++) {
+    var p = otfContour[i];
+    if (!p.onCurve && i + 1 < len && !otfContour[i + 1].onCurve) {
+      var next = otfContour[i + 1];
+      otfContour.splice(i + 1, 0, {
+        x: (p.x + next.x) * 0.5,
+        y: (p.y + next.y) * 0.5,
         onCurve: true
       });
+      len++;
+      i++;
     }
   }
 
-  return normalized;
+  return otfContour;
 }
 
 /**

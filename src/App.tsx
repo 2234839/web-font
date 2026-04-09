@@ -133,9 +133,10 @@ function App() {
     const font = selectedFont();
     const ot = outType();
     if (!font) return "";
+    const formatStr = ot === "woff2" ? "woff2" : "truetype";
     return `@font-face {
   font-family: "CustomFont";
-  src: url("${location.origin}/api?font=${font}&text=${encodeURIComponent(text())}&outType=${ot}") format("${ot}");
+  src: url("${location.origin}/api?font=${font}&text=${encodeURIComponent(text())}&outType=${ot}") format("${formatStr}");
 }
 .custom-font {
   color: red;

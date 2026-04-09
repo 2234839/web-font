@@ -194,10 +194,75 @@ for (const { label, text } of testCases) {
   console.log(`  [woff2] ${label}: avg=${woff2Avg.toFixed(1)}ms  min=${woff2Min.toFixed(1)}ms  max=${woff2Max.toFixed(1)}ms  输出=${lastWoff2Size.toLocaleString()} bytes  压缩率=${compressionRatio}%`);
 }
 
+/** --- OTF 测试（直接 OTF 子集化，SSIM 对比原始 OTF 渲染 vs 子集 TTF 渲染） --- */
+const OTF_FONT_PATH = "font/temp/SourceHanSans-Regular.otf";
+let otfTestResults: string[] = [];
+try {
+  const otfRaw = await readFile(OTF_FONT_PATH);
+  const otfBuffer = new Uint8Array(otfRaw).buffer;
+
+  /** 注册原始 OTF 字体作为渲染基准 */
+  const OTF_FONT_NAME = `OTF_Bench_${Date.now()}`;
+  FontLibrary.use(OTF_FONT_NAME, OTF_FONT_PATH);
+
+  const otfTestCases = [
+    { label: "otf-8个汉字", text: "天地玄黄宇宙洪荒" },
+    { label: "otf-拉丁+数字", text: "Hello World 123" },
+  ];
+
+  for (const { label, text } of otfTestCases) {
+    const subset = [...text].map((c) => c.codePointAt(0)!);
+    const otfTimes: number[] = [];
+    let lastOtfTtfSize = 0;
+    let lastOtfTtfBuffer: ArrayBuffer | null = null;
+
+    for (let i = 0; i < ROUNDS; i++) {
+      const t0 = performance.now();
+      const font = Font.create(otfBuffer, { type: "otf", subset });
+      const optimized = font.optimize().sort();
+      const result = optimized.write({ type: "ttf" });
+      const t1 = performance.now();
+      otfTimes.push(t1 - t0);
+      lastOtfTtfSize = typeof result === "string" ? result.length : result.byteLength;
+      if (i === 0) {
+        lastOtfTtfBuffer = result instanceof ArrayBuffer ? result : new Uint8Array(result as any).buffer;
+      }
+    }
+
+    const otfAvg = otfTimes.reduce((a, b) => a + b, 0) / otfTimes.length;
+    const otfMin = Math.min(...otfTimes);
+    const otfMax = Math.max(...otfTimes);
+
+    /** OTF SSIM：对比原始 OTF 渲染 vs 子集 TTF 渲染 */
+    let otfSsim = 0;
+    if (lastOtfTtfBuffer) {
+      subsetFontCounter++;
+      const familyName = await registerSubsetFont(lastOtfTtfBuffer, subsetFontCounter);
+
+      const safeLabel = label.replace(/[^a-zA-Z0-9\u4e00-\u9fff]/g, "_");
+      await renderTextToPng(OTF_FONT_NAME, text, 48, `${BENCHMARK_DIR}/${safeLabel}_otf_full.png`);
+      await renderTextToPng(familyName, text, 48, `${BENCHMARK_DIR}/${safeLabel}_otf_subset.png`);
+
+      const fullPixels = renderText(OTF_FONT_NAME, text, 48);
+      const subsetPixels = renderText(familyName, text, 48);
+      otfSsim = calculateSSIM(fullPixels, subsetPixels);
+    }
+
+    otfTestResults.push(`  [otf] ${label}: avg=${otfAvg.toFixed(1)}ms  min=${otfMin.toFixed(1)}ms  max=${otfMax.toFixed(1)}ms  输出=${lastOtfTtfSize.toLocaleString()} bytes  ssim=${otfSsim.toFixed(4)}`);
+  }
+} catch {
+  otfTestResults.push("  [otf] 跳过（未找到 OTF 测试字体 font/temp/SourceHanSans-Regular.otf）");
+}
+
 /** 保存结果到 JSON */
 const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
 const resultFile = `${BENCHMARK_DIR}/benchmark_${timestamp}.json`;
 await writeFile(resultFile, JSON.stringify({ timestamp: new Date().toISOString(), rounds: ROUNDS, results }, null, 2));
 console.log(`\n结果已保存到 ${resultFile}`);
 console.log(`渲染对比图片已保存到 ${BENCHMARK_DIR}/ 目录`);
+
+if (otfTestResults.length) {
+  console.log("\n--- OTF→TTF 子集化 ---");
+  for (const line of otfTestResults) console.log(line);
+}
 console.log("");

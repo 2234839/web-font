@@ -490,11 +490,10 @@ function parseCFFCharstring(code, font, index) {
   }
   parse(code);
   var glyf = {
-    // 移除重复的起点和终点
     contours: contours.map(function (contour) {
       var last = contour.length - 1;
-      if (contour[0].x === contour[last].x && contour[0].y === contour[last].y) {
-        contour.splice(last, 1);
+      if (last > 0 && contour[0].x === contour[last].x && contour[0].y === contour[last].y) {
+        contour.length = last;
       }
       return contour;
     }),

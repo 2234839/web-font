@@ -11,7 +11,7 @@ exports.default = bezierCubic2Q2;
  * 改进：递归分割三次贝塞尔直到可精确近似，提高 SSIM
  */
 
-var MAX_DEPTH = 5;
+var MAX_DEPTH = 4;
 
 function isFlatEnough(p1x, p1y, c1x, c1y, c2x, c2y, p2x, p2y) {
   var ux = 3 * c1x - 2 * p1x - p2x;
