@@ -17,49 +17,49 @@ function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { de
 var _default = exports.default = _table.default.create('name', [], {
   read: function read(reader) {
     var offset = this.offset;
-    reader.seek(offset);
+    /* 直接 view 批量读取 */
+    var view = reader.view;
+    var vOffset = view.byteOffset + offset;
     var nameTbl = {};
-    nameTbl.format = reader.readUint16();
-    nameTbl.count = reader.readUint16();
-    nameTbl.stringOffset = reader.readUint16();
-    var nameRecordTbl = [];
+    nameTbl.format = view.getUint16(vOffset, false); vOffset += 2;
+    nameTbl.count = view.getUint16(vOffset, false); vOffset += 2;
+    nameTbl.stringOffset = view.getUint16(vOffset, false); vOffset += 2;
     var count = nameTbl.count;
-    var i;
-    var nameRecord;
-    for (i = 0; i < count; ++i) {
-      nameRecord = {};
-      nameRecord.platform = reader.readUint16();
-      nameRecord.encoding = reader.readUint16();
-      nameRecord.language = reader.readUint16();
-      nameRecord.nameId = reader.readUint16();
-      nameRecord.length = reader.readUint16();
-      nameRecord.offset = reader.readUint16();
-      nameRecordTbl.push(nameRecord);
+    var nameRecordTbl = new Array(count);
+    for (var i = 0; i < count; ++i) {
+      nameRecordTbl[i] = {
+        platform: view.getUint16(vOffset, false),
+        encoding: view.getUint16(vOffset + 2, false),
+        language: view.getUint16(vOffset + 4, false),
+        nameId: view.getUint16(vOffset + 6, false),
+        length: view.getUint16(vOffset + 8, false),
+        offset: view.getUint16(vOffset + 10, false)
+      };
+      vOffset += 12;
     }
-    offset += nameTbl.stringOffset;
+    reader.offset = vOffset - view.byteOffset;
 
-    // 读取字符名字
-    for (i = 0; i < count; ++i) {
-      nameRecord = nameRecordTbl[i];
-      nameRecord.name = reader.readBytes(offset + nameRecord.offset, nameRecord.length);
+    var baseOffset = offset + nameTbl.stringOffset;
+    for (var j = 0; j < count; ++j) {
+      nameRecordTbl[j].name = reader.readBytes(baseOffset + nameRecordTbl[j].offset, nameRecordTbl[j].length);
     }
     var names = {};
 
-    // mac 下的english name
     var platform = _platform.default.Macintosh;
     var encoding = _encoding.mac.Default;
     var language = 0;
 
-    // 如果有windows 下的 english，则用windows下的 name
-    if (nameRecordTbl.some(function (record) {
-      return record.platform === _platform.default.Microsoft && record.encoding === _encoding.win.UCS2 && record.language === 1033;
-    })) {
-      platform = _platform.default.Microsoft;
-      encoding = _encoding.win.UCS2;
-      language = 1033;
+    /* 检查是否有 windows english name */
+    for (var k = 0; k < count; k++) {
+      if (nameRecordTbl[k].platform === _platform.default.Microsoft && nameRecordTbl[k].encoding === _encoding.win.UCS2 && nameRecordTbl[k].language === 1033) {
+        platform = _platform.default.Microsoft;
+        encoding = _encoding.win.UCS2;
+        language = 1033;
+        break;
+      }
     }
-    for (i = 0; i < count; ++i) {
-      nameRecord = nameRecordTbl[i];
+    for (var m = 0; m < count; ++m) {
+      var nameRecord = nameRecordTbl[m];
       if (nameRecord.platform === platform && nameRecord.encoding === encoding && nameRecord.language === language && _nameId.default[nameRecord.nameId]) {
         names[_nameId.default[nameRecord.nameId]] = language === 0 ? _string.default.getUTF8String(nameRecord.name) : _string.default.getUCS2String(nameRecord.name);
       }
@@ -68,26 +68,29 @@ var _default = exports.default = _table.default.create('name', [], {
   },
   write: function write(writer, ttf) {
     var nameRecordTbl = ttf.support.name;
-    writer.writeUint16(0); // format
-    writer.writeUint16(nameRecordTbl.length); // count
-    writer.writeUint16(6 + nameRecordTbl.length * 12); // string offset
+    /* view 批量写入 */
+    var pos = writer.offset;
+    var view = writer.view;
+    view.setUint16(pos, 0, false); pos += 2;
+    view.setUint16(pos, nameRecordTbl.length, false); pos += 2;
+    view.setUint16(pos, 6 + nameRecordTbl.length * 12, false); pos += 2;
 
-    // write name tbl header
     var offset = 0;
-    nameRecordTbl.forEach(function (nameRecord) {
-      writer.writeUint16(nameRecord.platform);
-      writer.writeUint16(nameRecord.encoding);
-      writer.writeUint16(nameRecord.language);
-      writer.writeUint16(nameRecord.nameId);
-      writer.writeUint16(nameRecord.name.length);
-      writer.writeUint16(offset); // offset
-      offset += nameRecord.name.length;
-    });
+    for (var i = 0, l = nameRecordTbl.length; i < l; i++) {
+      var r = nameRecordTbl[i];
+      view.setUint16(pos, r.platform, false); pos += 2;
+      view.setUint16(pos, r.encoding, false); pos += 2;
+      view.setUint16(pos, r.language, false); pos += 2;
+      view.setUint16(pos, r.nameId, false); pos += 2;
+      view.setUint16(pos, r.name.length, false); pos += 2;
+      view.setUint16(pos, offset, false); pos += 2;
+      offset += r.name.length;
+    }
 
-    // write name tbl strings
-    nameRecordTbl.forEach(function (nameRecord) {
-      writer.writeBytes(nameRecord.name);
-    });
+    for (var j = 0, jl = nameRecordTbl.length; j < jl; j++) {
+      writer.writeBytes(nameRecordTbl[j].name);
+    }
+    writer.offset = pos;
     return writer;
   },
   size: function size(ttf) {
