@@ -20,11 +20,14 @@ function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { de
 function reduceGlyf(glyf) {
   var contours = glyf.contours;
   var contour;
+  /* 优化66: 扁平格式下 contour.length 是点的3倍 */
+  var isFlat = glyf._flatContours;
+  var minLen = isFlat ? 6 : 2;
   for (var j = contours.length - 1; j >= 0; j--) {
     contour = (0, _reducePath.default)(contours[j]);
 
-    // 空轮廓
-    if (contour.length <= 2) {
+    /* 空轮廓：扁平格式 <= 6 元素（2个点），对象格式 <= 2 个点 */
+    if (contour.length <= minLen) {
       contours.splice(j, 1);
       continue;
     }

@@ -14,6 +14,20 @@ function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { de
  */
 
 /**
+ * 优化15+66: 扁平格式单次遍历 pathTransform + pathCeil
+ * 先仿射变换坐标，再四舍五入，一次循环完成
+ */
+function transformAndCeilFlat(contour, a, b, c, d, e, f) {
+  for (var i = 0, l = contour.length; i < l; i += 3) {
+    var x = contour[i];
+    var y = contour[i + 1];
+    contour[i] = Math.round(x * a + y * c + e);
+    contour[i + 1] = Math.round(x * b + y * d + f);
+  }
+  return contour;
+}
+
+/**
  * 转换复合字形轮廓，结果保存在contoursList中，并返回当前glyf的轮廓
  *
  * @param  {Object} glyf glyf对象
@@ -40,12 +54,22 @@ function transformGlyfContours(glyf, ttf) {
       transformGlyfContours(glyph, ttf, contoursList, g.glyphIndex);
     }
 
-    // 这里需要进行matrix变换，需要复制一份
-    var contours = (0, _lang.clone)(glyph.compound ? contoursList[g.glyphIndex] || [] : glyph.contours);
+    var sourceContours = glyph.compound ? contoursList[g.glyphIndex] || [] : glyph.contours;
     var transform = g.transform;
-    for (var i = 0, l = contours.length; i < l; i++) {
-      (0, _pathTransform.default)(contours[i], transform.a, transform.b, transform.c, transform.d, transform.e, transform.f);
-      compoundContours.push((0, _pathCeil.default)(contours[i]));
+
+    if (sourceContours.length && typeof sourceContours[0][0] === 'number') {
+      /* 优化14+15+66: 扁平格式 - 浅拷贝 + 单次遍历 transform+ceil */
+      for (var i = 0, l = sourceContours.length; i < l; i++) {
+        var contour = sourceContours[i].slice();
+        compoundContours.push(transformAndCeilFlat(contour, transform.a, transform.b, transform.c, transform.d, transform.e, transform.f));
+      }
+    } else {
+      /* 传统对象格式 - 深拷贝 + 分别调用 transform+ceil */
+      var contours = (0, _lang.clone)(sourceContours);
+      for (var i = 0, l = contours.length; i < l; i++) {
+        (0, _pathTransform.default)(contours[i], transform.a, transform.b, transform.c, transform.d, transform.e, transform.f);
+        compoundContours.push((0, _pathCeil.default)(contours[i]));
+      }
     }
   });
 

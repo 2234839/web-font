@@ -90,25 +90,26 @@ function parseSimpleGlyf(reader, glyf) {
 
   reader.offset = vOffset - view.byteOffset;
 
-  /* 优化9: 一次遍历构建 contours，消除中间数组 */
+  /* 优化66: 扁平 contours [x, y, onCurve, x, y, onCurve, ...]，消除大量小对象 */
   if (numberOfCoordinates > 0) {
     var endPtsOfContours = glyf.endPtsOfContours;
     var contours = new Array(endPtsOfContours.length);
     var start = 0;
     for (var ci = 0, cl = endPtsOfContours.length; ci < cl; ci++) {
       var end = endPtsOfContours[ci] + 1;
-      var contour = new Array(end - start);
+      var numPoints = end - start;
+      var contour = new Array(numPoints * 3);
+      var ki = 0;
       for (var pi = start; pi < end; pi++) {
-        contour[pi - start] = {
-          x: xArr[pi],
-          y: yArr[pi],
-          onCurve: !!(flags[pi] & ONCURVE)
-        };
+        contour[ki++] = xArr[pi];
+        contour[ki++] = yArr[pi];
+        contour[ki++] = !!(flags[pi] & ONCURVE);
       }
       contours[ci] = contour;
       start = end;
     }
     glyf.contours = contours;
+    glyf._flatContours = true;
   }
   return glyf;
 }

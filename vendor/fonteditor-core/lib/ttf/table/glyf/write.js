@@ -96,11 +96,13 @@ function write(writer, ttf) {
         }
       }
     } else {
-      /* 优化32: endPtsOfContours 直接 view 写入 */
+      /* 优化32+66: endPtsOfContours 直接 view 写入，支持扁平格式 */
       var contours = glyf.contours || [];
       var endPts = -1;
+      /* 优化66: 扁平格式 contour.length 是点的3倍 */
+      var isFlat = glyf._flatContours;
       for (var ci = 0, cl = contours.length; ci < cl; ci++) {
-        endPts += contours[ci].length;
+        endPts += isFlat ? contours[ci].length / 3 : contours[ci].length;
         view.setUint16(pos, endPts, false);
         pos += 2;
       }

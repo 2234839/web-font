@@ -6,11 +6,40 @@ Object.defineProperty(exports, "__esModule", {
 exports.default = optimizettf;
 var _reduceGlyf = _interopRequireDefault(require("./reduceGlyf"));
 var _pathCeil = _interopRequireDefault(require("../../graphics/pathCeil"));
+var _reducePathFlat = _interopRequireDefault(require("../../graphics/reducePathFlat"));
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
 /**
  * @file 对ttf对象进行优化，查找错误，去除冗余点
  * @author mengke01(kekee000@gmail.com)
  */
+
+/**
+ * 优化17+66: 扁平格式单次遍历 pathCeil + reducePath
+ * 先四舍五入坐标，再去除冗余点，一次循环完成
+ */
+function ceilAndReduceFlat(glyf) {
+  var contours = glyf.contours;
+  for (var j = contours.length - 1; j >= 0; j--) {
+    var contour = contours[j];
+    /* 先原地四舍五入 */
+    for (var i = 0, l = contour.length; i < l; i += 3) {
+      contour[i] = Math.round(contour[i]);
+      contour[i + 1] = Math.round(contour[i + 1]);
+    }
+    /* 再去除冗余点 */
+    contour = (0, _reducePathFlat.default)(contour);
+    /* 空轮廓：扁平格式 <= 6 元素（2个点） */
+    if (contour.length <= 6) {
+      contours.splice(j, 1);
+    } else {
+      contours[j] = contour;
+    }
+  }
+  if (0 === contours.length) {
+    delete glyf.contours;
+  }
+  return glyf;
+}
 
 /**
  * 对ttf对象进行优化
@@ -37,12 +66,17 @@ function optimizettf(ttf) {
       });
     }
     if (!glyf.compound && glyf.contours) {
-      // 整数化
-      glyf.contours.forEach(function (contour) {
-        (0, _pathCeil.default)(contour);
-      });
-      // 缩减glyf
-      (0, _reduceGlyf.default)(glyf);
+      if (glyf._flatContours) {
+        /* 优化17+66: 扁平格式单次遍历 pathCeil + reduceGlyf */
+        ceilAndReduceFlat(glyf);
+      } else {
+        /* 整数化 */
+        glyf.contours.forEach(function (contour) {
+          (0, _pathCeil.default)(contour);
+        });
+        /* 缩减glyf */
+        (0, _reduceGlyf.default)(glyf);
+      }
     }
 
     // 整数化

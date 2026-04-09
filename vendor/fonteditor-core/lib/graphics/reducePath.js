@@ -4,6 +4,8 @@ Object.defineProperty(exports, "__esModule", {
   value: true
 });
 exports.default = reducePath;
+var _reducePathFlat = _interopRequireDefault(require("./reducePathFlat"));
+function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
 /**
  * @file 缩减path大小，去除冗余节点
  * @author mengke01(kekee000@gmail.com)
@@ -38,12 +40,16 @@ function redundant(prev, p, next) {
 /**
  * 缩减glyf，去除冗余节点
  *
- * @param {Array} contour 路径对象
+ * @param {Array} contour 路径对象（对象格式或扁平格式 [x, y, onCurve, ...]）
  * @return {Array} 路径对象
  */
 function reducePath(contour) {
   if (!contour.length) {
     return contour;
+  }
+  /* 优化66: 检测扁平格式 - 第一个元素是 number 则为扁平格式 */
+  if (typeof contour[0] === 'number') {
+    return (0, _reducePathFlat.default)(contour);
   }
   var prev;
   var next;

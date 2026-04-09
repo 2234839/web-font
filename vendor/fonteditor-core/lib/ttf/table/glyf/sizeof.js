@@ -12,7 +12,7 @@ function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { de
  */
 
 /**
- * 优化33+38+39+40+48+49+57: getFlagsAndSize 单遍扫描替代两遍扫描
+ * 优化33+38+39+40+48+49+57+66: getFlagsAndSize 单遍扫描替代两遍扫描，支持扁平 contours
  */
 function getFlagsAndSize(glyf, glyfSupport, hinting) {
   if (!glyf.contours || glyf.contours.length === 0) {
@@ -36,70 +36,128 @@ function getFlagsAndSize(glyf, glyfSupport, hinting) {
   var prevFlag = -1;
   var repeatPoint = -1;
 
+  /* 优化66: 检测扁平格式 */
+  var isFlat = glyf._flatContours;
+
   /* 单次遍历: delta坐标计算 + flag压缩 + 坐标编码 + 大小累加 */
   var encodedCoordSize = 0;
 
   for (var j = 0, cl = contours.length; j < cl; j++) {
     var contour = contours[j];
-    for (var i = 0, l = contour.length; i < l; i++) {
-      var point = contour[i];
-      var px = point.x;
-      var py = point.y;
-      var dx, dy;
-      var flag = point.onCurve ? ONCURVE : 0;
+    if (isFlat) {
+      /* 优化66: 扁平格式，每3个元素为一个点 [x, y, onCurve, ...] */
+      for (var i = 0, l = contour.length; i < l; i += 3) {
+        var px = contour[i];
+        var py = contour[i + 1];
+        var onCurve = contour[i + 2];
+        var dx, dy;
+        var flag = onCurve ? ONCURVE : 0;
 
-      if (isFirst) {
-        dx = px;
-        dy = py;
-        isFirst = false;
-      } else {
-        dx = px - prevX;
-        dy = py - prevY;
-      }
-      prevX = px;
-      prevY = py;
-
-      var xEncoded = 0;
-      var yEncoded = 0;
-
-      if (dx === 0) {
-        flag += XSAME;
-      } else if (-0xFF <= dx && dx <= 0xFF) {
-        flag += XSHORT;
-        if (dx > 0) flag += XSAME;
-        xEncoded = Math.abs(dx);
-        xCoordC.push(xEncoded);
-        encodedCoordSize += 1;
-      } else {
-        xCoordC.push(dx);
-        encodedCoordSize += 2;
-      }
-
-      if (dy === 0) {
-        flag += YSAME;
-      } else if (-0xFF <= dy && dy <= 0xFF) {
-        flag += YSHORT;
-        if (dy > 0) flag += YSAME;
-        yEncoded = Math.abs(dy);
-        yCoordC.push(yEncoded);
-        encodedCoordSize += 1;
-      } else {
-        yCoordC.push(dy);
-        encodedCoordSize += 2;
-      }
-
-      /* REPEAT 压缩 */
-      if (flag === prevFlag && !isFirst) {
-        if (repeatPoint === -1) {
-          repeatPoint = flagsC.length - 1;
-          flagsC[repeatPoint] |= REPEAT;
-          flagsC.push(1);
+        if (isFirst) {
+          dx = px;
+          dy = py;
+          isFirst = false;
         } else {
-          ++flagsC[repeatPoint + 1];
+          dx = px - prevX;
+          dy = py - prevY;
         }
-      } else {
-        repeatPoint = -1;
-        flagsC.push(prevFlag = flag);
+        prevX = px;
+        prevY = py;
+
+        if (dx === 0) {
+          flag += XSAME;
+        } else if (-0xFF <= dx && dx <= 0xFF) {
+          flag += XSHORT;
+          if (dx > 0) flag += XSAME;
+          xCoordC.push(Math.abs(dx));
+          encodedCoordSize += 1;
+        } else {
+          xCoordC.push(dx);
+          encodedCoordSize += 2;
+        }
+
+        if (dy === 0) {
+          flag += YSAME;
+        } else if (-0xFF <= dy && dy <= 0xFF) {
+          flag += YSHORT;
+          if (dy > 0) flag += YSAME;
+          yCoordC.push(Math.abs(dy));
+          encodedCoordSize += 1;
+        } else {
+          yCoordC.push(dy);
+          encodedCoordSize += 2;
+        }
+
+        /* REPEAT 压缩 */
+        if (flag === prevFlag && !isFirst) {
+          if (repeatPoint === -1) {
+            repeatPoint = flagsC.length - 1;
+            flagsC[repeatPoint] |= REPEAT;
+            flagsC.push(1);
+          } else {
+            ++flagsC[repeatPoint + 1];
+          }
+        } else {
+          repeatPoint = -1;
+          flagsC.push(prevFlag = flag);
+        }
+      }
+    } else {
+      for (var i = 0, l = contour.length; i < l; i++) {
+        var point = contour[i];
+        var px = point.x;
+        var py = point.y;
+        var dx, dy;
+        var flag = point.onCurve ? ONCURVE : 0;
+
+        if (isFirst) {
+          dx = px;
+          dy = py;
+          isFirst = false;
+        } else {
+          dx = px - prevX;
+          dy = py - prevY;
+        }
+        prevX = px;
+        prevY = py;
+
+        if (dx === 0) {
+          flag += XSAME;
+        } else if (-0xFF <= dx && dx <= 0xFF) {
+          flag += XSHORT;
+          if (dx > 0) flag += XSAME;
+          xCoordC.push(Math.abs(dx));
+          encodedCoordSize += 1;
+        } else {
+          xCoordC.push(dx);
+          encodedCoordSize += 2;
+        }
+
+        if (dy === 0) {
+          flag += YSAME;
+        } else if (-0xFF <= dy && dy <= 0xFF) {
+          flag += YSHORT;
+          if (dy > 0) flag += YSAME;
+          yCoordC.push(Math.abs(dy));
+          encodedCoordSize += 1;
+        } else {
+          yCoordC.push(dy);
+          encodedCoordSize += 2;
+        }
+
+        /* REPEAT 压缩 */
+        if (flag === prevFlag && !isFirst) {
+          if (repeatPoint === -1) {
+            repeatPoint = flagsC.length - 1;
+            flagsC[repeatPoint] |= REPEAT;
+            flagsC.push(1);
+          } else {
+            ++flagsC[repeatPoint + 1];
+          }
+        } else {
+          repeatPoint = -1;
+          flagsC.push(prevFlag = flag);
+        }
       }
     }
   }
