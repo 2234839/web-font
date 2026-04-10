@@ -14,31 +14,6 @@ function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { de
  */
 
 /**
- * 直接遍历 contours 计算包围盒，避免合并数组
- */
-function computeContoursBox(contours) {
-  var left, right, top, bottom;
-  var found = false;
-  for (var ci = 0, cl = contours.length; ci < cl; ci++) {
-    var contour = contours[ci];
-    for (var pi = 0, pl = contour.length; pi < pl; pi++) {
-      var p = contour[pi];
-      if (!found) {
-        left = right = p.x;
-        top = bottom = p.y;
-        found = true;
-      } else {
-        if (p.x < left) left = p.x;
-        else if (p.x > right) right = p.x;
-        if (p.y < top) top = p.y;
-        else if (p.y > bottom) bottom = p.y;
-      }
-    }
-  }
-  return found ? { x: left, y: top, width: right - left, height: bottom - top } : null;
-}
-
-/**
  * otf格式转ttf格式对象
  *
  * @param  {ArrayBuffer|otfObject} otfBuffer 原始数据或者解析后的otf数据
@@ -57,17 +32,17 @@ function otf2ttfobject(otfBuffer, options) {
     _error.default.raise(10111);
   }
 
-  // 转换otf轮廓
+  // 转换otf轮廓，同时获取包围盒
   var glyf = otfObject.glyf;
   for (var i = 0, l = glyf.length; i < l; i++) {
     var g = glyf[i];
-    g.contours = (0, _otfContours2ttfContours.default)(g.contours);
-    var box = computeContoursBox(g.contours);
-    if (box) {
-      g.xMin = box.x;
-      g.xMax = box.x + box.width;
-      g.yMin = box.y;
-      g.yMax = box.y + box.height;
+    var result = (0, _otfContours2ttfContours.default)(g.contours);
+    g.contours = result.contours;
+    if (result.xMin != null) {
+      g.xMin = result.xMin;
+      g.xMax = result.xMax;
+      g.yMin = result.yMin;
+      g.yMax = result.yMax;
     } else {
       g.xMin = 0;
       g.xMax = 0;

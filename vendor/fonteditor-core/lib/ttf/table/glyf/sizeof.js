@@ -240,7 +240,6 @@ function sizeof(ttf) {
     glyfSupportArr[i] = glyfSupport;
     tableSize += size;
   }
-  glyfSupportArr.tableSize = tableSize;
   ttf.head.indexToLocFormat = tableSize > 65536 ? 1 : 0;
   return tableSize;
 }

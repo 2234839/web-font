@@ -312,8 +312,10 @@ var TTF = exports.default = /*#__PURE__*/function () {
     value: function removeGlyf(indexList) {
       var glyf = this.ttf.glyf;
       var removed = [];
+      /* 优化147: 用 Set 替代 indexOf，O(N+M) 替代 O(N*M) */
+      var indexSet = new Set(indexList);
       for (var i = glyf.length - 1; i >= 0; i--) {
-        if (indexList.indexOf(i) >= 0) {
+        if (indexSet.has(i)) {
           removed.push(glyf[i]);
           glyf.splice(i, 1);
         }
@@ -664,14 +666,16 @@ var TTF = exports.default = /*#__PURE__*/function () {
           return -2;
         }
         var notdef = glyf.shift();
-        /* 优化113: unicode 已在 optimizettf 中排序，最小值始终是 unicode[0] */
-        glyf.sort(function (a, b) {
-          var aU = a.unicode;
-          var bU = b.unicode;
-          if (!aU || !aU.length) return bU && bU.length ? 1 : 0;
-          if (!bU || !bU.length) return -1;
-          return aU[0] - bU[0];
-        });
+        /* 优化113+146: unicode 已在 optimizettf 中排序，跳过冗余 sort() */
+        if (!this.ttf._unicodeSorted) {
+          glyf.sort(function (a, b) {
+            var aU = a.unicode;
+            var bU = b.unicode;
+            if (!aU || !aU.length) return bU && bU.length ? 1 : 0;
+            if (!bU || !bU.length) return -1;
+            return aU[0] - bU[0];
+          });
+        }
         glyf.unshift(notdef);
         return glyf;
       }

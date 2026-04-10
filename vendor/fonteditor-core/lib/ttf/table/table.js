@@ -29,7 +29,9 @@ function read(reader) {
     reader.seek(offset);
   }
   var me = this;
-  this.struct.forEach(function (item) {
+  var struct = this.struct;
+  for (var si = 0, sl = struct.length; si < sl; si++) {
+    var item = struct[si];
     var name = item[0];
     var type = item[1];
     var typeName = null;
@@ -61,7 +63,7 @@ function read(reader) {
       default:
         _error.default.raise(10003, name, type);
     }
-  });
+  }
   return this.valueOf();
 }
 
@@ -78,39 +80,26 @@ function write(writer, ttf) {
   if (!table) {
     _error.default.raise(10203, this.name);
   }
-  this.struct.forEach(function (item) {
+  var struct = this.struct;
+  /* 优化152: 直接分发到 writer 方法，消除 string 类型名中间层双重 switch */
+  for (var si = 0, sl = struct.length; si < sl; si++) {
+    var item = struct[si];
     var name = item[0];
-    var type = item[1];
-    var typeName = null;
-    switch (type) {
-      case _struct.default.Int8:
-      case _struct.default.Uint8:
-      case _struct.default.Int16:
-      case _struct.default.Uint16:
-      case _struct.default.Int32:
-      case _struct.default.Uint32:
-        typeName = _struct.default.names[type];
-        writer.write(typeName, table[name]);
-        break;
-      case _struct.default.Fixed:
-        writer.writeFixed(table[name]);
-        break;
-      case _struct.default.LongDateTime:
-        writer.writeLongDateTime(table[name]);
-        break;
-      case _struct.default.Bytes:
-        writer.writeBytes(table[name], item[2] || 0);
-        break;
-      case _struct.default.Char:
-        writer.writeChar(table[name]);
-        break;
-      case _struct.default.String:
-        writer.writeString(table[name], item[2] || 0);
-        break;
-      default:
-        _error.default.raise(10003, name, type);
+    switch (item[1]) {
+      case 1: writer.write('Int8', table[name]); break;
+      case 2: writer.write('Uint8', table[name]); break;
+      case 3: writer.write('Int16', table[name]); break;
+      case 4: writer.write('Uint16', table[name]); break;
+      case 5: writer.write('Int32', table[name]); break;
+      case 6: writer.write('Uint32', table[name]); break;
+      case 7: writer.writeFixed(table[name]); break;
+      case 12: writer.writeLongDateTime(table[name]); break;
+      case 13: writer.writeChar(table[name]); break;
+      case 14: writer.writeString(table[name], item[2] || 0); break;
+      case 15: writer.writeBytes(table[name], item[2] || 0); break;
+      default: _error.default.raise(10003, name, item[1]);
     }
-  });
+  }
   return writer;
 }
 
@@ -120,40 +109,18 @@ function write(writer, ttf) {
  * @param {string} name 表名
  * @return {number} 表大小
  */
+/* 优化152: 类型大小查找表，替代 switch 循环 */
+var TYPE_SIZES = [0, 1, 1, 2, 2, 4, 4, 4, 0, 0, 0, 2, 8, 1, 0, 0, 0, 0, 0, 0, 3];
+
 function size() {
   var sz = 0;
-  this.struct.forEach(function (item) {
-    var type = item[1];
-    switch (type) {
-      case _struct.default.Int8:
-      case _struct.default.Uint8:
-        sz += 1;
-        break;
-      case _struct.default.Int16:
-      case _struct.default.Uint16:
-        sz += 2;
-        break;
-      case _struct.default.Int32:
-      case _struct.default.Uint32:
-      case _struct.default.Fixed:
-        sz += 4;
-        break;
-      case _struct.default.LongDateTime:
-        sz += 8;
-        break;
-      case _struct.default.Bytes:
-        sz += item[2] || 0;
-        break;
-      case _struct.default.Char:
-        sz += 1;
-        break;
-      case _struct.default.String:
-        sz += item[2] || 0;
-        break;
-      default:
-        _error.default.raise(10003, name, type);
-    }
-  });
+  var struct = this.struct;
+  for (var si = 0, sl = struct.length; si < sl; si++) {
+    var item = struct[si];
+    var t = item[1];
+    /* Bytes/String 使用 item[2] 指定长度，其余查表 */
+    sz += (t === 15 || t === 14) ? (item[2] || 0) : TYPE_SIZES[t];
+  }
   return sz;
 }
 
@@ -165,9 +132,10 @@ function size() {
 function valueOf() {
   var val = {};
   var me = this;
-  this.struct.forEach(function (item) {
-    val[item[0]] = me[item[0]];
-  });
+  var struct = this.struct;
+  for (var si = 0, sl = struct.length; si < sl; si++) {
+    val[struct[si][0]] = me[struct[si][0]];
+  }
   return val;
 }
 var _default = exports.default = {

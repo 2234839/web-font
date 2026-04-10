@@ -6,7 +6,6 @@ Object.defineProperty(exports, "__esModule", {
 exports.default = optimizettf;
 exports.ceilReduceAndSizeFlat = ceilReduceAndSizeFlat;
 var _reduceGlyf = _interopRequireDefault(require("./reduceGlyf"));
-var _pathCeil = _interopRequireDefault(require("../../graphics/pathCeil"));
 var _glyFlag = _interopRequireDefault(require("../enum/glyFlag"));
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
 /**
@@ -134,12 +133,14 @@ function ceilReduceAndSizeFromTypedArrays(glyf, sharedXBuf, sharedYBuf) {
   delete glyf._yArr;
   delete glyf._flags;
   delete glyf.endPtsOfContours;
+
+  return { sharedXBuf: sharedXBuf, sharedYBuf: sharedYBuf };
 }
 
 /**
- * 优化84+98: 合并 ceil+reduce+flagsAndSize 为单次遍历，预编码 x/y 为 Uint8Array
+ * 优化84+98+149: 合并 ceil+reduce+flagsAndSize 为单次遍历，使用共享 buffer 池
  */
-function ceilReduceAndSizeFlat(glyf) {
+function ceilReduceAndSizeFlat(glyf, sharedXBuf, sharedYBuf) {
   var contours = glyf.contours;
   /* 优化91: 跳过 reducePathFlat */
   for (var j = contours.length - 1; j >= 0; j--) {
@@ -149,11 +150,11 @@ function ceilReduceAndSizeFlat(glyf) {
   }
   if (0 === contours.length) {
     delete glyf.contours;
-    return;
+    return { sharedXBuf: sharedXBuf, sharedYBuf: sharedYBuf };
   }
 
   if (glyf._precomputedGlyfSupport) {
-    return;
+    return { sharedXBuf: sharedXBuf, sharedYBuf: sharedYBuf };
   }
 
   var ONCURVE = _glyFlag.default.ONCURVE;
@@ -175,9 +176,10 @@ function ceilReduceAndSizeFlat(glyf) {
   var repeatPoint = -1;
   var encodedCoordSize = 0;
 
-  /* 优化98: 预编码 x/y 坐标 buffer */
-  var xCoordBuf = new Uint8Array(totalPoints * 2);
-  var yCoordBuf = new Uint8Array(totalPoints * 2);
+  /* 优化149: 复用共享 buffer，仅在 buffer 不够大时才分配新的 */
+  var neededSize = totalPoints * 2;
+  var xCoordBuf = sharedXBuf.length >= neededSize ? sharedXBuf : new Uint8Array(neededSize);
+  var yCoordBuf = sharedYBuf.length >= neededSize ? sharedYBuf : new Uint8Array(neededSize);
   var xbi = 0, ybi = 0;
 
   for (var j = 0, cl2 = contours.length; j < cl2; j++) {
@@ -245,8 +247,13 @@ function ceilReduceAndSizeFlat(glyf) {
   }
 
   flagsC.length = fi;
-  var xEncoded = xCoordBuf.buffer.slice(0, xbi);
-  var yEncoded = yCoordBuf.buffer.slice(0, ybi);
+  /* 优化149: 存储 Uint8Array 视图，与 ceilReduceAndSizeFromTypedArrays 一致 */
+  var xEncoded = new Uint8Array(xCoordBuf.buffer.slice(0, xbi));
+  var yEncoded = new Uint8Array(yCoordBuf.buffer.slice(0, ybi));
+
+  /* 更新共享 buffer 引用（如果分配了新的更大的 buffer） */
+  if (xCoordBuf !== sharedXBuf) sharedXBuf = xCoordBuf;
+  if (yCoordBuf !== sharedYBuf) sharedYBuf = yCoordBuf;
 
   glyf._precomputedGlyfSupport = {
     flags: flagsC,
@@ -254,6 +261,8 @@ function ceilReduceAndSizeFlat(glyf) {
     xEncoded: xEncoded,
     yEncoded: yEncoded
   };
+
+  return { sharedXBuf: sharedXBuf, sharedYBuf: sharedYBuf };
 }
 
 /**
@@ -273,15 +282,15 @@ function optimizettf(ttf) {
   var m_firstChar = 0x10FFFF, m_lastChar = -1;
   var m_maxPoints = 0, m_maxContours = 0;
 
-  /* 优化120: 合并 maxPoints 扫描到主循环 */
+  /* 优化120+150: 预扫描 _xArr 最大点数以一次性分配共享 buffer */
   var maxBufPoints = 0;
   for (var pi = 0, pl = glyfs.length; pi < pl; pi++) {
     if (glyfs[pi]._xArr && glyfs[pi]._xArr.length > maxBufPoints) {
       maxBufPoints = glyfs[pi]._xArr.length;
     }
   }
-  var sharedXBuf = new Uint8Array(maxBufPoints * 2);
-  var sharedYBuf = new Uint8Array(maxBufPoints * 2);
+  var sharedXBuf = new Uint8Array(maxBufPoints * 2 || 256);
+  var sharedYBuf = new Uint8Array(maxBufPoints * 2 || 256);
 
   for (var index = 0, gl = glyfs.length; index < gl; index++) {
     var glyf = glyfs[index];
@@ -308,9 +317,10 @@ function optimizettf(ttf) {
       }
     }
     if (!glyf.compound) {
-      /* 优化94+116: 优先从 TypedArray 构建 contour + precompute，使用共享 buffer */
+      /* 优化94+116+149+150: 优先从 TypedArray 构建 contour + precompute，使用共享 buffer 池 */
       if (glyf._xArr) {
-        ceilReduceAndSizeFromTypedArrays(glyf, sharedXBuf, sharedYBuf);
+        var bufResult = ceilReduceAndSizeFromTypedArrays(glyf, sharedXBuf, sharedYBuf);
+        if (bufResult) { sharedXBuf = bufResult.sharedXBuf; sharedYBuf = bufResult.sharedYBuf; }
         /* 优化120: 从 _numContours/_totalPoints 收集 metrics */
         if (glyf._numContours > 0) {
           if (glyf._numContours > m_maxContours) m_maxContours = glyf._numContours;
@@ -318,7 +328,8 @@ function optimizettf(ttf) {
         }
       } else if (glyf.contours) {
         if (glyf._flatContours) {
-          ceilReduceAndSizeFlat(glyf);
+          var flatResult = ceilReduceAndSizeFlat(glyf, sharedXBuf, sharedYBuf);
+          if (flatResult) { sharedXBuf = flatResult.sharedXBuf; sharedYBuf = flatResult.sharedYBuf; }
         } else {
           /* 对象 contours 格式也需要收集 maxPoints/maxContours */
           var numC = glyf.contours.length;
@@ -330,9 +341,7 @@ function optimizettf(ttf) {
             }
             if (totalPts > m_maxPoints) m_maxPoints = totalPts;
           }
-          glyf.contours.forEach(function (contour) {
-            (0, _pathCeil.default)(contour);
-          });
+          /* 优化153: pathCeil 已在 transformContour 中完成，无需重复调用 */
           (0, _reduceGlyf.default)(glyf);
         }
       }

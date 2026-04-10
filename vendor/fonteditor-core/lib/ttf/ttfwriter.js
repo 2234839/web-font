@@ -55,10 +55,9 @@ var TTFWriter = exports.default = /*#__PURE__*/function () {
       if (!ttf.head.modified) {
         ttf.head.modified = ttf.head.created;
       }
-      var checkUnicodeRepeat = {};
-
-      /* 优化112: optimizettf 已排序 unicode 并检查重复，跳过冗余工作 */
+      /* 优化112+145: optimizettf 已排序 unicode 并检查重复，跳过冗余工作；延迟分配 checkUnicodeRepeat */
       if (!ttf._unicodeSorted) {
+        var checkUnicodeRepeat = {};
         var glyfs = ttf.glyf;
         for (var index = 0, gl = glyfs.length; index < gl; index++) {
           var glyf = glyfs[index];
@@ -189,7 +188,8 @@ var TTFWriter = exports.default = /*#__PURE__*/function () {
       ttf.writeOptions.writeZeroContoursGlyfData = !!this.options.writeZeroContoursGlyfData;
       ttf.writeOptions.hinting = !!this.options.hinting;
       ttf.writeOptions.kerning = !!this.options.kerning;
-      ttf.writeOptions.tables = tables.sort();
+      /* 优化144: SUPPORT_TABLES 已有序，hint/kern 表名按字母序追加，无需 sort() */
+      ttf.writeOptions.tables = tables;
     }
   }, {
     key: "write",

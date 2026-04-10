@@ -102,7 +102,7 @@ var _default = exports.default = _table.default.create('name', [], {
     // 这里为了简化书写，仅支持英文编码字符，
     // 中文编码字符将被转化成url encode
     var size = 6;
-    Object.keys(names).forEach(function (name) {
+    for (var name in names) {
       var id = _nameId.default.names[name];
       var utf8Bytes = _string.default.toUTF8Bytes(names[name]);
       var usc2Bytes = _string.default.toUCS2Bytes(names[name]);
@@ -128,19 +128,14 @@ var _default = exports.default = _table.default.create('name', [], {
         // 子表大小
         size += 12 * 2 + utf8Bytes.length + usc2Bytes.length;
       }
-    });
+    }
     var namingOrder = ['platform', 'encoding', 'language', 'nameId'];
     nameRecordTbl = nameRecordTbl.sort(function (a, b) {
-      var l = 0;
-      namingOrder.some(function (name) {
-        var o = a[name] - b[name];
-        if (o) {
-          l = o;
-          return true;
-        }
-        return false;
-      });
-      return l;
+      for (var ni = 0; ni < 4; ni++) {
+        var o = a[namingOrder[ni]] - b[namingOrder[ni]];
+        if (o) return o;
+      }
+      return 0;
     });
 
     // 保存预处理信息

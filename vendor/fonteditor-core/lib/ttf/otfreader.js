@@ -70,13 +70,13 @@ var OTFReader = exports.default = /*#__PURE__*/function () {
       }
       font.readOptions = this.options;
 
-      // 读取支持的表数据
-      Object.keys(_supportOtf.default).forEach(function (tableName) {
+      /* 优化125: Object.keys+forEach → for...in 循环 */
+      for (var tableName in _supportOtf.default) {
         if (font.tables[tableName]) {
           var offset = font.tables[tableName].offset;
           font[tableName] = new _supportOtf.default[tableName](offset).read(reader, font);
         }
-      });
+      }
       if (!font.CFF.glyf) {
         _error.default.raise(10303);
       }
@@ -95,17 +95,17 @@ var OTFReader = exports.default = /*#__PURE__*/function () {
       var codes = font.cmap;
       var glyf = font.CFF.glyf;
       var subsetMap = font.readOptions.subset ? font.subsetMap : null; // 当前ttf的子集列表
-      // unicode
-      Object.keys(codes).forEach(function (c) {
+      /* 优化125: Object.keys+forEach → for...in 循环 */
+      for (var c in codes) {
         var i = codes[c];
         if (subsetMap && !subsetMap[i]) {
-          return;
+          continue;
         }
         if (!glyf[i].unicode) {
           glyf[i].unicode = [];
         }
         glyf[i].unicode.push(+c);
-      });
+      }
 
       /* leftSideBearing / advanceWidth —— 兼容扁平 Int32Array 和对象数组 */
       var hmtxData = font.hmtx;
@@ -125,11 +125,12 @@ var OTFReader = exports.default = /*#__PURE__*/function () {
       }
 
       // 设置了subsetMap之后需要选取subset中的字形
+      /* 优化125: Object.keys+forEach → for...in 循环 */
       if (subsetMap) {
         var subGlyf = [];
-        Object.keys(subsetMap).forEach(function (i) {
-          subGlyf.push(glyf[+i]);
-        });
+        for (var si in subsetMap) {
+          subGlyf.push(glyf[+si]);
+        }
         glyf = subGlyf;
       }
       font.glyf = glyf;

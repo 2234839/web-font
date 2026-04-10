@@ -231,8 +231,10 @@ function lookupFD(fdSelect, glyphIndex) {
   }
   /** format 3 二分查找 ranges */
   var ranges = fdSelect.ranges;
+  /* 优化154: 缓存 numRanges 避免重复除法 */
+  var numRanges = ranges.length / 3;
   var lo = 0;
-  var hi = (ranges.length / 3) - 1;
+  var hi = numRanges - 1;
   while (lo <= hi) {
     var mid = (lo + hi) >> 1;
     var idx = mid * 3;
@@ -241,7 +243,7 @@ function lookupFD(fdSelect, glyphIndex) {
       hi = mid - 1;
     } else {
       /** 检查是否在当前 range 内（即 < 下一个 range 的 first） */
-      if (mid === (ranges.length / 3) - 1 || glyphIndex < (ranges[idx + 3] | (ranges[idx + 4] << 8))) {
+      if (mid === numRanges - 1 || glyphIndex < (ranges[idx + 3] | (ranges[idx + 4] << 8))) {
         return ranges[idx + 2];
       }
       lo = mid + 1;
@@ -385,13 +387,14 @@ var _default = exports.default = _table.default.create('cff', [], {
 
     /**
      * 为指定 glyph 构建 per-glyph 的 font 对象
-     * CID-keyed 字体使用 FD 对应的 local subrs
+     * 优化154: CID-keyed 字体预构建 per-FD font 对象缓存，避免每次分配
      */
-    function getGlyphFont(glyphIndex) {
-      if (isCID && fdSelect && fdPrivates) {
-        var fdIdx = lookupFD(fdSelect, glyphIndex);
-        var fd = fdPrivates[fdIdx];
-        return {
+    var fdGlyphFonts = null;
+    if (isCID && fdSelect && fdPrivates) {
+      fdGlyphFonts = new Array(fdPrivates.length);
+      for (var fi = 0; fi < fdPrivates.length; fi++) {
+        var fd = fdPrivates[fi];
+        fdGlyphFonts[fi] = {
           subrs: fd.subrs,
           subrsBias: fd.subrsBias,
           defaultWidthX: fd.defaultWidthX,
@@ -399,6 +402,11 @@ var _default = exports.default = _table.default.create('cff', [], {
           gsubrs: cff.gsubrs,
           gsubrsBias: cff.gsubrsBias
         };
+      }
+    }
+    function getGlyphFont(glyphIndex) {
+      if (fdGlyphFonts) {
+        return fdGlyphFonts[lookupFD(fdSelect, glyphIndex)];
       }
       return cff;
     }
@@ -412,21 +420,25 @@ var _default = exports.default = _table.default.create('cff', [], {
       };
       var codes = font.cmap;
 
-      // unicode to index
-      Object.keys(codes).forEach(function (c) {
-        if (subset.indexOf(+c) > -1) {
-          var i = codes[c];
-          subsetMap[i] = true;
+      // unicode to index — 用 Set 替代 indexOf 实现 O(1) 查找
+      var subsetSet = {};
+      for (var si = 0, sl = subset.length; si < sl; si++) {
+        subsetSet[subset[si]] = true;
+      }
+      for (var c in codes) {
+        if (subsetSet[c]) {
+          var ci = codes[c];
+          subsetMap[ci] = true;
         }
-      });
+      }
       font.subsetMap = subsetMap;
-      Object.keys(subsetMap).forEach(function (i) {
+      for (var i in subsetMap) {
         i = +i;
         var charstring = readCFFIndexObject(reader, charStringsInfo, i);
         var glyf = (0, _parseCFFGlyph.default)(charstring, getGlyphFont(i), i);
         glyf.name = cff.charset[i];
         cff.glyf[i] = glyf;
-      });
+      }
     }
     // parse all
     else {

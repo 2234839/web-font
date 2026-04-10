@@ -111,11 +111,15 @@ var Writer = /*#__PURE__*/function () {
       if (length < 0 || offset + length > this.length) {
         _error.default.raise(10002, this.length, offset + length);
       }
-      /* 优化5: Uint8Array.set 批量写入，替代逐字节循环 */
+      /* 优化151: 缓存 buffer 引用，避免每次创建 Uint8Array 视图 */
+      var vBuf = this.view.buffer;
+      var vOff = this.view.byteOffset + offset;
       if (value instanceof ArrayBuffer) {
-        new Uint8Array(this.view.buffer, this.view.byteOffset + offset, length).set(new Uint8Array(value, 0, length));
+        new Uint8Array(vBuf, vOff, length).set(new Uint8Array(value, 0, length));
+      } else if (value instanceof Uint8Array) {
+        new Uint8Array(vBuf, vOff, length).set(value);
       } else {
-        new Uint8Array(this.view.buffer, this.view.byteOffset + offset, length).set(value instanceof Uint8Array ? value : new Uint8Array(value), 0);
+        new Uint8Array(vBuf, vOff, length).set(new Uint8Array(value));
       }
       this.offset = offset + length;
       return this;
@@ -169,7 +173,7 @@ var Writer = /*#__PURE__*/function () {
       /* 优化28: 直接 view 写入，替代逐字节 writeUint8/writeUint16 */
       var pos = offset;
       for (var i = 0, l = str.length, charCode; i < l; ++i) {
-        charCode = str.charCodeAt(i) || 0;
+        charCode = str.charCodeAt(i);
         if (charCode > 127) {
           this.view.setUint16(pos, charCode, this.littleEndian);
           pos += 2;

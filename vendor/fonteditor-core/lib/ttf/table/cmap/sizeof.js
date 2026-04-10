@@ -49,11 +49,11 @@ function getFormat0Segment(glyfUnicodes) {
   var unicodes = [];
   for (var i = 0, l = glyfUnicodes.length; i < l; i++) {
     var u = glyfUnicodes[i];
-    if (u.unicode !== undefined && u.unicode < 256) {
+    if (u.unicode < 256) {
       unicodes.push([u.unicode, u.id]);
     }
   }
-  unicodes.sort(function (a, b) { return a[0] - b[0]; });
+  /* 数据已排序，无需再次 sort */
   return unicodes;
 }
 
@@ -85,17 +85,11 @@ function sizeof(ttf) {
   ttf.support.cmap.hasFormat0 = ttf.support.cmap.format0Segments.length > 0;
   ttf.support.cmap.format0Size = ttf.support.cmap.hasFormat0 ? 262 : 0;
 
-  var hasGLyphsOver2Bytes = false;
-  for (var gi = 0, gil = unicodes2Bytes.length; gi < gil; gi++) {
-    if (unicodes2Bytes[gi].unicode > 0xFFFF) {
-      hasGLyphsOver2Bytes = true;
-      break;
-    }
-  }
+  /* 优化142: 排序后直接检查最大 unicode，避免单独遍历 */
+  var hasGLyphsOver2Bytes = glyfUnicodes.length > 0 && glyfUnicodes[glyfUnicodes.length - 1].unicode > 0xFFFF;
   if (hasGLyphsOver2Bytes) {
     ttf.support.cmap.hasGLyphsOver2Bytes = true;
-    var unicodes4Bytes = glyfUnicodes;
-    ttf.support.cmap.format12Segments = getSegments(unicodes4Bytes);
+    ttf.support.cmap.format12Segments = getSegments(glyfUnicodes);
     ttf.support.cmap.format12Size = 16 + ttf.support.cmap.format12Segments.length * 12;
   }
   /** 记录头大小必须动态计算，与 write.js 中的 numRecords 保持一致，否则会导致表偏移错位 */

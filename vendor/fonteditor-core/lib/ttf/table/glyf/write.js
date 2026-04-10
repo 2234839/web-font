@@ -22,6 +22,9 @@ function write(writer, ttf) {
   var glyfSupport = ttf.support.glyf;
   var glyfs = ttf.glyf;
   var view = writer.view;
+  /** 优化141: 复用 Uint8Array 视图，避免每次 set 创建临时视图 */
+  var buf = view.buffer;
+  var vbo = view.byteOffset;
   var ARG_1_AND_2_ARE_WORDS = _componentFlag.default.ARG_1_AND_2_ARE_WORDS;
   var ROUND_XY_TO_GRID = _componentFlag.default.ROUND_XY_TO_GRID;
   var WE_HAVE_A_SCALE = _componentFlag.default.WE_HAVE_A_SCALE;
@@ -133,21 +136,18 @@ function write(writer, ttf) {
         pos += 2;
       }
 
-      /* 优化11+79: flags 使用 Uint8Array.set 批量写入 */
+      /* 优化11+79+135: flags 直接 view 写入，避免临时 TypedArray */
       var flags = gSupport.flags || [];
-      if (flags.length > 0) {
-        var flagsArr = flags instanceof Uint8Array ? flags : new Uint8Array(flags);
-        new Uint8Array(view.buffer, view.byteOffset + pos, flagsArr.length).set(flagsArr);
+      for (var fi = 0, fl = flags.length; fi < fl; fi++) {
+        view.setUint8(pos++, flags[fi]);
       }
-      pos += flags.length;
 
-      /* 优化21+98+119: xCoord 预编码 Uint8Array 直接 set，或逐个写入 */
-      var support = gSupport;
-      if (support.xEncoded) {
-        new Uint8Array(view.buffer, view.byteOffset + pos, support.xEncoded.length).set(support.xEncoded);
-        pos += support.xEncoded.length;
+      /* 优化21+98+119+141: xCoord 预编码 Uint8Array 直接 set，使用缓存引用 */
+      if (gSupport.xEncoded) {
+        new Uint8Array(buf, vbo + pos, gSupport.xEncoded.length).set(gSupport.xEncoded);
+        pos += gSupport.xEncoded.length;
       } else {
-        var xCoord = support.xCoord || [];
+        var xCoord = gSupport.xCoord || [];
         for (var xi = 0, xl = xCoord.length; xi < xl; xi++) {
           var xv = xCoord[xi];
           if (0 <= xv && xv <= 0xFF) {
@@ -160,12 +160,12 @@ function write(writer, ttf) {
         }
       }
 
-      /* 优化21+58+98+119: yCoord 预编码 Uint8Array 直接 set，或逐个写入 */
-      if (support.yEncoded) {
-        new Uint8Array(view.buffer, view.byteOffset + pos, support.yEncoded.length).set(support.yEncoded);
-        pos += support.yEncoded.length;
+      /* 优化21+58+98+119+141: yCoord 预编码 Uint8Array 直接 set，使用缓存引用 */
+      if (gSupport.yEncoded) {
+        new Uint8Array(buf, vbo + pos, gSupport.yEncoded.length).set(gSupport.yEncoded);
+        pos += gSupport.yEncoded.length;
       } else {
-        var yCoord = support.yCoord || [];
+        var yCoord = gSupport.yCoord || [];
         for (var yi = 0, yl = yCoord.length; yi < yl; yi++) {
           var yv = yCoord[yi];
           if (0 <= yv && yv <= 0xFF) {
@@ -179,12 +179,13 @@ function write(writer, ttf) {
       }
     }
 
-    /* 优化81: 4字节对齐使用 fill(0) 批量填充 */
+    /* 优化81: 4字节对齐直接 view 写入，避免临时 TypedArray */
     var glyfSize = gSupport.glyfSize;
     if (glyfSize % 4) {
       var pad = 4 - glyfSize % 4;
-      new Uint8Array(view.buffer, view.byteOffset + pos, pad).fill(0);
-      pos += pad;
+      if (pad >= 1) view.setUint8(pos++, 0);
+      if (pad >= 2) view.setUint8(pos++, 0);
+      if (pad >= 3) view.setUint8(pos++, 0);
     }
 
     writer.offset = pos;

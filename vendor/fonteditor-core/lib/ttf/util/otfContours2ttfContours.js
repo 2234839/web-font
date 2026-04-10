@@ -5,7 +5,6 @@ Object.defineProperty(exports, "__esModule", {
 });
 exports.default = otfContours2ttfContours;
 var _bezierCubic2Q = _interopRequireDefault(require("../../math/bezierCubic2Q2"));
-var _pathCeil = _interopRequireDefault(require("../../graphics/pathCeil"));
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
 /**
  * @file otf轮廓转ttf轮廓
@@ -21,7 +20,7 @@ function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { de
 /**
  * 将 CFF contour 转换为标准 [onCurve, offCurve, offCurve, onCurve, ...] 序列
  * 处理隐含端点和连续 offCurve 点的情况
- * 优化：原地操作 otfContour，减少中间数组分配
+ * 优化：构建新数组替代 unshift/splice，避免 O(n^2)
  */
 function normalizeContour(otfContour) {
   var len = otfContour.length;
@@ -47,19 +46,29 @@ function normalizeContour(otfContour) {
     len = otfContour.length;
   }
 
-  /** 处理连续的 offCurve 点：在它们之间插入隐含端点 */
-  for (var i = 0; i < len; i++) {
-    var p = otfContour[i];
-    if (!p.onCurve && i + 1 < len && !otfContour[i + 1].onCurve) {
-      var next = otfContour[i + 1];
-      otfContour.splice(i + 1, 0, {
-        x: (p.x + next.x) * 0.5,
-        y: (p.y + next.y) * 0.5,
-        onCurve: true
-      });
-      len++;
-      i++;
+  /** 处理连续的 offCurve 点：在它们之间插入隐含端点
+   *  优化：构建新数组替代 splice，将 O(n^2) 降为 O(n) */
+  var hasConsecutive = false;
+  for (var i = 0; i < len - 1; i++) {
+    if (!otfContour[i].onCurve && !otfContour[i + 1].onCurve) {
+      hasConsecutive = true;
+      break;
     }
+  }
+  if (hasConsecutive) {
+    var result = [];
+    for (var i = 0; i < len; i++) {
+      result.push(otfContour[i]);
+      if (!otfContour[i].onCurve && i + 1 < len && !otfContour[i + 1].onCurve) {
+        var next = otfContour[i + 1];
+        result.push({
+          x: (otfContour[i].x + next.x) * 0.5,
+          y: (otfContour[i].y + next.y) * 0.5,
+          onCurve: true
+        });
+      }
+    }
+    return result;
   }
 
   return otfContour;
@@ -68,20 +77,22 @@ function normalizeContour(otfContour) {
 /**
  * 转换已标准化的轮廓（onCurve/offCurve 严格交替）
  * 模式：onCurve, offCurve, offCurve, onCurve, offCurve, offCurve, ...
+ * 优化153: 在构建 contour 时同时做 Math.round，消除 pathCeil 的二次遍历
  */
 function transformContour(otfContour) {
   var normalized = normalizeContour(otfContour);
   if (normalized.length < 2) return [];
 
   var contour = [];
-  contour.push(normalized[0]);
+  var p0 = normalized[0];
+  contour.push({ x: Math.round(p0.x), y: Math.round(p0.y), onCurve: true });
 
   var i = 1;
   while (i < normalized.length) {
     var cur = normalized[i];
     if (cur.onCurve) {
       /** 线段：直接添加 onCurve 端点 */
-      contour.push(cur);
+      contour.push({ x: Math.round(cur.x), y: Math.round(cur.y), onCurve: true });
       i++;
     } else {
       /** cubic bezier：offCurve, offCurve, onCurve */
@@ -104,32 +115,61 @@ function transformContour(otfContour) {
       }
 
       var bezierArray = (0, _bezierCubic2Q.default)(contour[contour.length - 1], c1, c2 || c1, end);
-      for (var bi = 0, bl = bezierArray.length; bi < bl; bi++) {
-        bezierArray[bi][2].onCurve = true;
-        contour.push(bezierArray[bi][1]);
-        contour.push(bezierArray[bi][2]);
+      for (var bi = 0, bl = bezierArray.length; bi < bl; bi += 2) {
+        var ctrl = bezierArray[bi];
+        var ep = bezierArray[bi + 1];
+        ep.x = Math.round(ep.x);
+        ep.y = Math.round(ep.y);
+        ep.onCurve = true;
+        ctrl.x = Math.round(ctrl.x);
+        ctrl.y = Math.round(ctrl.y);
+        contour.push(ctrl);
+        contour.push(ep);
       }
     }
   }
 
-  return (0, _pathCeil.default)(contour);
+  return contour;
 }
 
 /**
- * otf轮廓转ttf轮廓
+ * otf轮廓转ttf轮廓，同时计算包围盒
  *
  * @param  {Array} otfContours otf轮廓数组
- * @return {Array} ttf轮廓
+ * @return {{contours: Array, xMin: number, yMin: number, xMax: number, yMax: number}} 转换结果和包围盒
  */
 function otfContours2ttfContours(otfContours) {
   if (!otfContours || !otfContours.length) {
-    return otfContours;
+    return { contours: otfContours };
   }
   var contours = [];
+  var left, right, top, bottom;
+  var found = false;
   for (var i = 0, l = otfContours.length; i < l; i++) {
     if (otfContours[i][0]) {
-      contours.push(transformContour(otfContours[i]));
+      var contour = transformContour(otfContours[i]);
+      contours.push(contour);
+      /** 同时计算包围盒，避免 otf2ttfobject 二次遍历 */
+      for (var ci = 0, cl = contour.length; ci < cl; ci++) {
+        var p = contour[ci];
+        if (!found) {
+          left = right = p.x;
+          top = bottom = p.y;
+          found = true;
+        } else {
+          if (p.x < left) left = p.x;
+          else if (p.x > right) right = p.x;
+          if (p.y < top) top = p.y;
+          else if (p.y > bottom) bottom = p.y;
+        }
+      }
     }
   }
-  return contours;
+  return {
+    contours: contours,
+    xMin: left,
+    yMin: top,
+    xMax: right,
+    yMax: bottom
+  };
 }

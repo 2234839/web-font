@@ -59,17 +59,6 @@ var _default = exports.default = _table.default.create('OS/2', [['version', _str
     var hinting = ttf.writeOptions ? ttf.writeOptions.hinting : false;
 
     if (metrics) {
-      var glyfs = ttf.glyf;
-      /* 计算 minRightSideBearing（需要逐字形遍历 advanceWidth - xMax） */
-      var minRightSideBearing = 16384;
-      for (var ri = 0, rl = glyfs.length; ri < rl; ri++) {
-        var rg = glyfs[ri];
-        if (rg.xMax != null) {
-          var rsb = rg.advanceWidth - rg.xMax;
-          if (rsb < minRightSideBearing) minRightSideBearing = rsb;
-        }
-      }
-
       ttf['OS/2'].version = 0x4;
       ttf['OS/2'].achVendID = (ttf['OS/2'].achVendID + '    ').slice(0, 4);
       ttf['OS/2'].xAvgCharWidth = metrics.xAvgCharWidth;
@@ -80,7 +69,7 @@ var _default = exports.default = _table.default.create('OS/2', [['version', _str
       ttf.hhea.version = ttf.hhea.version || 0x1;
       ttf.hhea.advanceWidthMax = metrics.advanceWidthMax;
       ttf.hhea.minLeftSideBearing = metrics.minLeftSideBearing;
-      ttf.hhea.minRightSideBearing = minRightSideBearing;
+      ttf.hhea.minRightSideBearing = metrics.minRightSideBearing;
       ttf.hhea.xMaxExtent = metrics.xMaxExtent;
 
       ttf.head.version = ttf.head.version || 0x1;
