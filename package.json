@@ -22,6 +22,7 @@
     "@types/node": "^25.5.2",
     "@xmldom/xmldom": "^0.9.9",
     "jsdom": "^29.0.2",
+    "pngjs": "^7.0.0",
     "puppeteer": "^24.40.0",
     "skia-canvas": "^3.0.8",
     "tsup": "^8.5.1",

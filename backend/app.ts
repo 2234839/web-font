@@ -314,12 +314,12 @@ async function handleFontSubset(req: Request, res: Response) {
     };
   }
 
-  /** LLRT 不支持 wasm，默认 ttf；Node.js 默认 woff2（体积更小） */
+  /** 默认 ttf（兼容性最好）；LLRT 不支持 wasm 只能用 ttf */
   const isLlrt = release_name === "llrt";
   const outTypeParam = params.get("outType") || "";
   const outType = (outTypeParam === "woff2" || outTypeParam === "ttf")
     ? (isLlrt && outTypeParam === "woff2" ? "ttf" : outTypeParam)
-    : (isLlrt ? "ttf" : "woff2");
+    : "ttf";
 
   const newFont = await fontSubset(oldFontBuffer, text, {
     outType: outType,
@@ -337,7 +337,7 @@ async function handleFontSubset(req: Request, res: Response) {
       status: 200,
       headers: {
         "Content-Type": contentTypes[outType] || "font/ttf",
-        "Cache-Control": "public, max-age=31536000, immutable",
+        "Cache-Control": "public, max-age=86400",
       },
     }),
   };

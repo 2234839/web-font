@@ -19,6 +19,7 @@ import { createServer, type Server, type IncomingMessage, type ServerResponse } 
 import { performance } from "node:perf_hooks";
 import puppeteer, { type Page } from "puppeteer";
 import { fontSubset } from "./backend/font_util/font.js";
+import { PNG } from "pngjs";
 
 const BENCHMARK_DIR = "benchmark_results";
 const ROUNDS = 10;
@@ -46,7 +47,7 @@ function createFontServer(): Promise<{ server: Server; port: number }> {
 <style>
   @font-face { font-family: "${fontFamily}"; src: url("/fonts/${fontFamily}") format("${fontFormat}"); }
   body { margin: 0; background: white; }
-  #text { font-family: "${fontFamily}", sans-serif; font-size: ${fontSize}px; line-height: 1.2; color: black; padding: ${Math.ceil(fontSize * 0.1)}px 10px; display: inline-block; }
+  #text { font-family: "${fontFamily}", sans-serif; font-size: ${fontSize}px; line-height: 1.2; color: black; padding: ${Math.ceil(fontSize * 0.1)}px 10px; display: inline-block; white-space: nowrap; }
 </style></head><body>
 <div id="text">${text.replace(/</g, "&lt;")}</div>
 <script>
@@ -119,31 +120,23 @@ async function renderTextViaBrowser(
   }
 
   /**
-   * 使用 DOM 渲染 + 页面截图来获取像素数据（而非 canvas）
-   * 这样更贴近真实浏览器渲染行为，能检测到 maxp 等表异常导致的不渲染
+   * DOM 渲染 + puppeteer 截图（而非 canvas 直接绘制）
+   * 截图后用 pngjs 解码获取像素数据用于 SSIM 计算
    */
-  const screenshot = await page.screenshot({ type: "png" });
-  const pixelData = await page.evaluate(() => {
-    const el = document.getElementById("text")!;
-    const rect = el.getBoundingClientRect();
-    /** 用 canvas 从 DOM 元素提取像素 */
-    const canvas = document.createElement("canvas");
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
-    const ctx = canvas.getContext("2d")!;
-    ctx.drawImage(document.documentElement as any, 0, 0);
-    const imgData = ctx.getImageData(Math.round(rect.left), Math.round(rect.top), Math.round(rect.width), Math.round(rect.height));
-    let ink = 0;
-    for (let i = 0; i < imgData.data.length; i += 4) { if (imgData.data[i] < 128) ink++; }
-    return { pixels: Array.from(imgData.data), ink };
-  });
+  const screenshot = await page.screenshot({ type: "png", clip: { x: 0, y: 0, width, height } });
+  const png = PNG.sync.read(screenshot);
+  const pixels = new Uint8Array(png.data);
 
-  const inkPixels = pixelData.ink;
+  let inkPixels = 0;
+  for (let i = 0; i < pixels.length; i += 4) {
+    if (pixels[i] < 128) inkPixels++;
+  }
+
   if (inkPixels === 0) {
     throw new Error(`字体渲染无墨水像素 (${fontFamily})，字体可能未正确加载`);
   }
 
-  return { pixels: new Uint8Array(pixelData.pixels), screenshot: Buffer.from(screenshot), inkPixels };
+  return { pixels, screenshot: Buffer.from(screenshot), inkPixels };
 }
 
 /** 计算两张图片的结构相似度（简化版 SSIM），返回 0~1 */
