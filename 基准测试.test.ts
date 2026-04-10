@@ -5,9 +5,12 @@
  * 原理:
  *   1. 直接调用 backend/font_util/font.ts 的 fontSubset（与 API 完全一致）
  *   2. 本地 HTTP 服务器同时提供 HTML 页面和字体文件
- *   3. 完整字体通过 @font-face + HTTP URL 加载（与浏览器实际行为一致）
- *   4. 子集字体也通过 @font-face + HTTP URL 加载
- *   5. 在浏览器 canvas 中渲染文字，截图并计算 SSIM
+ *   3. 完整字体（full）直接使用原始字体文件渲染，不做任何转换（这是基准参照）
+ *   4. 子集字体通过 fontSubset 子集化后，通过 @font-face + HTTP URL 加载
+ *   5. 在浏览器 DOM 中渲染文字，截图并计算 SSIM
+ *
+ * 注意: full 渲染必须用原始字体，这是正确性的基准。如果 full 渲染都不对，
+ *       那么 subset 的 SSIM 对比就毫无意义。
  *
  * 测量:
  *   1. 子集化总耗时（fontSubset）
@@ -139,24 +142,90 @@ async function renderTextViaBrowser(
   return { pixels, screenshot: Buffer.from(screenshot), inkPixels };
 }
 
-/** 计算两张图片的结构相似度（简化版 SSIM），返回 0~1 */
+/**
+ * 计算两张图片的标准 SSIM (Wang et al. 2004)
+ * 使用 11x11 均匀滑动窗口 + 积分图加速，返回 0~1
+ */
 function calculateSSIM(a: Uint8Array, b: Uint8Array): number {
   if (a.length !== b.length) return 0;
-  const pixelCount = a.length / 4;
-  let sumA = 0, sumB = 0, sumA2 = 0, sumB2 = 0, sumAB = 0;
-  for (let i = 0; i < pixelCount; i++) {
+  const width = Math.sqrt(a.length / 4) | 0;
+  const height = (a.length / 4 / width) | 0;
+  if (width === 0 || height === 0) return 0;
+
+  /** 转灰度并提取到独立数组 */
+  const N = width * height;
+  const grayA = new Float64Array(N);
+  const grayB = new Float64Array(N);
+  for (let i = 0; i < N; i++) {
     const idx = i * 4;
-    const ga = 0.299 * a[idx] + 0.587 * a[idx + 1] + 0.114 * a[idx + 2];
-    const gb = 0.299 * b[idx] + 0.587 * b[idx + 1] + 0.114 * b[idx + 2];
-    sumA += ga; sumB += gb;
-    sumA2 += ga * ga; sumB2 += gb * gb; sumAB += ga * gb;
+    grayA[i] = 0.299 * a[idx] + 0.587 * a[idx + 1] + 0.114 * a[idx + 2];
+    grayB[i] = 0.299 * b[idx] + 0.587 * b[idx + 1] + 0.114 * b[idx + 2];
   }
-  const meanA = sumA / pixelCount, meanB = sumB / pixelCount;
-  const varA = sumA2 / pixelCount - meanA * meanA;
-  const varB = sumB2 / pixelCount - meanB * meanB;
-  const covAB = sumAB / pixelCount - meanA * meanB;
-  const C1 = 6.5025, C2 = 58.5225;
-  return (2 * meanA * meanB + C1) * (2 * covAB + C2) / ((meanA * meanA + meanB * meanB + C1) * (varA + varB + C2));
+
+  /** 构建积分图: S(x,y) = sum of gray[0..x-1, 0..y-1] */
+  const w1 = width + 1;
+  const intA = new Float64Array(w1 * (height + 1));
+  const intA2 = new Float64Array(w1 * (height + 1));
+  const intB = new Float64Array(w1 * (height + 1));
+  const intB2 = new Float64Array(w1 * (height + 1));
+  const intAB = new Float64Array(w1 * (height + 1));
+
+  for (let y = 0; y < height; y++) {
+    const rowOff = y * width;
+    const irowOff = (y + 1) * w1;
+    for (let x = 0; x < width; x++) {
+      const va = grayA[rowOff + x];
+      const vb = grayB[rowOff + x];
+      const ip = irowOff + x + 1;
+      intA[ip] = va + intA[ip - 1] + intA[ip - w1] - intA[ip - w1 - 1];
+      intA2[ip] = va * va + intA2[ip - 1] + intA2[ip - w1] - intA2[ip - w1 - 1];
+      intB[ip] = vb + intB[ip - 1] + intB[ip - w1] - intB[ip - w1 - 1];
+      intB2[ip] = vb * vb + intB2[ip - 1] + intB2[ip - w1] - intB2[ip - w1 - 1];
+      intAB[ip] = va * vb + intAB[ip - 1] + intAB[ip - w1] - intAB[ip - w1 - 1];
+    }
+  }
+
+  /**
+   * 从积分图计算矩形区域 [x1, x2) x [y1, y2) 的和
+   * 矩形包含 (x2-x1) * (y2-y1) 个像素
+   */
+  const rectSum = (img: Float64Array, x1: number, y1: number, x2: number, y2: number) =>
+    img[y2 * w1 + x2] - img[y1 * w1 + x2] - img[y2 * w1 + x1] + img[y1 * w1 + x1];
+
+  /** 11x11 窗口, 半径=5 */
+  const R = 5;
+  const C1 = 6.5025;   // (0.01 * 255)^2
+  const C2 = 58.5225;  // (0.03 * 255)^2
+
+  let ssimSum = 0;
+  let windowCount = 0;
+
+  for (let y = R; y < height - R; y++) {
+    for (let x = R; x < width - R; x++) {
+      const x1 = x - R, x2 = x + R + 1;
+      const y1 = y - R, y2 = y + R + 1;
+      const n = (2 * R + 1) * (2 * R + 1);
+
+      const sA = rectSum(intA, x1, y1, x2, y2);
+      const sA2 = rectSum(intA2, x1, y1, x2, y2);
+      const sB = rectSum(intB, x1, y1, x2, y2);
+      const sB2 = rectSum(intB2, x1, y1, x2, y2);
+      const sAB = rectSum(intAB, x1, y1, x2, y2);
+
+      const muA = sA / n;
+      const muB = sB / n;
+      const sigmaA2 = sA2 / n - muA * muA;
+      const sigmaB2 = sB2 / n - muB * muB;
+      const sigmaAB = sAB / n - muA * muB;
+
+      const num = (2 * muA * muB + C1) * (2 * sigmaAB + C2);
+      const den = (muA * muA + muB * muB + C1) * (sigmaA2 + sigmaB2 + C2);
+      ssimSum += num / den;
+      windowCount++;
+    }
+  }
+
+  return windowCount > 0 ? ssimSum / windowCount : 0;
 }
 
 // ======== 测试配置 ========
@@ -171,6 +240,7 @@ const testCases = [
   { label: "千字文前段", fontPath: "font/令东齐伋复刻体.ttf", fontName: "令东齐伋复刻体", text: "天地玄黄宇宙洪荒日月盈昃辰宿列张寒来暑往秋收冬藏闰余成岁律吕调阳云腾致雨露结为霜金生丽水玉出昆冈剑号巨阙珠称夜光果珍李柰菜重芥姜海咸河淡鳞潜羽翔", sourceType: "ttf" as const, outType: "woff2" as const, fullFormat: "truetype" },
   /** OTF 字体 */
   { label: "otf-五个汉字", fontPath: "font/temp/BaiHuOTFJiaoYuHanZi-2.otf", fontName: "白狐教育汉字", text: "天地黄宇宙", sourceType: "otf" as const, outType: "ttf" as const, fullFormat: "opentype" },
+  { label: "otf-思源黑体", fontPath: "font/temp/SourceHanSans-Regular.otf", fontName: "思源黑体", text: "天地玄黄宇宙", sourceType: "otf" as const, outType: "ttf" as const, fullFormat: "opentype" },
 ];
 
 // ======== 主测试 ========
