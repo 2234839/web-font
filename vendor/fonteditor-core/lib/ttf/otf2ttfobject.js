@@ -38,6 +38,10 @@ function otf2ttfobject(otfBuffer, options) {
     var g = glyf[i];
     var result = (0, _otfContours2ttfContours.default)(g.contours);
     g.contours = result.contours;
+    /** 优化178: 标记扁平 contour 格式 */
+    if (result.contours.length > 0 && typeof result.contours[0][0] === 'number') {
+      g._flatContours = true;
+    }
     if (result.xMin != null) {
       g.xMin = result.xMin;
       g.xMax = result.xMax;

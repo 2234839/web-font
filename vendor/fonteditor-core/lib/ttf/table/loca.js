@@ -44,22 +44,23 @@ var _default = exports.default = _table.default.create('loca', [], {
     var wView = writer.view;
     var pos = writer.offset;
     if (indexToLocFormat) {
-      for (var i = 0; i <= numGlyphs; i++) {
+      /* 优化171: 拆分循环消除 i < numGlyphs 条件判断 */
+      for (var i = 0; i < numGlyphs; i++) {
         wView.setUint32(pos, offset, false);
         pos += 4;
-        if (i < numGlyphs) {
-          offset += glyfSupport[i].size;
-        }
+        offset += glyfSupport[i].size;
       }
+      wView.setUint32(pos, offset, false);
+      pos += 4;
     } else {
-      /* 优化110: 短格式使用右移替代浮点乘 0.5 */
-      for (var j = 0; j <= numGlyphs; j++) {
+      /* 优化110+171: 短格式右移 + 拆分循环 */
+      for (var j = 0; j < numGlyphs; j++) {
         wView.setUint16(pos, offset >> 1, false);
         pos += 2;
-        if (j < numGlyphs) {
-          offset += glyfSupport[j].size;
-        }
+        offset += glyfSupport[j].size;
       }
+      wView.setUint16(pos, offset >> 1, false);
+      pos += 2;
     }
     writer.offset = pos;
     return writer;

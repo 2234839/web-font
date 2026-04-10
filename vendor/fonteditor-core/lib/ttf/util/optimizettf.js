@@ -142,12 +142,14 @@ function ceilReduceAndSizeFromTypedArrays(glyf, sharedXBuf, sharedYBuf) {
  */
 function ceilReduceAndSizeFlat(glyf, sharedXBuf, sharedYBuf) {
   var contours = glyf.contours;
-  /* 优化91: 跳过 reducePathFlat */
-  for (var j = contours.length - 1; j >= 0; j--) {
-    if (contours[j].length <= 6) {
-      contours.splice(j, 1);
+  /* 优化91+164: 跳过 reducePathFlat，用 write-index 替代 splice */
+  var writeIdx = 0;
+  for (var j = 0, cl = contours.length; j < cl; j++) {
+    if (contours[j].length > 6) {
+      contours[writeIdx++] = contours[j];
     }
   }
+  contours.length = writeIdx;
   if (0 === contours.length) {
     delete glyf.contours;
     return { sharedXBuf: sharedXBuf, sharedYBuf: sharedYBuf };
@@ -330,6 +332,26 @@ function optimizettf(ttf) {
         if (glyf._flatContours) {
           var flatResult = ceilReduceAndSizeFlat(glyf, sharedXBuf, sharedYBuf);
           if (flatResult) { sharedXBuf = flatResult.sharedXBuf; sharedYBuf = flatResult.sharedYBuf; }
+          /**
+           * ⚠️ 关键：必须收集 maxPoints/maxContours，否则 maxp 表中这两个值为 0，
+           * 浏览器会据此跳过渲染（表现为字体加载成功但文字显示为空白/fallback）。
+           * 这是 OTF→TTF 转换字形的必经路径（_flatContours 由 parseCFFGlyph 生成），
+           * 之前已因为同样的问题修复过对象 contours 路径（commit 97f4d72），
+           * 所有涉及 contours 的分支都必须更新这两个值！
+           * 注意：ceilReduceAndSizeFlat 可能删除 glyf.contours（当所有 contour 长度 ≤ 6 时），
+           * 所以必须在调用之后检查 glyf.contours 是否仍存在。
+           */
+          if (glyf.contours) {
+            var flatNumC = glyf.contours.length;
+            if (flatNumC > 0) {
+              if (flatNumC > m_maxContours) m_maxContours = flatNumC;
+              var flatTotalPts = 0;
+              for (var fci = 0; fci < flatNumC; fci++) {
+                flatTotalPts += glyf.contours[fci].length / 3;
+              }
+              if (flatTotalPts > m_maxPoints) m_maxPoints = flatTotalPts;
+            }
+          }
         } else {
           /* 对象 contours 格式也需要收集 maxPoints/maxContours */
           var numC = glyf.contours.length;

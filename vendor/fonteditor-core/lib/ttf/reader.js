@@ -138,15 +138,21 @@ var Reader = exports.default = /*#__PURE__*/function () {
       if (length < 0 || offset + length > this.length) {
         _error.default.raise(10001, this.length, offset + length);
       }
-      /* 优化22: 批量读取字节后构建字符串，替代逐字节 readUint8 */
-      var chars = new Array(length);
+      /* 优化22+179: 使用 Uint8Array + String.fromCharCode.apply 批量转换 */
       var viewOffset = this.view.byteOffset + offset;
-      var buf = this.view.buffer;
-      for (var i = 0; i < length; ++i) {
-        chars[i] = buf.charCodeAt ? String.fromCharCode(buf.charCodeAt(viewOffset + i)) : String.fromCharCode(new Uint8Array(buf, viewOffset + i, 1)[0]);
-      }
+      var bytes = new Uint8Array(this.view.buffer, viewOffset, length);
       this.offset = offset + length;
-      return chars.join('');
+      if (length <= 1024) {
+        return String.fromCharCode.apply(null, bytes);
+      }
+      /** 长字符串分段构建，避免 call stack 溢出 */
+      var parts = [];
+      var chunkSize = 1024;
+      for (var ci = 0; ci < length; ci += chunkSize) {
+        var end = ci + chunkSize < length ? ci + chunkSize : length;
+        parts.push(String.fromCharCode.apply(null, bytes.subarray(ci, end)));
+      }
+      return parts.join('');
     }
 
     /**

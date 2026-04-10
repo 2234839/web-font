@@ -21,6 +21,10 @@ if (typeof ArrayBuffer === 'undefined' || typeof DataView === 'undefined') {
   throw new Error('not support ArrayBuffer and DataView');
 }
 
+/** 优化178: 全局 Uint8Array 视图缓存，避免 writeBytes/writeEmpty 每次创建视图 */
+var _globalView = null;
+var _globalViewBuf = null;
+
 // 数据类型
 var dataType = {
   Int8: 1,
@@ -111,15 +115,16 @@ var Writer = /*#__PURE__*/function () {
       if (length < 0 || offset + length > this.length) {
         _error.default.raise(10002, this.length, offset + length);
       }
-      /* 优化151: 缓存 buffer 引用，避免每次创建 Uint8Array 视图 */
-      var vBuf = this.view.buffer;
+      /* 优化178: 复用全局 Uint8Array 视图，避免每次 writeBytes 创建新视图 */
+      if (_globalViewBuf !== this.view.buffer) {
+        _globalViewBuf = this.view.buffer;
+        _globalView = new Uint8Array(_globalViewBuf);
+      }
       var vOff = this.view.byteOffset + offset;
-      if (value instanceof ArrayBuffer) {
-        new Uint8Array(vBuf, vOff, length).set(new Uint8Array(value, 0, length));
-      } else if (value instanceof Uint8Array) {
-        new Uint8Array(vBuf, vOff, length).set(value);
+      if (value instanceof Uint8Array) {
+        _globalView.set(value, vOff);
       } else {
-        new Uint8Array(vBuf, vOff, length).set(new Uint8Array(value));
+        _globalView.set(value instanceof ArrayBuffer ? new Uint8Array(value, 0, length) : new Uint8Array(value), vOff);
       }
       this.offset = offset + length;
       return this;
@@ -141,8 +146,12 @@ var Writer = /*#__PURE__*/function () {
       if (undefined === offset) {
         offset = this.offset;
       }
-      /* 优化5: fill(0) 批量填充，替代逐字节循环 */
-      new Uint8Array(this.view.buffer, this.view.byteOffset + offset, length).fill(0);
+      /* 优化178: 复用全局视图 fill(0) */
+      if (_globalViewBuf !== this.view.buffer) {
+        _globalViewBuf = this.view.buffer;
+        _globalView = new Uint8Array(_globalViewBuf);
+      }
+      _globalView.fill(0, this.view.byteOffset + offset, this.view.byteOffset + offset + length);
       this.offset = offset + length;
       return this;
     }

@@ -10,7 +10,7 @@ exports.default = write;
  */
 
 /**
- * 优化108: 接受并行数组 unicodeArr/idArr
+ * 优化156: 接受扁平数组 [unicode, id, unicode, id, ...]
  */
 function writeSubTable0(writer, unicodes) {
   var pos = writer.offset;
@@ -20,13 +20,14 @@ function writeSubTable0(writer, unicodes) {
   view.setUint16(pos, 0, false); pos += 2;
 
   var i = -1;
-  for (var j = 0; j < unicodes.length; j++) {
+  for (var j = 0; j < unicodes.length; j += 2) {
     var unicode = unicodes[j];
-    while (++i < unicode[0]) {
+    var glyphId = unicodes[j + 1];
+    while (++i < unicode) {
       view.setUint8(pos++, 0);
     }
-    view.setUint8(pos++, unicode[1]);
-    i = unicode[0];
+    view.setUint8(pos++, glyphId);
+    i = unicode;
   }
   while (++i < 256) {
     view.setUint8(pos++, 0);
@@ -35,38 +36,42 @@ function writeSubTable0(writer, unicodes) {
   return writer;
 }
 
+/**
+ * 优化156: 接受扁平数组 [start, end, startId, delta, ...]
+ */
 function writeSubTable4(writer, segments) {
   var pos = writer.offset;
   var view = writer.view;
-  var segCount = segments.length + 1;
+  var segCount = segments.length / 4 + 1;
   var maxExponent = Math.floor(Math.log(segCount) / Math.LN2);
   var searchRange = 2 * Math.pow(2, maxExponent);
 
   view.setUint16(pos, 4, false); pos += 2;
-  view.setUint16(pos, 24 + segments.length * 8, false); pos += 2;
+  view.setUint16(pos, 16 + segCount * 8, false); pos += 2;
   view.setUint16(pos, 0, false); pos += 2;
   view.setUint16(pos, segCount * 2, false); pos += 2;
   view.setUint16(pos, searchRange, false); pos += 2;
   view.setUint16(pos, maxExponent, false); pos += 2;
   view.setUint16(pos, 2 * segCount - searchRange, false); pos += 2;
 
-  for (var i = 0; i < segments.length; i++) {
-    view.setUint16(pos, segments[i].end, false); pos += 2;
+  var numSegs = segments.length / 4;
+  for (var i = 0; i < numSegs; i++) {
+    view.setUint16(pos, segments[i * 4 + 1], false); pos += 2;
   }
   view.setUint16(pos, 0xFFFF, false); pos += 2;
   view.setUint16(pos, 0, false); pos += 2;
 
-  for (var j = 0; j < segments.length; j++) {
-    view.setUint16(pos, segments[j].start, false); pos += 2;
+  for (var j = 0; j < numSegs; j++) {
+    view.setUint16(pos, segments[j * 4], false); pos += 2;
   }
   view.setUint16(pos, 0xFFFF, false); pos += 2;
 
-  for (var k = 0; k < segments.length; k++) {
-    view.setUint16(pos, segments[k].delta, false); pos += 2;
+  for (var k = 0; k < numSegs; k++) {
+    view.setUint16(pos, segments[k * 4 + 3], false); pos += 2;
   }
   view.setUint16(pos, 1, false); pos += 2;
 
-  for (var m = 0; m < segments.length; m++) {
+  for (var m = 0; m < numSegs; m++) {
     view.setUint16(pos, 0, false); pos += 2;
   }
   view.setUint16(pos, 0, false); pos += 2;
@@ -75,19 +80,24 @@ function writeSubTable4(writer, segments) {
   return writer;
 }
 
+/**
+ * 优化156: 接受扁平数组 [start, end, startId, delta, ...]
+ */
 function writeSubTable12(writer, segments) {
   var pos = writer.offset;
   var view = writer.view;
+  var numSegs = segments.length / 4;
   view.setUint16(pos, 12, false); pos += 2;
   view.setUint16(pos, 0, false); pos += 2;
-  view.setUint32(pos, 16 + segments.length * 12, false); pos += 4;
+  view.setUint32(pos, 16 + numSegs * 12, false); pos += 4;
   view.setUint32(pos, 0, false); pos += 4;
-  view.setUint32(pos, segments.length, false); pos += 4;
+  view.setUint32(pos, numSegs, false); pos += 4;
 
-  for (var i = 0; i < segments.length; i++) {
-    view.setUint32(pos, segments[i].start, false); pos += 4;
-    view.setUint32(pos, segments[i].end, false); pos += 4;
-    view.setUint32(pos, segments[i].startId, false); pos += 4;
+  for (var i = 0; i < numSegs; i++) {
+    var off = i * 4;
+    view.setUint32(pos, segments[off], false); pos += 4;
+    view.setUint32(pos, segments[off + 1], false); pos += 4;
+    view.setUint32(pos, segments[off + 2], false); pos += 4;
   }
   writer.offset = pos;
   return writer;

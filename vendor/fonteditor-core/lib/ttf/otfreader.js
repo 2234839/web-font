@@ -125,11 +125,18 @@ var OTFReader = exports.default = /*#__PURE__*/function () {
       }
 
       // 设置了subsetMap之后需要选取subset中的字形
-      /* 优化125: Object.keys+forEach → for...in 循环 */
+      /* 优化167: 密集数组替代 for...in，消除字符串键转换 */
       if (subsetMap) {
         var subGlyf = [];
-        for (var si in subsetMap) {
-          subGlyf.push(glyf[+si]);
+        var subsetGids = font.subsetGids;
+        if (subsetGids) {
+          for (var si = 0, sl = subsetGids.length; si < sl; si++) {
+            subGlyf.push(glyf[subsetGids[si]]);
+          }
+        } else {
+          for (var si in subsetMap) {
+            subGlyf.push(glyf[+si]);
+          }
         }
         glyf = subGlyf;
       }

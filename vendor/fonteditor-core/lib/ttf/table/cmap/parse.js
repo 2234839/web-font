@@ -118,6 +118,7 @@ function readSubTable(reader, ttf, subTable, cmapOffset) {
       vOffset += 2;
     }
     format4.idRangeOffset = idRangeOffset;
+    format4.segCount = segCount;
 
     /* 优化101: subset 模式下跳过 glyphIdArray 解析，直接从 view 按需读取 */
     var isSubset4 = ttf.readOptions && ttf.readOptions.subset;
@@ -135,6 +136,8 @@ function readSubTable(reader, ttf, subTable, cmapOffset) {
       }
       format4.glyphIdArray = glyphIdArray4;
     }
+    /* 优化177: 预计算 glyphIdArrayIndexOffset，消除 lookupFormat4 中的重复除法 */
+    format4.glyphIdArrayIndexOffset = (format4.glyphIdArrayOffset - format4.idRangeOffsetOffset) / 2;
   } else if (subTable.format === 6) {
     var format6 = subTable;
     format6.length = view.getUint16(vOffset, false); vOffset += 2;

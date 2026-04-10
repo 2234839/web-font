@@ -125,9 +125,10 @@ var TTFWriter = exports.default = /*#__PURE__*/function () {
 
       new _directory.default().write(writer, ttf);
 
-      /* 优化56+87: forEach → for 循环，缓存 buffer 引用避免重复 getBuffer() */
+      /* 优化56+87+179: forEach → for 循环，缓存 buffer 引用，累加各表校验和避免全局重算 */
       var supportTableList = ttf.support.tables;
       var buf = writer.getBuffer();
+      var wholeCheckSum = 0;
       for (var si = 0, sl = supportTableList.length; si < sl; si++) {
         var table = supportTableList[si];
         var tableStart = writer.offset;
@@ -140,6 +141,7 @@ var TTFWriter = exports.default = /*#__PURE__*/function () {
           writer.writeEmpty(4 - table.length % 4);
         }
         table.checkSum = (0, _checkSum.default)(buf, tableStart, table.size);
+        wholeCheckSum = (wholeCheckSum + table.checkSum) >>> 0;
       }
 
       /* 优化111: 重新写入校验和，直接 view 写入 */
@@ -149,8 +151,8 @@ var TTFWriter = exports.default = /*#__PURE__*/function () {
         csView.setUint32(offset2, supportTableList[ci].checkSum, false);
       }
 
-      /* 写入总校验和 */
-      var ttfCheckSum = (0xB1B0AFBA - (0, _checkSum.default)(buf) + 0x100000000) % 0x100000000;
+      /* 优化179: 用累加的各表校验和替代全局 checkSum，避免重遍历整个 buffer */
+      var ttfCheckSum = (0xB1B0AFBA - wholeCheckSum + 0x100000000) % 0x100000000;
       csView.setUint32(ttfHeadOffset + 8, ttfCheckSum, false);
       delete ttf.writeOptions;
       delete ttf.support;

@@ -10,8 +10,7 @@ exports.default = checkSum;
  */
 
 /**
- * 优化107: 使用 Uint32Array 视图 + DataView 字节序转换处理大端序
- * 避免每次调用创建新的 DataView，减少内存分配
+ * 优化178: 使用 Uint8Array 直接读取并手动拼接大端序 uint32，消除 DataView 开销
  */
 function checkSumArrayBuffer(buffer, offset, length) {
   if (offset === undefined) offset = 0;
@@ -19,43 +18,25 @@ function checkSumArrayBuffer(buffer, offset, length) {
   if (offset + length > buffer.byteLength) {
     throw new Error('check sum out of bound');
   }
-  /* 优化107: 复用共享 DataView 进行字节序转换 */
-  var view = DataViewPool.acquire(buffer);
+  var bytes = new Uint8Array(buffer, offset, length);
   var nLongs = length >> 2;
   var sum = 0;
-  for (var i = 0; i < nLongs; i++) {
-    sum = (sum + view.getUint32(offset + (i << 2), false)) | 0;
+  var i = 0;
+  while (i < nLongs) {
+    sum = (sum + (bytes[i] << 24 | bytes[i + 1] << 16 | bytes[i + 2] << 8 | bytes[i + 3]) >>> 0) | 0;
+    i += 4;
   }
-  DataViewPool.release(view);
   var leftBytes = length - nLongs * 4;
   if (leftBytes) {
-    var bytes = new Uint8Array(buffer, offset + nLongs * 4, leftBytes);
+    var off = nLongs << 2;
     var val = 0;
     for (var k = 0; k < leftBytes; k++) {
-      val = (val | bytes[k] << (leftBytes - 1 - k) * 8) >>> 0;
+      val = (val | bytes[off + k] << (leftBytes - 1 - k) * 8) >>> 0;
     }
     sum = (sum + val) | 0;
   }
   return sum >>> 0;
 }
-
-/**
- * 优化107: DataView 对象池，避免重复创建
- */
-var DataViewPool = {
-  _view: null,
-  _buffer: null,
-  acquire: function (buffer) {
-    if (this._buffer !== buffer) {
-      this._view = new DataView(buffer);
-      this._buffer = buffer;
-    }
-    return this._view;
-  },
-  release: function () {
-    /* 保留引用供下次复用 */
-  }
-};
 
 function checkSumArray(buffer, offset, length) {
   if (offset === undefined) offset = 0;

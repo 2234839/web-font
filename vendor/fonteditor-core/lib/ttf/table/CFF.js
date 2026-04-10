@@ -83,7 +83,10 @@ function parseCFFIndex(reader, offset, conversionFn) {
       offsets.push(getOffset(reader, offsetSize));
     }
     for (i = 0, l = count; i < l; i++) {
-      var value = reader.readBytes(offsets[i + 1] - offsets[i]);
+      /** 优化179: 直接从 view 创建 Uint8Array 视图，避免 readBytes 的 slice */
+      var objSize = offsets[i + 1] - offsets[i];
+      var value = new Uint8Array(reader.view.buffer, reader.view.byteOffset + reader.offset, objSize);
+      reader.offset += objSize;
       if (conversionFn) {
         value = conversionFn(value);
       }
@@ -113,8 +116,17 @@ function parseCFFIndexOffsets(reader, offset) {
   if (count !== 0) {
     var offsetSize = reader.readUint8();
     offsets = new Array(count + 1);
-    for (var i = 0; i <= count; i++) {
-      offsets[i] = getOffset(reader, offsetSize);
+    /** 优化166: 内联 getOffset，消除函数调用开销 */
+    if (offsetSize === 1) {
+      for (var i = 0; i <= count; i++) offsets[i] = reader.readUint8();
+    } else if (offsetSize === 2) {
+      for (var i = 0; i <= count; i++) offsets[i] = reader.readUint16();
+    } else if (offsetSize === 3) {
+      for (var i = 0; i <= count; i++) {
+        offsets[i] = reader.readUint8() << 16 | reader.readUint8() << 8 | reader.readUint8();
+      }
+    } else {
+      for (var i = 0; i <= count; i++) offsets[i] = reader.readUint32();
     }
   }
   return { offsets: offsets, count: count, dataStart: reader.offset, endOffset: reader.offset };
@@ -128,11 +140,14 @@ function parseCFFIndexOffsets(reader, offset) {
  * @param  {number} idx           object 索引（0-based）
  * @return {Uint8Array}          object 数据
  */
+/**
+ * 优化169+179: 直接从 view 创建 Uint8Array 视图，避免 readBytes 的 slice 开销
+ */
 function readCFFIndexObject(reader, indexInfo, idx) {
   var off = indexInfo.offsets;
   var size = off[idx + 1] - off[idx];
-  reader.seek(indexInfo.dataStart + off[idx] - 1);
-  return reader.readBytes(size);
+  var start = indexInfo.dataStart + off[idx] - 1;
+  return new Uint8Array(reader.view.buffer, reader.view.byteOffset + start, size);
 }
 
 // Subroutines are encoded using the negative half of the number space.
@@ -275,7 +290,9 @@ function parseFDPrivate(reader, cffOffset, fdDictData, strings) {
       result.defaultWidthX = privDict.defaultWidthX || 0;
       result.nominalWidthX = privDict.nominalWidthX || 0;
 
-      if (privDict.subrs) {
+      /** 修复：subrs 偏移量可能为 0（CFF 规范允许），
+       *  原代码用 if (privDict.subrs) 检查，0 是 falsy 导致跳过 subrs 读取 */
+      if (privDict.subrs != null && privDict.subrs > 0) {
         var subrIndex = parseCFFIndex(reader, privOffset + privDict.subrs);
         result.subrs = subrIndex.objects;
         result.subrsBias = calcCFFSubroutineBias(result.subrs);
@@ -350,7 +367,7 @@ var _default = exports.default = _table.default.create('cff', [], {
     }
 
     // 私有子glyf数据（非 CID 字体使用）
-    if (privateDict.subrs) {
+    if (privateDict.subrs != null && privateDict.subrs > 0) {
       var subrOffset = privateDictOffset + privateDict.subrs;
       var subrIndex = parseCFFIndex(reader, subrOffset);
       cff.subrs = subrIndex.objects;
@@ -425,20 +442,25 @@ var _default = exports.default = _table.default.create('cff', [], {
       for (var si = 0, sl = subset.length; si < sl; si++) {
         subsetSet[subset[si]] = true;
       }
-      for (var c in codes) {
-        if (subsetSet[c]) {
-          var ci = codes[c];
-          subsetMap[ci] = true;
-        }
+      /** 优化168: 用 subset 直接遍历替代 codes for...in，减少遍历量 */
+      for (var si = 0, sl = subset.length; si < sl; si++) {
+        var ci = codes[subset[si]];
+        if (ci !== undefined) subsetMap[ci] = true;
       }
       font.subsetMap = subsetMap;
-      for (var i in subsetMap) {
-        i = +i;
+      /** 优化163+167: 构建 subsetGids 密集数组，传递给 otfreader 复用 */
+      var subsetGids = [];
+      for (var gi = 0; gi < nGlyphs; gi++) {
+        if (subsetMap[gi]) subsetGids.push(gi);
+      }
+      for (var si = 0, sl = subsetGids.length; si < sl; si++) {
+        var i = subsetGids[si];
         var charstring = readCFFIndexObject(reader, charStringsInfo, i);
         var glyf = (0, _parseCFFGlyph.default)(charstring, getGlyphFont(i), i);
         glyf.name = cff.charset[i];
         cff.glyf[i] = glyf;
       }
+      font.subsetGids = subsetGids;
     }
     // parse all
     else {

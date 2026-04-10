@@ -40,36 +40,39 @@ var _default = exports.default = _table.default.create('hmtx', [], {
     return hMetrics;
   },
   write: function write(writer, ttf) {
-    var i;
     var numOfLongHorMetrics = ttf.hhea.numOfLongHorMetrics;
-    /* 优化30+82: 直接 view 批量写入 */
+    /* 优化30+82+171: 缓存 glyfs[i] 到循环变量 */
     var wView = writer.view;
     var pos = writer.offset;
     var glyfs = ttf.glyf;
-    for (i = 0; i < numOfLongHorMetrics; i++) {
-      wView.setUint16(pos, glyfs[i].advanceWidth, false);
-      wView.setInt16(pos + 2, glyfs[i].leftSideBearing, false);
+    for (var i = 0; i < numOfLongHorMetrics; i++) {
+      var g = glyfs[i];
+      wView.setUint16(pos, g.advanceWidth, false);
+      wView.setInt16(pos + 2, g.leftSideBearing, false);
       pos += 4;
     }
     var numOfLast = glyfs.length - numOfLongHorMetrics;
-    for (i = 0; i < numOfLast; i++) {
-      wView.setInt16(pos, glyfs[numOfLongHorMetrics + i].leftSideBearing, false);
+    for (var j = 0; j < numOfLast; j++) {
+      wView.setInt16(pos, glyfs[numOfLongHorMetrics + j].leftSideBearing, false);
       pos += 2;
     }
     writer.offset = pos;
     return writer;
   },
   size: function size(ttf) {
+    /* 优化171: 缓存 ttf.glyf 到局部变量，消除循环内属性链查找 */
+    var glyfs = ttf.glyf;
+    var gl = glyfs.length;
     var numOfLast = 0;
-    var advanceWidth = ttf.glyf[ttf.glyf.length - 1].advanceWidth;
-    for (var i = ttf.glyf.length - 2; i >= 0; i--) {
-      if (advanceWidth === ttf.glyf[i].advanceWidth) {
+    var advanceWidth = glyfs[gl - 1].advanceWidth;
+    for (var i = gl - 2; i >= 0; i--) {
+      if (advanceWidth === glyfs[i].advanceWidth) {
         numOfLast++;
       } else {
         break;
       }
     }
-    ttf.hhea.numOfLongHorMetrics = ttf.glyf.length - numOfLast;
+    ttf.hhea.numOfLongHorMetrics = gl - numOfLast;
     return 4 * ttf.hhea.numOfLongHorMetrics + 2 * numOfLast;
   }
 });

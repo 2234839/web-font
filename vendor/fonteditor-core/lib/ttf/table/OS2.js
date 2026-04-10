@@ -28,6 +28,64 @@ var _default = exports.default = _table.default.create('OS/2', [['version', _str
 ['sxHeight', _struct.default.Int16], ['sCapHeight', _struct.default.Int16], ['usDefaultChar', _struct.default.Uint16], ['usBreakChar', _struct.default.Uint16], ['usMaxContext', _struct.default.Uint16]
 // version 2,3,4 above 46
 ], {
+  /** 优化176: 直接 view 写入 96 字节，绕过 table.js 双重 switch 分发 */
+  write: function write(writer, ttf) {
+    var o = ttf['OS/2'];
+    var pos = writer.offset;
+    var view = writer.view;
+    view.setUint16(pos, o.version, false); pos += 2;
+    view.setInt16(pos, o.xAvgCharWidth, false); pos += 2;
+    view.setUint16(pos, o.usWeightClass, false); pos += 2;
+    view.setUint16(pos, o.usWidthClass, false); pos += 2;
+    view.setUint16(pos, o.fsType, false); pos += 2;
+    view.setUint16(pos, o.ySubscriptXSize, false); pos += 2;
+    view.setUint16(pos, o.ySubscriptYSize, false); pos += 2;
+    view.setUint16(pos, o.ySubscriptXOffset, false); pos += 2;
+    view.setUint16(pos, o.ySubscriptYOffset, false); pos += 2;
+    view.setUint16(pos, o.ySuperscriptXSize, false); pos += 2;
+    view.setUint16(pos, o.ySuperscriptYSize, false); pos += 2;
+    view.setUint16(pos, o.ySuperscriptXOffset, false); pos += 2;
+    view.setUint16(pos, o.ySuperscriptYOffset, false); pos += 2;
+    view.setUint16(pos, o.yStrikeoutSize, false); pos += 2;
+    view.setUint16(pos, o.yStrikeoutPosition, false); pos += 2;
+    view.setUint16(pos, o.sFamilyClass, false); pos += 2;
+    view.setUint8(pos, o.bFamilyType); pos += 1;
+    view.setUint8(pos, o.bSerifStyle); pos += 1;
+    view.setUint8(pos, o.bWeight); pos += 1;
+    view.setUint8(pos, o.bProportion); pos += 1;
+    view.setUint8(pos, o.bContrast); pos += 1;
+    view.setUint8(pos, o.bStrokeVariation); pos += 1;
+    view.setUint8(pos, o.bArmStyle); pos += 1;
+    view.setUint8(pos, o.bLetterform); pos += 1;
+    view.setUint8(pos, o.bMidline); pos += 1;
+    view.setUint8(pos, o.bXHeight); pos += 1;
+    view.setUint32(pos, o.ulUnicodeRange1 || 0, false); pos += 4;
+    view.setUint32(pos, o.ulUnicodeRange2 || 0, false); pos += 4;
+    view.setUint32(pos, o.ulUnicodeRange3 || 0, false); pos += 4;
+    view.setUint32(pos, o.ulUnicodeRange4 || 0, false); pos += 4;
+    var vendor = (o.achVendID || '    ').slice(0, 4);
+    view.setUint8(pos, vendor.charCodeAt(0)); pos += 1;
+    view.setUint8(pos, vendor.charCodeAt(1)); pos += 1;
+    view.setUint8(pos, vendor.charCodeAt(2)); pos += 1;
+    view.setUint8(pos, vendor.charCodeAt(3)); pos += 1;
+    view.setUint16(pos, o.fsSelection, false); pos += 2;
+    view.setUint16(pos, o.usFirstCharIndex, false); pos += 2;
+    view.setUint16(pos, o.usLastCharIndex, false); pos += 2;
+    view.setInt16(pos, o.sTypoAscender, false); pos += 2;
+    view.setInt16(pos, o.sTypoDescender, false); pos += 2;
+    view.setInt16(pos, o.sTypoLineGap, false); pos += 2;
+    view.setUint16(pos, o.usWinAscent, false); pos += 2;
+    view.setUint16(pos, o.usWinDescent, false); pos += 2;
+    view.setUint32(pos, o.ulCodePageRange1 || 0, false); pos += 4;
+    view.setUint32(pos, o.ulCodePageRange2 || 0, false); pos += 4;
+    view.setInt16(pos, o.sxHeight || 0, false); pos += 2;
+    view.setInt16(pos, o.sCapHeight || 0, false); pos += 2;
+    view.setUint16(pos, o.usDefaultChar || 0, false); pos += 2;
+    view.setUint16(pos, o.usBreakChar != null ? o.usBreakChar : 32, false); pos += 2;
+    view.setUint16(pos, o.usMaxContext || 0, false); pos += 2;
+    writer.offset = pos;
+    return writer;
+  },
   read: function read(reader, ttf) {
     var format = reader.readUint16(this.offset);
     var struct = this.struct;

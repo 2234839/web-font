@@ -22,9 +22,10 @@ function write(writer, ttf) {
   var glyfSupport = ttf.support.glyf;
   var glyfs = ttf.glyf;
   var view = writer.view;
-  /** 优化141: 复用 Uint8Array 视图，避免每次 set 创建临时视图 */
+  /** 优化141+165: 复用 Uint8Array 视图，避免每次 set 创建临时视图 */
   var buf = view.buffer;
   var vbo = view.byteOffset;
+  var fullView = new Uint8Array(buf, vbo);
   var ARG_1_AND_2_ARE_WORDS = _componentFlag.default.ARG_1_AND_2_ARE_WORDS;
   var ROUND_XY_TO_GRID = _componentFlag.default.ROUND_XY_TO_GRID;
   var WE_HAVE_A_SCALE = _componentFlag.default.WE_HAVE_A_SCALE;
@@ -68,8 +69,9 @@ function write(writer, ttf) {
         var b = transform.b;
         var c = transform.c;
         var d = transform.d;
-        var e = g.points ? g.points[0] : transform.e;
-        var f = g.points ? g.points[1] : transform.f;
+        var pts = g.points;
+        var e = pts ? pts[0] : transform.e;
+        var f = pts ? pts[1] : transform.f;
         if (e < 0 || e > 0x7F || f < 0 || f > 0x7F) {
           flags += ARG_1_AND_2_ARE_WORDS;
         }
@@ -128,7 +130,7 @@ function write(writer, ttf) {
         pos += 2;
         if (instructions.length > 0) {
           var instrArr = instructions instanceof Uint8Array ? instructions : new Uint8Array(instructions);
-          new Uint8Array(view.buffer, view.byteOffset + pos, instrArr.length).set(instrArr);
+          fullView.set(instrArr, pos);
         }
         pos += instructions.length;
       } else {
@@ -142,9 +144,9 @@ function write(writer, ttf) {
         view.setUint8(pos++, flags[fi]);
       }
 
-      /* 优化21+98+119+141: xCoord 预编码 Uint8Array 直接 set，使用缓存引用 */
+      /* 优化21+98+119+165: xCoord 预编码 Uint8Array 直接 set，复用全局视图 */
       if (gSupport.xEncoded) {
-        new Uint8Array(buf, vbo + pos, gSupport.xEncoded.length).set(gSupport.xEncoded);
+        fullView.set(gSupport.xEncoded, pos);
         pos += gSupport.xEncoded.length;
       } else {
         var xCoord = gSupport.xCoord || [];
@@ -160,9 +162,9 @@ function write(writer, ttf) {
         }
       }
 
-      /* 优化21+58+98+119+141: yCoord 预编码 Uint8Array 直接 set，使用缓存引用 */
+      /* 优化21+58+98+119+165: yCoord 预编码 Uint8Array 直接 set，复用全局视图 */
       if (gSupport.yEncoded) {
-        new Uint8Array(buf, vbo + pos, gSupport.yEncoded.length).set(gSupport.yEncoded);
+        fullView.set(gSupport.yEncoded, pos);
         pos += gSupport.yEncoded.length;
       } else {
         var yCoord = gSupport.yCoord || [];
@@ -179,13 +181,12 @@ function write(writer, ttf) {
       }
     }
 
-    /* 优化81: 4字节对齐直接 view 写入，避免临时 TypedArray */
+    /* 优化81+171: 4字节对齐使用 fill(0) 替代逐字节写入 */
     var glyfSize = gSupport.glyfSize;
-    if (glyfSize % 4) {
-      var pad = 4 - glyfSize % 4;
-      if (pad >= 1) view.setUint8(pos++, 0);
-      if (pad >= 2) view.setUint8(pos++, 0);
-      if (pad >= 3) view.setUint8(pos++, 0);
+    var pad = glyfSize % 4;
+    if (pad) {
+      fullView.fill(0, pos, pos + (4 - pad));
+      pos += 4 - pad;
     }
 
     writer.offset = pos;

@@ -40,7 +40,7 @@ function lookupFormat4(format4, unicode) {
   var endCode = format4.endCode;
   var idDelta = format4.idDelta;
   var idRangeOffset = format4.idRangeOffset;
-  var segCount = format4.segCountX2 / 2;
+  var segCount = format4.segCount || (format4.segCountX2 / 2);
 
   var lo = 0, hi = segCount - 1;
   while (lo <= hi) {
@@ -54,7 +54,7 @@ function lookupFormat4(format4, unicode) {
       if (idRangeOffset[i] === 0) {
         return (unicode + idDelta[i]) % 0x10000;
       }
-      var graphIdArrayIndexOffset = (format4.glyphIdArrayOffset - format4.idRangeOffsetOffset) / 2;
+      var graphIdArrayIndexOffset = format4.glyphIdArrayIndexOffset != null ? format4.glyphIdArrayIndexOffset : (format4.glyphIdArrayOffset - format4.idRangeOffsetOffset) / 2;
       var index = i + idRangeOffset[i] / 2 + (unicode - startCode[i]) - graphIdArrayIndexOffset;
       var graphId;
       if (format4.glyphIdArray) {
