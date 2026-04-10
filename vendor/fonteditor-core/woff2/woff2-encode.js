@@ -14,14 +14,17 @@ try {
   zlib = require("zlib");
 }
 const brotliCompressSync = zlib.brotliCompressSync;
-const constants = zlib.constants;
+
+/** LLRT 的 zlib 没有 constants，直接使用数值常量（与 Node.js zlib.constants 一致） */
+const BROTLI_PARAM_QUALITY = zlib.constants?.BROTLI_PARAM_QUALITY ?? 3;
+const BROTLI_PARAM_SIZE_HINT = zlib.constants?.BROTLI_PARAM_SIZE_HINT ?? 4;
 
 /**
  * Brotli 压缩参数：quality 8
  * 测试表明 FONT 模式对小数据集（<200KB）无速度优势且增加 0.14% 体积，保持 GENERIC
  */
 const BROTLI_OPTIONS_BASE = {
-  params: { [constants.BROTLI_PARAM_QUALITY]: 8 },
+  params: { [BROTLI_PARAM_QUALITY]: 8 },
 };
 
 /* ======== Known Table Tags 索引表 ======== */
@@ -757,8 +760,8 @@ function encodeTTFToWOFF2(ttfBuffer) {
   /* Brotli 压缩，传入 SIZE_HINT 帮助预分配内部缓冲区 */
   const brotliOptions = totalTableDataSize > 0
     ? { params: {
-        [constants.BROTLI_PARAM_QUALITY]: 8,
-        [constants.BROTLI_PARAM_SIZE_HINT]: totalTableDataSize,
+        [BROTLI_PARAM_QUALITY]: 8,
+        [BROTLI_PARAM_SIZE_HINT]: totalTableDataSize,
       }}
     : BROTLI_OPTIONS_BASE;
   const compressedData = brotliCompressSync(uncompressedData, brotliOptions);

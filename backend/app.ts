@@ -199,14 +199,12 @@ async function handleListFonts(req: Request, res: Response) {
 
 /** GET /api/config — 返回公开配置 */
 async function handleGetConfig(req: Request, res: Response) {
-  const isLlrt = release_name === "llrt";
   return {
     req,
     res: jsonResponse({
       enableTempUpload,
       adminUploadEnabled: !!adminApiKey,
-      /** LLRT 不支持 wasm，无法输出 woff2 */
-      supportedOutTypes: isLlrt ? ["ttf"] : ["woff2", "ttf"],
+      supportedOutTypes: ["woff2", "ttf"],
     }),
   };
 }
@@ -314,12 +312,9 @@ async function handleFontSubset(req: Request, res: Response) {
     };
   }
 
-  /** 默认 ttf（兼容性最好）；LLRT 不支持 wasm 只能用 ttf */
-  const isLlrt = release_name === "llrt";
+  /** 默认 ttf（兼容性最好） */
   const outTypeParam = params.get("outType") || "";
-  const outType = (outTypeParam === "woff2" || outTypeParam === "ttf")
-    ? (isLlrt && outTypeParam === "woff2" ? "ttf" : outTypeParam)
-    : "ttf";
+  const outType = (outTypeParam === "woff2" || outTypeParam === "ttf") ? outTypeParam : "ttf";
 
   const newFont = await fontSubset(oldFontBuffer, text, {
     outType: outType,
