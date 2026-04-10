@@ -24,9 +24,9 @@ function getFlagsAndSize(glyf, glyfSupport, hinting) {
     var pre = glyf._precomputedGlyfSupport;
     glyfSupport.flags = pre.flags;
     /* 优化98: 预编码 buffer 直接传递 */
-    if (pre.xEncoded) {
-      glyfSupport.xEncoded = pre.xEncoded;
-      glyfSupport.yEncoded = pre.yEncoded;
+    if (pre.xBuf) {
+      glyfSupport.xEncoded = pre.xBuf.subarray(0, pre.xLen);
+      glyfSupport.yEncoded = pre.yBuf.subarray(0, pre.yLen);
     } else {
       glyfSupport.xCoord = pre.xCoord;
       glyfSupport.yCoord = pre.yCoord;

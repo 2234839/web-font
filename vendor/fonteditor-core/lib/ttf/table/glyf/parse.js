@@ -44,9 +44,9 @@ function parseSimpleGlyf(reader, glyf) {
     flags[fi++] = flag;
     if (flag & REPEAT && fi < numberOfCoordinates) {
       var repeat = view.getUint8(vOffset++);
-      for (var j = 0; j < repeat && fi < numberOfCoordinates; j++) {
-        flags[fi++] = flag;
-      }
+      var fillCount = repeat < numberOfCoordinates - fi ? repeat : numberOfCoordinates - fi;
+      flags.fill(flag, fi, fi + fillCount);
+      fi += fillCount;
     }
   }
 
@@ -152,20 +152,20 @@ function parseCompoundGlyf(reader, glyf) {
       g.useMyMetrics = !!(flags & USE_MY_METRICS);
       g.overlapCompound = !!(flags & OVERLAP_COMPOUND);
       g.transform = {
-        a: Math.round(10000 * scaleX / 16384) / 10000,
-        b: Math.round(10000 * scale01 / 16384) / 10000,
-        c: Math.round(10000 * scale10 / 16384) / 10000,
-        d: Math.round(10000 * scaleY / 16384) / 10000,
+        a: Math.round(scaleX * 0.6103515625) / 10000,
+        b: Math.round(scale01 * 0.6103515625) / 10000,
+        c: Math.round(scale10 * 0.6103515625) / 10000,
+        d: Math.round(scaleY * 0.6103515625) / 10000,
         e: arg1,
         f: arg2
       };
     } else {
       g.points = [arg1, arg2];
       g.transform = {
-        a: Math.round(10000 * scaleX / 16384) / 10000,
-        b: Math.round(10000 * scale01 / 16384) / 10000,
-        c: Math.round(10000 * scale10 / 16384) / 10000,
-        d: Math.round(10000 * scaleY / 16384) / 10000,
+        a: Math.round(scaleX * 0.6103515625) / 10000,
+        b: Math.round(scale01 * 0.6103515625) / 10000,
+        c: Math.round(scale10 * 0.6103515625) / 10000,
+        d: Math.round(scaleY * 0.6103515625) / 10000,
         e: 0,
         f: 0
       };

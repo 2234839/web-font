@@ -23,11 +23,13 @@ export const createSubsetFont = (
     subset: codePoints,
   });
 
-/** 优化字体（去冗余表、清理无用字形） */
+/**
+ * 优化字体（去冗余表、清理无用字形）
+ * subset 模式下 TTFReader.resolveGlyf 已完成 compound2simple，跳过
+ * optimizettf 已设置 _unicodeSorted=true，sortGlyf 会直接返回
+ */
 export const optimizeFont = (font: ReturnType<typeof Font.create>) => {
-  let optimized = font.optimize();
-  optimized = optimized.compound2simple();
-  optimized = optimized.sort();
+  const optimized = font.optimize();
   return optimized;
 };
 

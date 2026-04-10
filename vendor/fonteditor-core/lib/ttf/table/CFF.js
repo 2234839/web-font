@@ -439,12 +439,11 @@ var _default = exports.default = _table.default.create('cff', [], {
 
       // unicode to index — 用 Set 替代 indexOf 实现 O(1) 查找
       var subsetSet = {};
+      /** 优化：合并 subsetSet 和 subsetMap 构建为单次遍历 */
       for (var si = 0, sl = subset.length; si < sl; si++) {
-        subsetSet[subset[si]] = true;
-      }
-      /** 优化168: 用 subset 直接遍历替代 codes for...in，减少遍历量 */
-      for (var si = 0, sl = subset.length; si < sl; si++) {
-        var ci = codes[subset[si]];
+        var code = subset[si];
+        subsetSet[code] = true;
+        var ci = codes[code];
         if (ci !== undefined) subsetMap[ci] = true;
       }
       font.subsetMap = subsetMap;

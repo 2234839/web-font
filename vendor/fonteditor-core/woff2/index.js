@@ -1,79 +1,38 @@
 /**
- * @file woff2 wasm build of google woff2
- * thanks to woff2-asm
- * https://github.com/alimilhim/woff2-wasm
+ * @file woff2 纯 JavaScript 编码器/解码器
+ * 替代原 wasm 实现
  * @author mengke01(kekee000@gmail.com)
  */
 
-// Require the woff2 module
-const woff2ModuleLoader = require('./woff2');
+const { encodeTTFToWOFF2 } = require('./woff2-encode');
 
-function convertFromVecToUint8Array(vector) {
-    const arr = [];
-    for (let i = 0, l = vector.size(); i < l; i++) {
-        arr.push(vector.get(i));
-    }
-    return new Uint8Array(arr);
+/** @type {typeof import("zlib")} */
+let zlib;
+try {
+  zlib = require("node:zlib");
+} catch (_) {
+  zlib = require("zlib");
 }
+const brotliDecompressSync = zlib.brotliDecompressSync;
 
-// Define as a named object that can be exported with CommonJS
 const woff2Module = {
-    woff2Module: null,
 
     /**
-     * 是否已经加载完毕
+     * 是否已经加载完毕（纯 JS 实现不需要初始化）
      *
      * @return {boolean}
      */
     isInited() {
-        return (
-            this.woff2Module && this.woff2Module.woff2Enc && this.woff2Module.woff2Dec
-        );
+        return true;
     },
 
     /**
-     * 初始化 woff 模块
+     * 初始化（纯 JS 实现不需要初始化）
      *
-     * @param {string|ArrayBuffer} wasmUrl woff2.wasm file url
      * @return {Promise}
      */
-    init(wasmUrl) {
-        return new Promise((resolve) => {
-            if (this.woff2Module) {
-                resolve(this);
-                return;
-            }
-
-            let moduleLoaderConfig = null;
-            if (typeof window !== 'undefined') {
-                moduleLoaderConfig = {
-                    locateFile(path) {
-                        if (path.endsWith('.wasm')) {
-                            return wasmUrl;
-                        }
-                        return path;
-                    },
-                };
-            }
-            // for nodejs
-            else {
-                // Use path resolution that works in both ESM and CommonJS
-                let wasmPath = './woff2.wasm';
-                // If running in Node.js with __dirname available (CommonJS)
-                if (typeof __dirname !== 'undefined') {
-                    wasmPath = __dirname + '/woff2.wasm';
-                }
-
-                moduleLoaderConfig = {
-                    wasmBinaryFile: wasmPath,
-                };
-            }
-            const woffModule = woff2ModuleLoader(moduleLoaderConfig);
-            woffModule.onRuntimeInitialized = () => {
-                this.woff2Module = woffModule;
-                resolve(this);
-            };
-        });
+    init() {
+        return Promise.resolve(this);
     },
 
     /**
@@ -83,9 +42,7 @@ const woff2Module = {
      * @return {Uint8Array} uint8 array
      */
     encode(ttfBuffer) {
-        const buffer = new Uint8Array(ttfBuffer);
-        const woffbuff = this.woff2Module.woff2Enc(buffer, buffer.byteLength);
-        return convertFromVecToUint8Array(woffbuff);
+        return new Uint8Array(encodeTTFToWOFF2(ttfBuffer));
     },
 
     /**
@@ -95,9 +52,19 @@ const woff2Module = {
      * @return {Uint8Array} uint8 array
      */
     decode(woff2Buffer) {
-        const buffer = new Uint8Array(woff2Buffer);
-        const ttfbuff = this.woff2Module.woff2Dec(buffer, buffer.byteLength);
-        return convertFromVecToUint8Array(ttfbuff);
+        /* WOFF2 文件头: signature(4) + flavor(4) + length(4) + numTables(2) + reserved(2) + totalSfntSize(4) + totalCompressedSize(4) + majorVersion(2) + minorVersion(2) + metaOffset(4) + metaLength(4) + metaOrigLength(4) + privOffset(4) + privLength(4) = 48 bytes */
+        const data = new Uint8Array(woff2Buffer);
+        const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+
+        /* 跳过 WOFF2 header (48 bytes) + table directory (numTables * 20 bytes) */
+        const numTables = view.getUint16(12);
+        const totalCompressedSize = view.getUint32(20);
+        const dirEnd = 48 + numTables * 20;
+
+        /* 压缩的表数据紧跟在 directory 之后 */
+        const compressedData = data.subarray(dirEnd, dirEnd + totalCompressedSize);
+        const decompressed = brotliDecompressSync(compressedData);
+        return new Uint8Array(decompressed.buffer, decompressed.byteOffset, decompressed.byteLength);
     },
 };
 

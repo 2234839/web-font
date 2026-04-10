@@ -37,8 +37,8 @@ var TTFWriter = exports.default = /*#__PURE__*/function () {
     value: function resolveTTF(ttf) {
       ttf.version = ttf.version || 0x1;
       ttf.numTables = ttf.writeOptions.tables.length;
-      ttf.entrySelector = Math.floor(Math.log(ttf.numTables) / Math.LN2);
-      ttf.searchRange = Math.pow(2, ttf.entrySelector) * 16;
+      ttf.entrySelector = 31 - Math.clz32(ttf.numTables);
+      ttf.searchRange = 2 << ttf.entrySelector;
       ttf.rangeShift = ttf.numTables * 16 - ttf.searchRange;
 
       ttf.head.checkSumAdjustment = 0;

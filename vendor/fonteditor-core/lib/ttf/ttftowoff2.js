@@ -18,20 +18,17 @@ function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { de
  * @param {ArrayBuffer} ttfBuffer ttf缓冲数组
  * @param {Object} options 选项
  *
- * @return {Promise.<ArrayBuffer>} woff格式byte流
+ * @return {ArrayBuffer} woff格式byte流
  */
 // eslint-disable-next-line no-unused-vars
 function ttftowoff2(ttfBuffer) {
   var options = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : {};
-  if (!_index.default.isInited()) {
-    throw new Error('use woff2.init() to init woff2 module!');
-  }
   var result = _index.default.encode(ttfBuffer);
-  return result.buffer;
+  return result.buffer || result;
 }
 
 /**
- * ttf格式转换成woff2字体格式
+ * ttf格式转换成woff2字体格式（异步，纯 JS 实现直接返回）
  *
  * @param {ArrayBuffer} ttfBuffer ttf缓冲数组
  * @param {Object} options 选项
@@ -40,8 +37,5 @@ function ttftowoff2(ttfBuffer) {
  */
 function ttftowoff2async(ttfBuffer) {
   var options = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : {};
-  return _index.default.init(options.wasmUrl).then(function () {
-    var result = _index.default.encode(ttfBuffer);
-    return result.buffer;
-  });
+  return Promise.resolve(ttftowoff2(ttfBuffer, options));
 }

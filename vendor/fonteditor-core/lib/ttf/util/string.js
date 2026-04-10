@@ -96,17 +96,22 @@ var _default = exports.default = {
     str = stringify(str);
     var byteArray = [];
     for (var i = 0, l = str.length; i < l; i++) {
-      if (str.charCodeAt(i) <= 0x7F) {
-        byteArray.push(str.charCodeAt(i));
+      var ch = str.charCodeAt(i);
+      if (ch <= 0x7F) {
+        byteArray.push(ch);
+      } else if (ch <= 0x7FF) {
+        byteArray.push(0xC0 | (ch >> 6));
+        byteArray.push(0x80 | (ch & 0x3F));
+      } else if (ch < 0xD800 || ch >= 0xE000) {
+        byteArray.push(0xE0 | (ch >> 12));
+        byteArray.push(0x80 | ((ch >> 6) & 0x3F));
+        byteArray.push(0x80 | (ch & 0x3F));
       } else {
-        var codePoint = str.codePointAt(i);
-        if (codePoint > 0xffff) {
-          i++;
-        }
-        var h = encodeURIComponent(String.fromCodePoint(codePoint)).slice(1).split('%');
-        for (var j = 0; j < h.length; j++) {
-          byteArray.push(parseInt(h[j], 16));
-        }
+        var cp = ((ch - 0xD800) << 10) + (str.charCodeAt(++i) - 0xDC00);
+        byteArray.push(0xF0 | (cp >> 18));
+        byteArray.push(0x80 | ((cp >> 12) & 0x3F));
+        byteArray.push(0x80 | ((cp >> 6) & 0x3F));
+        byteArray.push(0x80 | (cp & 0x3F));
       }
     }
     return byteArray;

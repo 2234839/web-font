@@ -13,35 +13,29 @@ function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { de
  */
 
 /**
- * ttf格式转换成woff2字体格式
+ * woff2格式转换成ttf字体格式
  *
- * @param {ArrayBuffer} woff2Buffer ttf缓冲数组
+ * @param {ArrayBuffer} woff2Buffer woff2缓冲数组
  * @param {Object} options 选项
  *
- * @return {ArrayBuffer} woff格式byte流
+ * @return {ArrayBuffer} ttf格式byte流
  */
 // eslint-disable-next-line no-unused-vars
 function woff2tottf(woff2Buffer) {
   var options = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : {};
-  if (!_index.default.isInited()) {
-    throw new Error('use woff2.init() to init woff2 module!');
-  }
   var result = _index.default.decode(woff2Buffer);
-  return result.buffer;
+  return result.buffer || result;
 }
 
 /**
- * ttf格式转换成woff2字体格式
+ * woff2格式转换成ttf字体格式（异步，纯 JS 实现直接返回）
  *
- * @param {ArrayBuffer} woff2Buffer ttf缓冲数组
+ * @param {ArrayBuffer} woff2Buffer woff2缓冲数组
  * @param {Object} options 选项
  *
- * @return {Promise.<ArrayBuffer>} woff格式byte流
+ * @return {Promise.<ArrayBuffer>} ttf格式byte流
  */
 function woff2tottfasync(woff2Buffer) {
   var options = arguments.length > 1 && arguments[1] !== undefined ? arguments[1] : {};
-  return _index.default.init(options.wasmUrl).then(function () {
-    var result = _index.default.decode(woff2Buffer);
-    return result.buffer;
-  });
+  return Promise.resolve(woff2tottf(woff2Buffer, options));
 }

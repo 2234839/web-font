@@ -42,11 +42,12 @@ var _default = exports.default = _table.default.create('glyf', [], {
       ttf.subsetGids = subsetGids;
       var parsedGlyfMap = {};
 
-      /* 优化43: for...in + for 循环替代 Object.keys + forEach */
-      var travelsParse = function travels(sMap) {
-        var newSubsetMap = {};
-        for (var idx in sMap) {
-          var index = +idx;
+      /* 优化：迭代式广度优先遍历替代递归，消除 isEmptyObject 调用 */
+      var queue = subsetGids;
+      while (queue.length > 0) {
+        var nextQueue = [];
+        for (var qi = 0, ql = queue.length; qi < ql; qi++) {
+          var index = queue[qi];
           parsedGlyfMap[index] = true;
           if (loca[index] === loca[index + 1]) {
             glyphs[index] = { contours: [] };
@@ -57,16 +58,13 @@ var _default = exports.default = _table.default.create('glyf', [], {
             var glyfs = glyphs[index].glyfs;
             for (var gi = 0, gl = glyfs.length; gi < gl; gi++) {
               if (!parsedGlyfMap[glyfs[gi].glyphIndex]) {
-                newSubsetMap[glyfs[gi].glyphIndex] = true;
+                nextQueue.push(glyfs[gi].glyphIndex);
               }
             }
           }
         }
-        if (!(0, _lang.isEmptyObject)(newSubsetMap)) {
-          travels(newSubsetMap);
-        }
-      };
-      travelsParse(subsetMap);
+        queue = nextQueue;
+      }
       return glyphs;
     }
 

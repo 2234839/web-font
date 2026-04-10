@@ -140,11 +140,13 @@ function entriesToObject(entries) {
   return hash;
 }
 
+/** 优化：lookup 表提升到模块级，避免每次调用重新分配 */
+var FLOAT_LOOKUP = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '.', 'E', 'E-', null, '-'];
+
 /* eslint-disable no-constant-condition */
 function parseFloatOperand(reader) {
   var s = '';
   var eof = 15;
-  var lookup = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '.', 'E', 'E-', null, '-'];
   while (true) {
     var b = reader.readUint8();
     var n1 = b >> 4;
@@ -152,11 +154,11 @@ function parseFloatOperand(reader) {
     if (n1 === eof) {
       break;
     }
-    s += lookup[n1];
+    s += FLOAT_LOOKUP[n1];
     if (n2 === eof) {
       break;
     }
-    s += lookup[n2];
+    s += FLOAT_LOOKUP[n2];
   }
   return parseFloat(s);
 }
