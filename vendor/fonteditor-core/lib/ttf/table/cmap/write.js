@@ -18,6 +18,7 @@ function writeSubTable0(writer, unicodes) {
   view.setUint16(pos, 0, false); pos += 2;
   view.setUint16(pos, 262, false); pos += 2;
   view.setUint16(pos, 0, false); pos += 2;
+  /** 必须同步 writer.offset，否则 writeEmpty 会从错误偏移写入，导致 format0 实际大小比 sizeof 预计算的 262 少 6 字节，后续所有表偏移错位 */
   writer.offset = pos;
 
   /** 优化218: 使用 writer.writeEmpty 批量填充 0，替代逐字节 setUint8 */
