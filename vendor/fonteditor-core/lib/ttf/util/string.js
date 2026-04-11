@@ -67,11 +67,8 @@ var _default = exports.default = {
    * @return {string}       string
    */
   getString: function getString(bytes) {
-    var s = '';
-    for (var i = 0, l = bytes.length; i < l; i++) {
-      s += String.fromCharCode(bytes[i]);
-    }
-    return s;
+    /** 优化243: fromCharCode.apply 批量转换，消除逐字节字符串拼接的中间分配 */
+    return String.fromCharCode.apply(null, bytes);
   },
   /**
    * 获取unicode的名字值
@@ -94,27 +91,30 @@ var _default = exports.default = {
    */
   toUTF8Bytes: function toUTF8Bytes(str) {
     str = stringify(str);
-    var byteArray = [];
+    /* 优化: 预分配 Uint8Array 替代动态 push，避免数组扩容 */
+    var byteArr = new Uint8Array(str.length * 4);
+    var bi = 0;
     for (var i = 0, l = str.length; i < l; i++) {
       var ch = str.charCodeAt(i);
       if (ch <= 0x7F) {
-        byteArray.push(ch);
+        byteArr[bi++] = ch;
       } else if (ch <= 0x7FF) {
-        byteArray.push(0xC0 | (ch >> 6));
-        byteArray.push(0x80 | (ch & 0x3F));
+        byteArr[bi++] = 0xC0 | (ch >> 6);
+        byteArr[bi++] = 0x80 | (ch & 0x3F);
       } else if (ch < 0xD800 || ch >= 0xE000) {
-        byteArray.push(0xE0 | (ch >> 12));
-        byteArray.push(0x80 | ((ch >> 6) & 0x3F));
-        byteArray.push(0x80 | (ch & 0x3F));
+        byteArr[bi++] = 0xE0 | (ch >> 12);
+        byteArr[bi++] = 0x80 | ((ch >> 6) & 0x3F);
+        byteArr[bi++] = 0x80 | (ch & 0x3F);
       } else {
         var cp = ((ch - 0xD800) << 10) + (str.charCodeAt(++i) - 0xDC00);
-        byteArray.push(0xF0 | (cp >> 18));
-        byteArray.push(0x80 | ((cp >> 12) & 0x3F));
-        byteArray.push(0x80 | ((cp >> 6) & 0x3F));
-        byteArray.push(0x80 | (cp & 0x3F));
+        byteArr[bi++] = 0xF0 | (cp >> 18);
+        byteArr[bi++] = 0x80 | ((cp >> 12) & 0x3F);
+        byteArr[bi++] = 0x80 | ((cp >> 6) & 0x3F);
+        byteArr[bi++] = 0x80 | (cp & 0x3F);
       }
     }
-    return byteArray;
+    /* 优化: 直接返回 Uint8Array subarray，writeBytes 对 Uint8Array 有快速路径 */
+    return byteArr.subarray(0, bi);
   },
   /**
    * 转换成usc2的字节数组
@@ -124,13 +124,14 @@ var _default = exports.default = {
    */
   toUCS2Bytes: function toUCS2Bytes(str) {
     str = stringify(str);
-    var byteArray = [];
-    for (var i = 0, l = str.length, ch; i < l; i++) {
-      ch = str.charCodeAt(i);
-      byteArray.push(ch >> 8);
-      byteArray.push(ch & 0xFF);
+    /* 优化: 预分配 Uint8Array 替代动态 push */
+    var byteArr = new Uint8Array(str.length * 2);
+    for (var i = 0, l = str.length; i < l; i++) {
+      var ch = str.charCodeAt(i);
+      byteArr[i * 2] = ch >> 8;
+      byteArr[i * 2 + 1] = ch & 0xFF;
     }
-    return byteArray;
+    return byteArr;
   },
   /**
    * 获取pascal string 字节数组
@@ -139,13 +140,14 @@ var _default = exports.default = {
    * @return {Array.<byte>} byteArray byte数组
    */
   toPascalStringBytes: function toPascalStringBytes(str) {
-    var bytes = [];
+    /* 优化: 返回 Uint8Array，writeBytes 对 Uint8Array 有快速路径 */
     var length = str ? str.length < 256 ? str.length : 255 : 0;
-    bytes.push(length);
+    var bytes = new Uint8Array(1 + (str ? str.length : 0));
+    bytes[0] = length;
     for (var i = 0, l = str.length; i < l; i++) {
       var c = str.charCodeAt(i);
       // non-ASCII characters are substituted with '*'
-      bytes.push(c < 128 ? c : 42);
+      bytes[i + 1] = c < 128 ? c : 42;
     }
     return bytes;
   },
@@ -156,6 +158,10 @@ var _default = exports.default = {
    * @return {string} 字符串
    */
   getUTF8String: function getUTF8String(bytes) {
+    /** 优化254: 使用 TextDecoder 替代手动 UTF-8 解码 + unescape */
+    if (typeof TextDecoder !== 'undefined') {
+      return new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+    }
     var str = '';
     for (var i = 0, l = bytes.length; i < l; i++) {
       if (bytes[i] < 0x7F) {
@@ -173,11 +179,14 @@ var _default = exports.default = {
    * @return {string} 字符串
    */
   getUCS2String: function getUCS2String(bytes) {
-    var str = '';
-    for (var i = 0, l = bytes.length; i < l; i += 2) {
-      str += String.fromCharCode((bytes[i] << 8) + bytes[i + 1]);
+    /** 优化253: 收集 charCodes 到数组，单次 fromCharCode.apply 替代逐字拼接 */
+    var len = bytes.length;
+    if (len === 0) return '';
+    var codes = new Array(len >> 1);
+    for (var i = 0, j = 0; i < len; i += 2, j++) {
+      codes[j] = (bytes[i] << 8) + bytes[i + 1];
     }
-    return str;
+    return String.fromCharCode.apply(null, codes);
   },
   /**
    * 读取 pascal string

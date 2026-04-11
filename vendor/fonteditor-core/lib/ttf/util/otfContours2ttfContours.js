@@ -57,53 +57,67 @@ function normalizeContourFlat(arr) {
 
   if (!hasConsecutiveOff && firstOnCurve) return arr;
 
-  /** 构建结果：[x, y, flag, ...] */
-  var result = [];
+  /** 优化192: 预分配结果数组，索引赋值替代 push，消除动态扩容 */
+  var maxLen = len + (len / 3 | 0) * 3 + 6;
+  var result = new Array(maxLen);
+  var ri = 0;
   if (prependX != null) {
-    result.push(prependX, prependY, 1);
+    result[ri++] = prependX; result[ri++] = prependY; result[ri++] = 1;
   }
   for (var k = 0; k < len; k += 3) {
-    result.push(arr[k], arr[k + 1], arr[k + 2]);
+    result[ri++] = arr[k]; result[ri++] = arr[k + 1]; result[ri++] = arr[k + 2];
     if (!arr[k + 2] && k + 5 < len && !arr[k + 5]) {
-      var mx = (arr[k] + arr[k + 3]) * 0.5;
-      var my = (arr[k + 1] + arr[k + 4]) * 0.5;
-      result.push(mx, my, 1);
+      result[ri++] = (arr[k] + arr[k + 3]) * 0.5;
+      result[ri++] = (arr[k + 1] + arr[k + 4]) * 0.5;
+      result[ri++] = 1;
     }
   }
   /** 检查 wrap-around 连续 offCurve */
   if (prependX == null && len >= 6 && !arr[len - 1] && !arr[2]) {
-    var mx2 = (arr[len - 3] + arr[0]) * 0.5;
-    var my2 = (arr[len - 2] + arr[1]) * 0.5;
-    result.push(mx2, my2, 1);
+    result[ri++] = (arr[len - 3] + arr[0]) * 0.5;
+    result[ri++] = (arr[len - 2] + arr[1]) * 0.5;
+    result[ri++] = 1;
   }
+  result.length = ri;
   return result;
 }
 
 /**
  * 转换已标准化的轮廓，全扁平数组操作
  * 优化178: 输入和输出都是扁平数组 [x, y, flag, ...]
+ * 精度优化: 全程浮点运算，最后统一 Math.round，消除累积取整误差
  */
 function transformContourFlat(arr) {
   var normalized = normalizeContourFlat(arr);
-  if (normalized.length < 6) return [];
+  if (normalized.length < 6) return null;
 
-  var contour = [];
-  /** 第一个点一定是 onCurve */
+  /** 优化196: 预分配 contour 数组，最坏情况每点变成两段二次贝塞尔（6元素） */
+  var estimatedMax = normalized.length * 2 + 6;
+  var contour = new Array(estimatedMax);
+  var ci = 0;
+  /** 第一个点一定是 onCurve — 保持浮点 */
   var r = Math.round;
-  contour.push(r(normalized[0]), r(normalized[1]), 1);
+  var firstX = normalized[0], firstY = normalized[1];
+  var rfx = r(firstX), rfy = r(firstY);
+  contour[ci++] = rfx; contour[ci++] = rfy; contour[ci++] = 1;
+
+  /** 优化: 在转换过程中同时计算包围盒，避免二次遍历 */
+  var xMin = rfx, xMax = rfx, yMin = rfy, yMax = rfy;
 
   var i = 3;
   var nLen = normalized.length;
-  var lastX = r(normalized[0]);
-  var lastY = r(normalized[1]);
+  var lastX = firstX;
+  var lastY = firstY;
 
   while (i < nLen) {
     var isOnCurve = normalized[i + 2];
     if (isOnCurve) {
       /** 线段：直接添加 onCurve 端点 */
-      var px = r(normalized[i]);
-      var py = r(normalized[i + 1]);
-      contour.push(px, py, 1);
+      var px = normalized[i], py = normalized[i + 1];
+      var rpx = r(px), rpy = r(py);
+      contour[ci++] = rpx; contour[ci++] = rpy; contour[ci++] = 1;
+      if (rpx < xMin) xMin = rpx; else if (rpx > xMax) xMax = rpx;
+      if (rpy < yMin) yMin = rpy; else if (rpy > yMax) yMax = rpy;
       lastX = px;
       lastY = py;
       i += 3;
@@ -119,37 +133,47 @@ function transformContourFlat(arr) {
         if (endIdx < nLen) {
           endX = normalized[endIdx]; endY = normalized[endIdx + 1];
         } else {
-          endX = normalized[0]; endY = normalized[1];
+          endX = firstX; endY = firstY;
         }
         i = endIdx + 3;
 
-        /** 三次→二次贝塞尔转换 */
-        var bezierFlat = (0, _bezierCubic2Q.bezierCubic2Q2Raw)(lastX, lastY, c1x, c1y, c2x, c2y, endX, endY);
-        for (var bi = 0, bl = bezierFlat.length; bi < bl; bi += 4) {
-          contour.push(r(bezierFlat[bi]), r(bezierFlat[bi + 1]), 0);
-          contour.push(r(bezierFlat[bi + 2]), r(bezierFlat[bi + 3]), 1);
+        /** 优化255: 使用 bezierCubic2Q2PushRounded，写入时直接取整，消除二次遍历 */
+        var ciBefore = ci;
+        ci = (0, _bezierCubic2Q.bezierCubic2Q2PushRounded)(lastX, lastY, c1x, c1y, c2x, c2y, endX, endY, contour, ci);
+        /** 更新 bbox（坐标已在 PushRounded 中取整） */
+        for (var bi = ciBefore; bi < ci; bi += 3) {
+          var bx = contour[bi];
+          if (bx < xMin) xMin = bx; else if (bx > xMax) xMax = bx;
+          var by = contour[bi + 1];
+          if (by < yMin) yMin = by; else if (by > yMax) yMax = by;
         }
-        lastX = r(endX);
-        lastY = r(endY);
+        lastX = endX;
+        lastY = endY;
       } else {
         /** 单个 offCurve → 二次贝塞尔曲线（TTF 原生支持） */
         var endX2, endY2;
         if (nextIdx < nLen && normalized[nextIdx + 2]) {
           endX2 = normalized[nextIdx]; endY2 = normalized[nextIdx + 1];
-          i = nextIdx + 3;
         } else {
-          endX2 = normalized[0]; endY2 = normalized[1];
-          i = nextIdx + 3;
+          endX2 = firstX; endY2 = firstY;
         }
-        contour.push(r(c1x), r(c1y), 0);
-        contour.push(r(endX2), r(endY2), 1);
-        lastX = r(endX2);
-        lastY = r(endY2);
+        i = nextIdx + 3;
+        var rc1x = r(c1x), rc1y = r(c1y);
+        var re2x = r(endX2), re2y = r(endY2);
+        contour[ci++] = rc1x; contour[ci++] = rc1y; contour[ci++] = 0;
+        contour[ci++] = re2x; contour[ci++] = re2y; contour[ci++] = 1;
+        if (rc1x < xMin) xMin = rc1x; else if (rc1x > xMax) xMax = rc1x;
+        if (rc1y < yMin) yMin = rc1y; else if (rc1y > yMax) yMax = rc1y;
+        if (re2x < xMin) xMin = re2x; else if (re2x > xMax) xMax = re2x;
+        if (re2y < yMin) yMin = re2y; else if (re2y > yMax) yMax = re2y;
+        lastX = endX2;
+        lastY = endY2;
       }
     }
   }
 
-  return contour;
+  contour.length = ci;
+  return { contour: contour, xMin: xMin, yMin: yMin, xMax: xMax, yMax: yMax };
 }
 
 /**
@@ -160,47 +184,46 @@ function otfContours2ttfContours(otfContours) {
   if (!otfContours || !otfContours.length) {
     return { contours: otfContours };
   }
-  var contours = [];
-  var left, right, top, bottom;
-  var found = false;
+  /** 优化200: 预分配 contours 数组 */
+  var contours = new Array(otfContours.length);
+  var cLen = 0;
+  /** 优化221: 用 Infinity 初始化，消除 found 分支 */
+  var left = Infinity, right = -Infinity, top = Infinity, bottom = -Infinity;
+  /** 优化221: 提升 isFlat 检测到循环外，同一 glyph 的所有 contour 格式一致 */
+  var isFlat = otfContours[0] && (otfContours[0]._flatContours || (typeof otfContours[0][0] === 'number' && typeof otfContours[0][1] === 'number'));
   for (var i = 0, l = otfContours.length; i < l; i++) {
     var otfContour = otfContours[i];
     if (!otfContour || otfContour.length < 6) continue;
 
-    /** 检测输入格式：扁平数组 vs 对象数组 */
-    var isFlat = otfContour._flatContours || (typeof otfContour[0] === 'number' && typeof otfContour[1] === 'number');
     var contour;
+    var contourBbox;
     if (isFlat) {
-      contour = transformContourFlat(otfContour);
+      var result = transformContourFlat(otfContour);
+      if (!result) continue;
+      contour = result.contour;
+      contourBbox = result;
     } else {
       contour = transformContourObj(otfContour);
     }
     if (contour.length < 3) continue;
-    contours.push(contour);
+    contours[cLen++] = contour;
 
     /** 计算包围盒 */
-    if (typeof contour[0] === 'number') {
-      for (var ci = 0, cl = contour.length; ci < cl; ci += 3) {
-        var px = contour[ci], py = contour[ci + 1];
-        if (!found) {
-          left = right = px; top = bottom = py; found = true;
-        } else {
-          if (px < left) left = px; else if (px > right) right = px;
-          if (py < top) top = py; else if (py > bottom) bottom = py;
-        }
-      }
+    if (contourBbox) {
+      /** 优化: bbox 已在 transformContourFlat 中计算，直接合并 */
+      if (contourBbox.xMin < left) left = contourBbox.xMin;
+      if (contourBbox.xMax > right) right = contourBbox.xMax;
+      if (contourBbox.yMin < top) top = contourBbox.yMin;
+      if (contourBbox.yMax > bottom) bottom = contourBbox.yMax;
     } else {
-      for (var ci2 = 0, cl2 = contour.length; ci2 < cl2; ci2++) {
-        var p = contour[ci2];
-        if (!found) {
-          left = right = p.x; top = bottom = p.y; found = true;
-        } else {
-          if (p.x < left) left = p.x; else if (p.x > right) right = p.x;
-          if (p.y < top) top = p.y; else if (p.y > bottom) bottom = p.y;
-        }
+      for (var ci = 0, cl = contour.length; ci < cl; ci++) {
+        var p = contour[ci];
+        if (p.x < left) left = p.x; else if (p.x > right) right = p.x;
+        if (p.y < top) top = p.y; else if (p.y > bottom) bottom = p.y;
       }
     }
   }
+  contours.length = cLen;
   return {
     contours: contours,
     xMin: left,

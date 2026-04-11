@@ -24,7 +24,6 @@ function parseSimpleGlyf(reader, glyf) {
   var numberOfCoordinates = endPtsOfContours[endPtsOfContours.length - 1] + 1;
 
   if (numberOfCoordinates > MAX_NUMBER_OF_COORDINATES) {
-    console.warn('error read glyf coordinates:' + offset);
     return glyf;
   }
 
@@ -97,14 +96,13 @@ function parseSimpleGlyf(reader, glyf) {
 
 /**
  * 读取复合字形
+ * 优化257: 使用直接 DataView 访问替代 reader API，消除每次 read 的函数调用和参数检查
  */
 function parseCompoundGlyf(reader, glyf) {
   glyf.compound = true;
   glyf.glyfs = [];
   var flags;
-  var g;
   var ARG_1_AND_2_ARE_WORDS = _componentFlag.default.ARG_1_AND_2_ARE_WORDS;
-  var ROUND_XY_TO_GRID = _componentFlag.default.ROUND_XY_TO_GRID;
   var WE_HAVE_A_SCALE = _componentFlag.default.WE_HAVE_A_SCALE;
   var WE_HAVE_AN_X_AND_Y_SCALE = _componentFlag.default.WE_HAVE_AN_X_AND_Y_SCALE;
   var WE_HAVE_A_TWO_BY_TWO = _componentFlag.default.WE_HAVE_A_TWO_BY_TWO;
@@ -114,11 +112,12 @@ function parseCompoundGlyf(reader, glyf) {
   var MORE_COMPONENTS = _componentFlag.default.MORE_COMPONENTS;
   var WE_HAVE_INSTRUCTIONS = _componentFlag.default.WE_HAVE_INSTRUCTIONS;
 
+  var view = reader.view;
+  var vOffset = view.byteOffset + reader.offset;
+
   do {
-    flags = reader.readUint16();
-    g = {};
-    g.flags = flags;
-    g.glyphIndex = reader.readUint16();
+    flags = view.getUint16(vOffset, false); vOffset += 2;
+    var glyphIndex = view.getUint16(vOffset, false); vOffset += 2;
     var arg1 = 0;
     var arg2 = 0;
     var scaleX = 16384;
@@ -126,64 +125,56 @@ function parseCompoundGlyf(reader, glyf) {
     var scale01 = 0;
     var scale10 = 0;
     if (ARG_1_AND_2_ARE_WORDS & flags) {
-      arg1 = reader.readInt16();
-      arg2 = reader.readInt16();
+      arg1 = view.getInt16(vOffset, false); vOffset += 2;
+      arg2 = view.getInt16(vOffset, false); vOffset += 2;
     } else {
-      arg1 = reader.readInt8();
-      arg2 = reader.readInt8();
-    }
-    if (ROUND_XY_TO_GRID & flags) {
-      arg1 = Math.round(arg1);
-      arg2 = Math.round(arg2);
+      arg1 = view.getInt8(vOffset); vOffset += 1;
+      arg2 = view.getInt8(vOffset); vOffset += 1;
     }
     if (WE_HAVE_A_SCALE & flags) {
-      scaleX = reader.readInt16();
+      scaleX = view.getInt16(vOffset, false); vOffset += 2;
       scaleY = scaleX;
     } else if (WE_HAVE_AN_X_AND_Y_SCALE & flags) {
-      scaleX = reader.readInt16();
-      scaleY = reader.readInt16();
+      scaleX = view.getInt16(vOffset, false); vOffset += 2;
+      scaleY = view.getInt16(vOffset, false); vOffset += 2;
     } else if (WE_HAVE_A_TWO_BY_TWO & flags) {
-      scaleX = reader.readInt16();
-      scale01 = reader.readInt16();
-      scale10 = reader.readInt16();
-      scaleY = reader.readInt16();
+      scaleX = view.getInt16(vOffset, false); vOffset += 2;
+      scale01 = view.getInt16(vOffset, false); vOffset += 2;
+      scale10 = view.getInt16(vOffset, false); vOffset += 2;
+      scaleY = view.getInt16(vOffset, false); vOffset += 2;
     }
+    /** F2Dot14 → 小数: 优化214+236: 合并对象创建，减少每次 push 的分配次数 */
     if (ARGS_ARE_XY_VALUES & flags) {
-      g.useMyMetrics = !!(flags & USE_MY_METRICS);
-      g.overlapCompound = !!(flags & OVERLAP_COMPOUND);
-      g.transform = {
-        a: Math.round(scaleX * 0.6103515625) / 10000,
-        b: Math.round(scale01 * 0.6103515625) / 10000,
-        c: Math.round(scale10 * 0.6103515625) / 10000,
-        d: Math.round(scaleY * 0.6103515625) / 10000,
-        e: arg1,
-        f: arg2
-      };
+      glyf.glyfs.push({
+        flags: flags,
+        glyphIndex: glyphIndex,
+        useMyMetrics: !!(flags & USE_MY_METRICS),
+        overlapCompound: !!(flags & OVERLAP_COMPOUND),
+        transform: { a: (scaleX * 0.6103515625 + 0.5 | 0) / 10000, b: (scale01 * 0.6103515625 + 0.5 | 0) / 10000, c: (scale10 * 0.6103515625 + 0.5 | 0) / 10000, d: (scaleY * 0.6103515625 + 0.5 | 0) / 10000, e: arg1, f: arg2 }
+      });
     } else {
-      g.points = [arg1, arg2];
-      g.transform = {
-        a: Math.round(scaleX * 0.6103515625) / 10000,
-        b: Math.round(scale01 * 0.6103515625) / 10000,
-        c: Math.round(scale10 * 0.6103515625) / 10000,
-        d: Math.round(scaleY * 0.6103515625) / 10000,
-        e: 0,
-        f: 0
-      };
+      glyf.glyfs.push({
+        flags: flags,
+        glyphIndex: glyphIndex,
+        points: [arg1, arg2],
+        transform: { a: (scaleX * 0.6103515625 + 0.5 | 0) / 10000, b: (scale01 * 0.6103515625 + 0.5 | 0) / 10000, c: (scale10 * 0.6103515625 + 0.5 | 0) / 10000, d: (scaleY * 0.6103515625 + 0.5 | 0) / 10000, e: 0, f: 0 }
+      });
     }
-    glyf.glyfs.push(g);
   } while (MORE_COMPONENTS & flags);
+
   if (WE_HAVE_INSTRUCTIONS & flags) {
-    var length = reader.readUint16();
+    var length = view.getUint16(vOffset, false); vOffset += 2;
     if (length < MAX_INSTRUCTION_LENGTH) {
       var instructions = new Array(length);
       for (var i = 0; i < length; ++i) {
-        instructions[i] = reader.readUint8();
+        instructions[i] = view.getUint8(vOffset + i);
       }
       glyf.instructions = instructions;
-    } else {
-      console.warn(length);
     }
+    vOffset += length;
   }
+
+  reader.offset = vOffset - view.byteOffset;
   return glyf;
 }
 
@@ -217,10 +208,11 @@ function parseGlyf(reader, ttf, offset) {
         vOffset += 2;
       }
     } else {
-      delete glyf.xMin;
-      delete glyf.yMin;
-      delete glyf.xMax;
-      delete glyf.yMax;
+      /** 优化245: undefined → 0，避免 V8 隐藏类转换，后续取默认值 0 */
+      glyf.xMin = 0;
+      glyf.yMin = 0;
+      glyf.xMax = 0;
+      glyf.yMax = 0;
     }
 
     /* 优化12+42: 非 hinting 模式只跳过 instructions */

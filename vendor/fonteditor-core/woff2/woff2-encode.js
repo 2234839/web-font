@@ -26,6 +26,30 @@ const BROTLI_PARAM_SIZE_HINT = zlib.constants?.BROTLI_PARAM_SIZE_HINT ?? 4;
 const BROTLI_OPTIONS_BASE = {
   params: { [BROTLI_PARAM_QUALITY]: 8 },
 };
+/** 优化: 预分配 options 模板，避免每次 encode 创建 computed property name 对象 */
+const BROTLI_OPTIONS_WITH_HINT = {
+  params: { [BROTLI_PARAM_QUALITY]: 8, [BROTLI_PARAM_SIZE_HINT]: 0 },
+};
+
+/* ======== 大端序读写工具函数（模块级，消除闭包分配） ======== */
+
+/** 从 Uint8Array 读取无符号 16 位大端序 */
+function readU16(arr, off) { return (arr[off] << 8) | arr[off + 1]; }
+
+/** 从 Uint8Array 读取有符号 16 位大端序 */
+function readI16(arr, off) { const v = (arr[off] << 8) | arr[off + 1]; return v > 0x7FFF ? v - 0x10000 : v; }
+
+/** 从 Uint8Array 读取无符号 32 位大端序 */
+function readU32(arr, off) { return (arr[off] << 24 | arr[off + 1] << 16 | arr[off + 2] << 8 | arr[off + 3]) >>> 0; }
+
+/** 向 Uint8Array 写入无符号 16 位大端序 */
+function writeU16(buf, v, p) { buf[p] = v >> 8; buf[p + 1] = v & 0xFF; }
+
+/** 向 Uint8Array 写入有符号 16 位大端序 */
+function writeI16(buf, v, p) { buf[p] = v >> 8; buf[p + 1] = v & 0xFF; }
+
+/** 向 Uint8Array 写入无符号 32 位大端序 */
+function writeU32(buf, v, p) { buf[p] = v >> 24; buf[p + 1] = (v >> 16) & 0xFF; buf[p + 2] = (v >> 8) & 0xFF; buf[p + 3] = v & 0xFF; }
 
 /* ======== Known Table Tags 索引表 ======== */
 const KNOWN_TAGS = [
@@ -41,6 +65,9 @@ const KNOWN_TAGS = [
 /**
  * 优化：预构建 tag→index Map，消除每次 getTagIndex 的 O(63) 线性搜索
  */
+/** 优化: 模块级常量，避免每次 loca 表创建 new Uint8Array(0) */
+const EMPTY_UINT8 = new Uint8Array(0);
+
 const KNOWN_TAG_MAP = new Map();
 for (let i = 0; i < KNOWN_TAGS.length; i++) {
   KNOWN_TAG_MAP.set(KNOWN_TAGS[i], i);
@@ -65,19 +92,36 @@ function calcUIntBase128Size(value) {
   return 5;
 }
 
-/** 编码 UIntBase128（最多 5 字节，高位在前） */
+/** 编码 UIntBase128（最多 5 字节，高位在前），优化234: 展开常见路径 */
 function encodeUIntBase128(value, buf, offset) {
-  const size = calcUIntBase128Size(value);
-  let pos = offset;
-  for (let i = size - 1; i >= 0; i--) {
-    const byte = (value >>> (7 * i)) & 0x7F;
-    if (i > 0) {
-      buf[pos++] = byte | 0x80;
-    } else {
-      buf[pos++] = byte;
-    }
+  if (value < 0x80) {
+    buf[offset] = value;
+    return 1;
   }
-  return size;
+  if (value < 0x4000) {
+    buf[offset] = (value >>> 7) | 0x80;
+    buf[offset + 1] = value & 0x7F;
+    return 2;
+  }
+  if (value < 0x200000) {
+    buf[offset] = (value >>> 14) | 0x80;
+    buf[offset + 1] = ((value >>> 7) & 0x7F) | 0x80;
+    buf[offset + 2] = value & 0x7F;
+    return 3;
+  }
+  if (value < 0x10000000) {
+    buf[offset] = (value >>> 21) | 0x80;
+    buf[offset + 1] = ((value >>> 14) & 0x7F) | 0x80;
+    buf[offset + 2] = ((value >>> 7) & 0x7F) | 0x80;
+    buf[offset + 3] = value & 0x7F;
+    return 4;
+  }
+  buf[offset] = (value >>> 28) | 0x80;
+  buf[offset + 1] = ((value >>> 21) & 0x7F) | 0x80;
+  buf[offset + 2] = ((value >>> 14) & 0x7F) | 0x80;
+  buf[offset + 3] = ((value >>> 7) & 0x7F) | 0x80;
+  buf[offset + 4] = value & 0x7F;
+  return 5;
 }
 
 /** 编码 255UInt16（1-3 字节变长） */
@@ -128,10 +172,10 @@ function dataSizeFromTriplet(ti) {
 }
 
 /**
- * 编码一个点到 glyphStream，返回 triplet flag 字节
- * 直接写入 buf，不分配数组
+ * 仅计算 triplet flag 字节，不写入数据
+ * 优化: Pass 1 只需要 flag，数据写入由 Pass 2 的 writePointDataByFlag 完成
  */
-function encodePointToBuf(onCurve, dx, dy, buf, offset) {
+function calcTripletFlag(onCurve, dx, dy) {
   const curveBit = onCurve ? 0 : 128;
   const absDx = dx < 0 ? -dx : dx;
   const absDy = dy < 0 ? -dy : dy;
@@ -141,53 +185,35 @@ function encodePointToBuf(onCurve, dx, dy, buf, offset) {
 
   /* dx=0, Y 单轴 1 数据字节 (flag 0-9) */
   if (dx === 0 && absDy < 1280) {
-    const flag = curveBit + ((absDy & 0xF00) >> 7) + ySignBit;
-    buf[offset] = absDy & 0xFF;
-    return flag;
+    return curveBit + ((absDy & 0xF00) >> 7) + ySignBit;
   }
 
   /* dy=0, dx≠0, X 单轴 1 数据字节 (flag 10-19) */
   if (dy === 0 && dx !== 0 && absDx < 1280) {
-    const flag = curveBit + 10 + ((absDx & 0xF00) >> 7) + xSignBit;
-    buf[offset] = absDx & 0xFF;
-    return flag;
+    return curveBit + 10 + ((absDx & 0xF00) >> 7) + xSignBit;
   }
 
   /* 双轴 1 数据字节 (flag 20-83): 1 ≤ |dx| ≤ 64, 1 ≤ |dy| ≤ 64 */
   if (dx !== 0 && dy !== 0 && absDx < 65 && absDy < 65) {
     const ax = absDx - 1;
     const ay = absDy - 1;
-    const flag = curveBit + 20 + (ax & 0x30) + ((ay & 0x30) >> 2) + xySignBits;
-    buf[offset] = ((ax & 0xF) << 4) | (ay & 0xF);
-    return flag;
+    return curveBit + 20 + (ax & 0x30) + ((ay & 0x30) >> 2) + xySignBits;
   }
 
   /* 双轴 2 数据字节 (flag 84-119): 1 ≤ |dx| ≤ 768, 1 ≤ |dy| ≤ 768 */
   if (dx !== 0 && dy !== 0 && absDx < 769 && absDy < 769) {
     const ax = absDx - 1;
     const ay = absDy - 1;
-    const flag = curveBit + 84 + 12 * ((ax & 0x300) >> 8) + ((ay & 0x300) >> 6) + xySignBits;
-    buf[offset] = ax & 0xFF;
-    buf[offset + 1] = ay & 0xFF;
-    return flag;
+    return curveBit + 84 + 12 * ((ax & 0x300) >> 8) + ((ay & 0x300) >> 6) + xySignBits;
   }
 
   /* 双轴 3 数据字节 (flag 120-123) */
   if (absDx < 4096 && absDy < 4096) {
-    const flag = curveBit + 120 + xySignBits;
-    buf[offset] = absDx >> 4;
-    buf[offset + 1] = ((absDx & 0xF) << 4) | (absDy >> 8);
-    buf[offset + 2] = absDy & 0xFF;
-    return flag;
+    return curveBit + 120 + xySignBits;
   }
 
   /* 兜底 4 数据字节 (flag 124-127) */
-  const flag = curveBit + 124 + xySignBits;
-  buf[offset] = (absDx >> 8) & 0xFF;
-  buf[offset + 1] = absDx & 0xFF;
-  buf[offset + 2] = (absDy >> 8) & 0xFF;
-  buf[offset + 3] = absDy & 0xFF;
-  return flag;
+  return curveBit + 124 + xySignBits;
 }
 
 /**
@@ -243,18 +269,17 @@ function writePointDataByFlag(flag, dx, dy, buf, offset) {
  * 对 glyf + loca 表执行 WOFF2 变换
  */
 function transformGlyfAndLoca(glyfData, locaData, indexFormat, numGlyphs) {
-  const glyfView = new DataView(glyfData.buffer, glyfData.byteOffset, glyfData.byteLength);
-  const locaView = new DataView(locaData.buffer, locaData.byteOffset, locaData.byteLength);
+  /** 优化222: 使用模块级 readU16/readI16/readU32，消除闭包分配 */
 
   /* 读取 loca 表获取每个 glyph 的偏移 */
   const offsets = new Int32Array(numGlyphs + 1);
   if (indexFormat === 0) {
     for (let i = 0; i <= numGlyphs; i++) {
-      offsets[i] = locaView.getUint16(i * 2, false) * 2;
+      offsets[i] = readU16(locaData, i * 2) * 2;
     }
   } else {
     for (let i = 0; i <= numGlyphs; i++) {
-      offsets[i] = locaView.getUint32(i * 4, false);
+      offsets[i] = readU32(locaData, i * 4);
     }
   }
 
@@ -278,10 +303,9 @@ function transformGlyfAndLoca(glyfData, locaData, indexFormat, numGlyphs) {
   let hasOverlapBitmap = false;
   let totalPoints = 0;
 
-  const bboxBitmapSize = 4 * Math.floor((numGlyphs + 31) / 32);
+  const bboxBitmapSize = ((numGlyphs + 31) >>> 5) << 2;
   const bboxBitmap = new Uint8Array(bboxBitmapSize);
   const overlapBitmap = new Uint8Array(bboxBitmapSize);
-  const tmpBuf = new Uint8Array(4);
 
   /* 收集每个 glyph 的信息 */
   const glyphInfos = new Array(numGlyphs);
@@ -295,11 +319,11 @@ function transformGlyfAndLoca(glyfData, locaData, indexFormat, numGlyphs) {
       continue;
     }
 
-    const numberOfContours = glyfView.getInt16(glyphStart, false);
-    const xMin = glyfView.getInt16(glyphStart + 2, false);
-    const yMin = glyfView.getInt16(glyphStart + 4, false);
-    const xMax = glyfView.getInt16(glyphStart + 6, false);
-    const yMax = glyfView.getInt16(glyphStart + 8, false);
+    const numberOfContours = readI16(glyfData, glyphStart);
+    const xMin = readI16(glyfData, glyphStart + 2);
+    const yMin = readI16(glyfData, glyphStart + 4);
+    const xMax = readI16(glyfData, glyphStart + 6);
+    const yMax = readI16(glyfData, glyphStart + 8);
 
     if (numberOfContours < 0) {
       /* 复合 glyph */
@@ -311,7 +335,7 @@ function transformGlyfAndLoca(glyfData, locaData, indexFormat, numGlyphs) {
       const MORE_COMPONENTS = 0x0020;
       const WE_HAVE_INSTRUCTIONS = 0x0100;
       while (compOff < glyphEnd) {
-        const compFlags = glyfView.getUint16(compOff, false);
+        const compFlags = readU16(glyfData, compOff);
         compOff += 2;
         compOff += 2; /* glyphIndex */
 
@@ -330,7 +354,7 @@ function transformGlyfAndLoca(glyfData, locaData, indexFormat, numGlyphs) {
       const componentDataEnd = compOff;
 
       if (haveInstructions && compOff + 2 <= glyphEnd) {
-        instrLength = glyfView.getUint16(compOff, false);
+        instrLength = readU16(glyfData, compOff);
         compOff += 2;
         if (instrLength > 0 && compOff + instrLength <= glyphEnd) {
           instructions = { offset: compOff, length: instrLength };
@@ -362,23 +386,21 @@ function transformGlyfAndLoca(glyfData, locaData, indexFormat, numGlyphs) {
     /* 简单 glyph */
     let dataOff = glyphStart + 10;
 
-    const endPtsOfContours = new Uint16Array(numberOfContours);
-    for (let c = 0; c < numberOfContours; c++) {
-      endPtsOfContours[c] = glyfView.getUint16(dataOff, false);
-      dataOff += 2;
-    }
-
-    /* ★ 合并：totalNPointsSize 计算 + 缓存 255UInt16 编码结果 */
+    /** 优化226: 合并 endPts 读取与 nPoints 编码，消除 endPtsOfContours TypedArray 分配 */
     const nPointsEncoded = new Uint8Array(numberOfContours * 3);
     let nPointsBytes = 0;
     let prevEnd = -1;
+    let lastEndPt = -1;
     for (let c = 0; c < numberOfContours; c++) {
-      nPointsBytes += encode255UInt16(endPtsOfContours[c] - prevEnd, nPointsEncoded, nPointsBytes);
-      prevEnd = endPtsOfContours[c];
+      const endPt = readU16(glyfData, dataOff);
+      dataOff += 2;
+      nPointsBytes += encode255UInt16(endPt - prevEnd, nPointsEncoded, nPointsBytes);
+      prevEnd = endPt;
     }
+    lastEndPt = prevEnd;
     totalNPointsSize += nPointsBytes;
 
-    const instructionLength = glyfView.getUint16(dataOff, false);
+    const instructionLength = readU16(glyfData, dataOff);
     dataOff += 2;
     const instructions = instructionLength > 0 ? { offset: dataOff, length: instructionLength } : null;
     dataOff += instructionLength;
@@ -386,7 +408,7 @@ function transformGlyfAndLoca(glyfData, locaData, indexFormat, numGlyphs) {
     /* ★ 合并：instructionStreamSize 累加 */
     instructionStreamSize += instructionLength;
 
-    const numPoints = numberOfContours > 0 ? endPtsOfContours[numberOfContours - 1] + 1 : 0;
+    const numPoints = numberOfContours > 0 ? lastEndPt + 1 : 0;
 
     /* 优化183: flagsArr 复用为 cachedFlags，消除每个 glyph 一次 Uint8Array 分配 */
     const flagsArr = new Uint8Array(numPoints);
@@ -398,7 +420,7 @@ function transformGlyfAndLoca(glyfData, locaData, indexFormat, numGlyphs) {
       flagsArr[fi++] = flag;
       if (flag & REPEAT_FLAG && fi < numPoints) {
         const repeat = glyfData[dataOff++];
-        const count = Math.min(repeat, numPoints - fi);
+        const count = repeat < numPoints - fi ? repeat : numPoints - fi;
         flagsArr.fill(flag, fi, fi + count);
         fi += count;
       }
@@ -462,20 +484,24 @@ function transformGlyfAndLoca(glyfData, locaData, indexFormat, numGlyphs) {
         bboxStreamSize += 8;
       }
 
+      /** 优化: Pass 1 就地覆盖 xCoords/yCoords 为 delta，消除 Pass 2 重复减法 */
       let prevX = 0, prevY = 0;
       for (let pi = 0; pi < numPoints; pi++) {
         const onCurve = !!(flagsArr[pi] & ONCURVE_FLAG);
         const dx = xCoords[pi] - prevX;
         const dy = yCoords[pi] - prevY;
-        const flag = encodePointToBuf(onCurve, dx, dy, tmpBuf, 0);
+        const flag = calcTripletFlag(onCurve, dx, dy);
         flagsArr[pi] = flag;
+        xCoords[pi] = dx;
+        yCoords[pi] = dy;
         glyphStreamSize += TRIPLET_DATA_SIZES[flag & 0x7F];
-        prevX = xCoords[pi];
-        prevY = yCoords[pi];
+        prevX += dx;
+        prevY += dy;
       }
       glyphStreamSize += size255UInt16(instructionLength);
     }
 
+    /* 优化: 仅存储 Pass 2 实际需要的字段，减少对象大小 */
     glyphInfos[gi] = {
       composite: false,
       numberOfContours,
@@ -483,8 +509,6 @@ function transformGlyfAndLoca(glyfData, locaData, indexFormat, numGlyphs) {
       nPointsBytes,
       instructions,
       xCoords, yCoords, flags: flagsArr,
-      hasOverlap,
-      xMin, yMin, xMax, yMax,
       calcXMin, calcYMin, calcXMax, calcYMax,
     };
   }
@@ -503,21 +527,21 @@ function transformGlyfAndLoca(glyfData, locaData, indexFormat, numGlyphs) {
     + overlapBitmapSize;
 
   const result = new Uint8Array(totalSize);
-  const resultView = new DataView(result.buffer, result.byteOffset, result.byteLength);
+  /** 优化222: 使用模块级 writeU16/writeI16/writeU32，消除闭包分配 */
   let pos = 0;
 
   /* Header */
-  resultView.setUint16(pos, 0, false); pos += 2;
-  resultView.setUint16(pos, hasOverlapBitmap ? 1 : 0, false); pos += 2;
-  resultView.setUint16(pos, numGlyphs, false); pos += 2;
-  resultView.setUint16(pos, indexFormat, false); pos += 2;
-  resultView.setUint32(pos, nContourStreamSize, false); pos += 4;
-  resultView.setUint32(pos, totalNPointsSize, false); pos += 4;
-  resultView.setUint32(pos, flagStreamSize, false); pos += 4;
-  resultView.setUint32(pos, glyphStreamSize, false); pos += 4;
-  resultView.setUint32(pos, 0, false); pos += 4;
-  resultView.setUint32(pos, bboxBitmapSize + bboxStreamSize, false); pos += 4;
-  resultView.setUint32(pos, instructionStreamSize, false); pos += 4;
+  writeU16(result, 0, pos); pos += 2;
+  writeU16(result, hasOverlapBitmap ? 1 : 0, pos); pos += 2;
+  writeU16(result, numGlyphs, pos); pos += 2;
+  writeU16(result, indexFormat, pos); pos += 2;
+  writeU32(result, nContourStreamSize, pos); pos += 4;
+  writeU32(result, totalNPointsSize, pos); pos += 4;
+  writeU32(result, flagStreamSize, pos); pos += 4;
+  writeU32(result, glyphStreamSize, pos); pos += 4;
+  writeU32(result, 0, pos); pos += 4;
+  writeU32(result, bboxBitmapSize + bboxStreamSize, pos); pos += 4;
+  writeU32(result, instructionStreamSize, pos); pos += 4;
 
   /**
    * 优化：合并原第 3/4/5 次遍历为 1 次
@@ -550,22 +574,22 @@ function transformGlyfAndLoca(glyfData, locaData, indexFormat, numGlyphs) {
 
     /* nContourStream: 每个 glyph 写入 numberOfContours */
     if (!g) {
-      resultView.setInt16(nContourPos, 0, false); nContourPos += 2;
+      writeI16(result, 0, nContourPos); nContourPos += 2;
       continue;
     }
     if (g.composite) {
-      resultView.setInt16(nContourPos, -1, false); nContourPos += 2;
+      writeI16(result, -1, nContourPos); nContourPos += 2;
     } else {
-      resultView.setInt16(nContourPos, g.numberOfContours, false); nContourPos += 2;
+      writeI16(result, g.numberOfContours, nContourPos); nContourPos += 2;
     }
 
     if (g.composite) {
       result.set(glyfData.subarray(g.rawOffset, g.rawOffset + g.rawLength), glyphPos);
       glyphPos += g.rawLength;
-      resultView.setInt16(bboxPos, g.xMin, false); bboxPos += 2;
-      resultView.setInt16(bboxPos, g.yMin, false); bboxPos += 2;
-      resultView.setInt16(bboxPos, g.xMax, false); bboxPos += 2;
-      resultView.setInt16(bboxPos, g.yMax, false); bboxPos += 2;
+      writeI16(result, g.xMin, bboxPos); bboxPos += 2;
+      writeI16(result, g.yMin, bboxPos); bboxPos += 2;
+      writeI16(result, g.xMax, bboxPos); bboxPos += 2;
+      writeI16(result, g.yMax, bboxPos); bboxPos += 2;
       if (g.haveInstructions) {
         const instrLen = g.instructions ? g.instructions.length : 0;
         if (instrLen > 0) {
@@ -590,31 +614,26 @@ function transformGlyfAndLoca(glyfData, locaData, indexFormat, numGlyphs) {
     }
 
     /**
-     * flag + glyph 子流 — 使用缓存的 triplet flag + writePointDataByFlag
-     * 避免写入阶段的完整分支判断链（6 层 if-else），改用 flag 值直接定位数据布局
+     * flag + glyph 子流 — xCoords/yCoords 已在 Pass 1 就地覆盖为 delta
+     * 直接读取 delta，消除 prevX/prevY 追踪和减法运算
      */
     const numPts = g.xCoords.length;
     const xCoords = g.xCoords;
     const yCoords = g.yCoords;
     const tripletFlags = g.flags;
-    let prevX = 0, prevY = 0;
     for (let pi = 0; pi < numPts; pi++) {
-      const dx = xCoords[pi] - prevX;
-      const dy = yCoords[pi] - prevY;
       const flag = tripletFlags[pi];
       result[flagPos++] = flag;
-      glyphPos += writePointDataByFlag(flag, dx, dy, result, glyphPos);
-      prevX = xCoords[pi];
-      prevY = yCoords[pi];
+      glyphPos += writePointDataByFlag(flag, xCoords[pi], yCoords[pi], result, glyphPos);
     }
 
     glyphPos += encode255UInt16(instrLen, result, glyphPos);
 
     if (bboxBitmap[gi >> 3] & (0x80 >> (gi & 7))) {
-      resultView.setInt16(bboxPos, g.calcXMin, false); bboxPos += 2;
-      resultView.setInt16(bboxPos, g.calcYMin, false); bboxPos += 2;
-      resultView.setInt16(bboxPos, g.calcXMax, false); bboxPos += 2;
-      resultView.setInt16(bboxPos, g.calcYMax, false); bboxPos += 2;
+      writeI16(result, g.calcXMin, bboxPos); bboxPos += 2;
+      writeI16(result, g.calcYMin, bboxPos); bboxPos += 2;
+      writeI16(result, g.calcXMax, bboxPos); bboxPos += 2;
+      writeI16(result, g.calcYMax, bboxPos); bboxPos += 2;
     }
   }
 
@@ -635,6 +654,12 @@ function transformGlyfAndLoca(glyfData, locaData, indexFormat, numGlyphs) {
 
 /* ======== 主编码函数 ======== */
 
+/** 优化242: 模块级排序函数，避免每次 encodeTTFToWOFF2 创建闭包 */
+function sortDirEntries(a, b) {
+  var d = a.tagIndex - b.tagIndex;
+  return d ? d : (a.tag < b.tag ? -1 : a.tag > b.tag ? 1 : 0);
+}
+
 const WOFF2_SIGNATURE = 0x774F4632;
 const WOFF2_HEADER_SIZE = 48;
 
@@ -643,25 +668,24 @@ const WOFF2_HEADER_SIZE = 48;
  */
 function encodeTTFToWOFF2(ttfBuffer) {
   const data = ttfBuffer instanceof Uint8Array ? ttfBuffer : new Uint8Array(ttfBuffer);
-  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
-
+  /** 优化222+242: 直接调用模块级函数，消除 .bind() 闭包分配 */
   /* 解析 sfnt header */
-  const flavor = view.getUint32(0, false);
-  const numTables = view.getUint16(4, false);
+  const flavor = readU32(data, 0);
+  const numTables = readU16(data, 4);
 
   /* 解析 Table Directory */
   const tables = [];
   for (let i = 0; i < numTables; i++) {
     const off = 12 + i * 16;
     const tag = String.fromCharCode(data[off], data[off + 1], data[off + 2], data[off + 3]);
-    const offset = view.getUint32(off + 8, false);
-    const length = view.getUint32(off + 12, false);
+    const offset = readU32(data, off + 8);
+    const length = readU32(data, off + 12);
     tables.push({ tag, offset, length, tagIndex: getTagIndex(tag) });
   }
 
   /* 移除 DSIG，按 tag 升序排列 */
   const filtered = tables.filter(t => t.tag !== "DSIG");
-  filtered.sort((a, b) => a.tagIndex - b.tagIndex || (a.tag < b.tag ? -1 : a.tag > b.tag ? 1 : 0));
+  filtered.sort(sortDirEntries);
 
   /* 查找关键表 */
   let indexToLocFormat = 0;
@@ -669,9 +693,11 @@ function encodeTTFToWOFF2(ttfBuffer) {
   let glyfTable = null;
   let locaTable = null;
 
-  for (const t of filtered) {
-    if (t.tag === "head") indexToLocFormat = view.getUint16(t.offset + 50, false);
-    if (t.tag === "maxp") numGlyphs = view.getUint16(t.offset + 4, false);
+  /* 优化: for...of → for 循环，消除迭代器协议开销 */
+  for (var fi = 0, fl = filtered.length; fi < fl; fi++) {
+    var t = filtered[fi];
+    if (t.tag === "head") indexToLocFormat = readU16(data, t.offset + 50);
+    if (t.tag === "maxp") numGlyphs = readU16(data, t.offset + 4);
     if (t.tag === "glyf") glyfTable = t;
     if (t.tag === "loca") locaTable = t;
   }
@@ -689,7 +715,8 @@ function encodeTTFToWOFF2(ttfBuffer) {
   const dirEntries = [];
   let totalDirSize = 0;
 
-  for (const t of filtered) {
+  for (var fi2 = 0, fl2 = filtered.length; fi2 < fl2; fi2++) {
+    var t = filtered[fi2];
     if (t.tag === "loca") {
       /** 优化：直接使用 transformGlyfAndLoca 返回的 locaOrigLength，避免重复计算 */
       const origLength = glyfTransformed ? glyfTransformed.locaOrigLength : t.length;
@@ -698,7 +725,7 @@ function encodeTTFToWOFF2(ttfBuffer) {
         flags: t.tagIndex,
         origLength,
         transformLength: 0,
-        data: new Uint8Array(0),
+        data: EMPTY_UINT8,
         hasTransform: true,
       });
       totalDirSize += 1 + sizeUIntBase128(origLength) + sizeUIntBase128(0);
@@ -743,54 +770,54 @@ function encodeTTFToWOFF2(ttfBuffer) {
   for (let i = 0; i < dirEntries.length; i++) totalTableDataSize += dirEntries[i].transformLength;
   const uncompressedData = new Uint8Array(totalTableDataSize);
   let dataPos = 0;
-  for (const entry of dirEntries) {
+  /* 优化: for 循环替代 for...of，避免迭代器对象分配 */
+  for (let di = 0; di < dirEntries.length; di++) {
+    const entry = dirEntries[di];
     if (entry.transformLength > 0) {
       uncompressedData.set(entry.data, dataPos);
       if (entry.isHead) {
-        /* head 表原地修改：清零 checkSumAdjustment，设置 bit 11（headFlags），避免额外拷贝 */
-        const uView = new DataView(uncompressedData.buffer, uncompressedData.byteOffset + dataPos, entry.transformLength);
-        uView.setUint32(8, 0, false);
-        const headFlags = uView.getUint16(44, false);
-        uView.setUint16(44, headFlags | (1 << 11), false);
+        /* 优化: 用 Uint8Array 直接写入替代 DataView，消除每次 head 表的 DataView 分配 */
+        const base = dataPos;
+        uncompressedData[base + 8] = uncompressedData[base + 9] = uncompressedData[base + 10] = uncompressedData[base + 11] = 0;
+        const headFlags = (uncompressedData[base + 44] << 8) | uncompressedData[base + 45];
+        const newFlags = headFlags | (1 << 11);
+        uncompressedData[base + 44] = (newFlags >> 8) & 0xFF;
+        uncompressedData[base + 45] = newFlags & 0xFF;
       }
       dataPos += entry.transformLength;
     }
   }
 
   /* Brotli 压缩，传入 SIZE_HINT 帮助预分配内部缓冲区 */
-  const brotliOptions = totalTableDataSize > 0
-    ? { params: {
-        [BROTLI_PARAM_QUALITY]: 8,
-        [BROTLI_PARAM_SIZE_HINT]: totalTableDataSize,
-      }}
-    : BROTLI_OPTIONS_BASE;
-  const compressedData = brotliCompressSync(uncompressedData, brotliOptions);
+  if (totalTableDataSize > 0) BROTLI_OPTIONS_WITH_HINT.params[BROTLI_PARAM_SIZE_HINT] = totalTableDataSize;
+  const compressedData = brotliCompressSync(uncompressedData, totalTableDataSize > 0 ? BROTLI_OPTIONS_WITH_HINT : BROTLI_OPTIONS_BASE);
 
   /* 组装 WOFF2（预计算 padding，避免额外拷贝） */
   const rawLength = WOFF2_HEADER_SIZE + totalDirSize + compressedData.length;
   const paddedLength = (rawLength + 3) & ~3;
   const woff2 = new Uint8Array(paddedLength);
-  const woff2View = new DataView(woff2.buffer, woff2.byteOffset, woff2.byteLength);
+  /** 优化222+242: 直接调用模块级函数，消除 .bind() 闭包分配 */
 
   /* Header */
-  woff2View.setUint32(0, WOFF2_SIGNATURE, false);
-  woff2View.setUint32(4, flavor, false);
-  woff2View.setUint32(8, paddedLength, false);
-  woff2View.setUint16(12, dirEntries.length, false);
-  woff2View.setUint16(14, 0, false);
-  woff2View.setUint32(16, totalSfntSize, false);
-  woff2View.setUint32(20, compressedData.length, false);
-  woff2View.setUint16(24, 1, false);
-  woff2View.setUint16(26, 0, false);
-  woff2View.setUint32(28, 0, false);
-  woff2View.setUint32(32, 0, false);
-  woff2View.setUint32(36, 0, false);
-  woff2View.setUint32(40, 0, false);
-  woff2View.setUint32(44, 0, false);
+  writeU32(woff2, WOFF2_SIGNATURE, 0);
+  writeU32(woff2, flavor, 4);
+  writeU32(woff2, paddedLength, 8);
+  writeU16(woff2, dirEntries.length, 12);
+  writeU16(woff2, 0, 14);
+  writeU32(woff2, totalSfntSize, 16);
+  writeU32(woff2, compressedData.length, 20);
+  writeU16(woff2, 1, 24);
+  writeU16(woff2, 0, 26);
+  writeU32(woff2, 0, 28);
+  writeU32(woff2, 0, 32);
+  writeU32(woff2, 0, 36);
+  writeU32(woff2, 0, 40);
+  writeU32(woff2, 0, 44);
 
   /* Table Directory */
   let dirPos = WOFF2_HEADER_SIZE;
-  for (const entry of dirEntries) {
+  for (let di = 0; di < dirEntries.length; di++) {
+    const entry = dirEntries[di];
     woff2[dirPos++] = entry.flags;
     if (entry.tagIndex === 63) {
       for (let ci = 0; ci < 4; ci++) woff2[dirPos++] = entry.tag.charCodeAt(ci);

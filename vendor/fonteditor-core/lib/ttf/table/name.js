@@ -87,11 +87,13 @@ var _default = exports.default = _table.default.create('name', [], {
       offset += r.name.length;
     }
 
-    /** 必须在 writeBytes 前同步 writer.offset，否则 writeBytes 会从旧偏移写入，覆盖 header */
-    writer.offset = pos;
+    /** 优化206: 直接 fullView.set 替代 writer.writeBytes，消除函数调用+边界检查开销 */
+    var fullView = new Uint8Array(view.buffer, view.byteOffset);
     for (var j = 0, jl = nameRecordTbl.length; j < jl; j++) {
-      writer.writeBytes(nameRecordTbl[j].name);
+      fullView.set(nameRecordTbl[j].name, pos);
+      pos += nameRecordTbl[j].name.length;
     }
+    writer.offset = pos;
     return writer;
   },
   size: function size(ttf) {
@@ -102,10 +104,14 @@ var _default = exports.default = _table.default.create('name', [], {
     // 这里为了简化书写，仅支持英文编码字符，
     // 中文编码字符将被转化成url encode
     var size = 6;
-    for (var name in names) {
+    /** 优化239: Object.keys + for 替代 for...in */
+    var nameKeys = Object.keys(names);
+    for (var ki = 0, kl = nameKeys.length; ki < kl; ki++) {
+      var ki_name = nameKeys[ki];
+      var name = ki_name;
       var id = _nameId.default.names[name];
-      var utf8Bytes = _string.default.toUTF8Bytes(names[name]);
-      var usc2Bytes = _string.default.toUCS2Bytes(names[name]);
+      var utf8Bytes = _string.default.toUTF8Bytes(names[ki_name]);
+      var usc2Bytes = _string.default.toUCS2Bytes(names[ki_name]);
       if (undefined !== id) {
         // mac
         nameRecordTbl.push({

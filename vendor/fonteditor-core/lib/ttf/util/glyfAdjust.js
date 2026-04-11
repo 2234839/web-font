@@ -31,21 +31,24 @@ function glyfAdjust(g) {
   var offsetX = arguments.length > 3 && arguments[3] !== undefined ? arguments[3] : 0;
   var offsetY = arguments.length > 4 && arguments[4] !== undefined ? arguments[4] : 0;
   var useCeil = arguments.length > 5 && arguments[5] !== undefined ? arguments[5] : true;
+  /* 优化: 合并三次 forEach 为单次 for 循环，消除闭包分配 */
   if (g.contours && g.contours.length) {
-    if (scaleX !== 1 || scaleY !== 1) {
-      g.contours.forEach(function (contour) {
-        (0, _pathAdjust.default)(contour, scaleX, scaleY);
-      });
-    }
-    if (offsetX !== 0 || offsetY !== 0) {
-      g.contours.forEach(function (contour) {
-        (0, _pathAdjust.default)(contour, 1, 1, offsetX, offsetY);
-      });
-    }
-    if (false !== useCeil) {
-      g.contours.forEach(function (contour) {
-        (0, _pathCeil.default)(contour);
-      });
+    var needScale = scaleX !== 1 || scaleY !== 1;
+    var needOffset = offsetX !== 0 || offsetY !== 0;
+    var needCeil = useCeil !== false;
+    if (needScale || needOffset || needCeil) {
+      for (var ci = 0, cl = g.contours.length; ci < cl; ci++) {
+        var contour = g.contours[ci];
+        if (needScale) {
+          (0, _pathAdjust.default)(contour, scaleX, scaleY);
+        }
+        if (needOffset) {
+          (0, _pathAdjust.default)(contour, 1, 1, offsetX, offsetY);
+        }
+        if (needCeil) {
+          (0, _pathCeil.default)(contour);
+        }
+      }
     }
   }
 

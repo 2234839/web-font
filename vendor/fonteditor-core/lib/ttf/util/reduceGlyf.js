@@ -19,21 +19,20 @@ function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { de
  */
 function reduceGlyf(glyf) {
   var contours = glyf.contours;
-  var contour;
   /* 优化66: 扁平格式下 contour.length 是点的3倍 */
   var isFlat = glyf._flatContours;
   var minLen = isFlat ? 6 : 2;
-  for (var j = contours.length - 1; j >= 0; j--) {
-    contour = (0, _reducePath.default)(contours[j]);
-
-    /* 空轮廓：扁平格式 <= 6 元素（2个点），对象格式 <= 2 个点 */
-    if (contour.length <= minLen) {
-      contours.splice(j, 1);
-      continue;
+  /** 优化: 使用 writeIdx 替代 splice，O(n) 替代 O(n*m) */
+  var writeIdx = 0;
+  for (var j = 0, cl = contours.length; j < cl; j++) {
+    var contour = (0, _reducePath.default)(contours[j]);
+    if (contour.length > minLen) {
+      contours[writeIdx++] = contour;
     }
   }
-  if (0 === glyf.contours.length) {
-    delete glyf.contours;
+  contours.length = writeIdx;
+  if (0 === writeIdx) {
+    glyf.contours = null;
   }
   return glyf;
 }

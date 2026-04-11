@@ -31,15 +31,22 @@ var _default = exports.default = _table.default.create('glyf', [], {
       var subsetMap = { 0: true };
       var subsetGids = [0];
       var cmap = ttf.cmap;
+      /** 优化: 构建 unicode→gid 映射，供 resolveGlyf 直接遍历，避免全量 cmap 遍历 */
+      var subsetUnicodeMap = {};
       for (var si = 0, sl = subset.length; si < sl; si++) {
-        var gid = cmap[subset[si]];
+        var u = subset[si];
+        var gid = cmap[u];
         if (gid !== undefined && !subsetMap[gid]) {
           subsetMap[gid] = true;
           subsetGids.push(gid);
+          subsetUnicodeMap[u] = gid;
+        } else if (gid !== undefined) {
+          subsetUnicodeMap[u] = gid;
         }
       }
       ttf.subsetMap = subsetMap;
       ttf.subsetGids = subsetGids;
+      ttf._subsetUnicodeMap = subsetUnicodeMap;
       var parsedGlyfMap = {};
 
       /* 优化：迭代式广度优先遍历替代递归，消除 isEmptyObject 调用 */

@@ -70,11 +70,14 @@ var OTFReader = exports.default = /*#__PURE__*/function () {
       }
       font.readOptions = this.options;
 
-      /* 优化125: Object.keys+forEach → for...in 循环 */
-      for (var tableName in _supportOtf.default) {
+      /** 优化232: 预构建表名列表，替代 for...in 遍历 */
+      var otfTableNames = ['head', 'maxp', 'cmap', 'name', 'hhea', 'hmtx', 'post', 'OS/2', 'CFF', 'GPOS', 'kern'];
+      var otfSupport = _supportOtf.default;
+      for (var ti = 0, tl = otfTableNames.length; ti < tl; ti++) {
+        var tableName = otfTableNames[ti];
         if (font.tables[tableName]) {
           var offset = font.tables[tableName].offset;
-          font[tableName] = new _supportOtf.default[tableName](offset).read(reader, font);
+          font[tableName] = new otfSupport[tableName](offset).read(reader, font);
         }
       }
       if (!font.CFF.glyf) {
@@ -94,48 +97,74 @@ var OTFReader = exports.default = /*#__PURE__*/function () {
     value: function resolveGlyf(font) {
       var codes = font.cmap;
       var glyf = font.CFF.glyf;
-      var subsetMap = font.readOptions.subset ? font.subsetMap : null; // 当前ttf的子集列表
-      /* 优化125: Object.keys+forEach → for...in 循环 */
-      for (var c in codes) {
-        var i = codes[c];
-        if (subsetMap && !subsetMap[i]) {
-          continue;
+      var subsetMap = font.readOptions.subset ? font.subsetMap : null;
+      /** 优化231: 用 Object.keys + for 循环替代 for...in，消除原型链遍历 + 字符串键开销 */
+      var cmapKeys = Object.keys(codes);
+      if (subsetMap) {
+        for (var ki = 0, kl = cmapKeys.length; ki < kl; ki++) {
+          var c = cmapKeys[ki];
+          var i = codes[c];
+          if (!subsetMap[i]) continue;
+          if (!glyf[i].unicode) glyf[i].unicode = [];
+          glyf[i].unicode.push(+c);
         }
-        if (!glyf[i].unicode) {
-          glyf[i].unicode = [];
+      } else {
+        for (var ki = 0, kl = cmapKeys.length; ki < kl; ki++) {
+          var c = cmapKeys[ki];
+          var i = codes[c];
+          if (!glyf[i].unicode) glyf[i].unicode = [];
+          glyf[i].unicode.push(+c);
         }
-        glyf[i].unicode.push(+c);
       }
 
       /* leftSideBearing / advanceWidth —— 兼容扁平 Int32Array 和对象数组 */
       var hmtxData = font.hmtx;
       var isFlat = hmtxData instanceof Int32Array;
       var hLen = isFlat ? hmtxData.length / 2 : hmtxData.length;
-      for (var hi = 0; hi < hLen; hi++) {
-        if (subsetMap && !subsetMap[hi]) {
-          continue;
-        }
+      /** 优化231: subsetMap 判断外提，消除循环内条件分支 */
+      if (subsetMap) {
         if (isFlat) {
-          glyf[hi].advanceWidth = hmtxData[hi * 2] || 0;
-          glyf[hi].leftSideBearing = hmtxData[hi * 2 + 1];
+          for (var hi = 0, j = 0; hi < hLen; hi++, j += 2) {
+            if (!subsetMap[hi]) continue;
+            glyf[hi].advanceWidth = hmtxData[j] || 0;
+            glyf[hi].leftSideBearing = hmtxData[j + 1];
+          }
         } else {
-          glyf[hi].advanceWidth = hmtxData[hi].advanceWidth || 0;
-          glyf[hi].leftSideBearing = hmtxData[hi].leftSideBearing;
+          for (var hi = 0; hi < hLen; hi++) {
+            if (!subsetMap[hi]) continue;
+            glyf[hi].advanceWidth = hmtxData[hi].advanceWidth || 0;
+            glyf[hi].leftSideBearing = hmtxData[hi].leftSideBearing;
+          }
+        }
+      } else {
+        if (isFlat) {
+          for (var hi = 0, j = 0; hi < hLen; hi++, j += 2) {
+            glyf[hi].advanceWidth = hmtxData[j] || 0;
+            glyf[hi].leftSideBearing = hmtxData[j + 1];
+          }
+        } else {
+          for (var hi = 0; hi < hLen; hi++) {
+            glyf[hi].advanceWidth = hmtxData[hi].advanceWidth || 0;
+            glyf[hi].leftSideBearing = hmtxData[hi].leftSideBearing;
+          }
         }
       }
 
       // 设置了subsetMap之后需要选取subset中的字形
       /* 优化167: 密集数组替代 for...in，消除字符串键转换 */
       if (subsetMap) {
-        var subGlyf = [];
         var subsetGids = font.subsetGids;
+        var subGlyf;
         if (subsetGids) {
+          subGlyf = new Array(subsetGids.length);
           for (var si = 0, sl = subsetGids.length; si < sl; si++) {
-            subGlyf.push(glyf[subsetGids[si]]);
+            subGlyf[si] = glyf[subsetGids[si]];
           }
         } else {
-          for (var si in subsetMap) {
-            subGlyf.push(glyf[+si]);
+          subGlyf = [];
+          var subsetKeys = Object.keys(subsetMap);
+          for (var si = 0, sl = subsetKeys.length; si < sl; si++) {
+            subGlyf.push(glyf[+subsetKeys[si]]);
           }
         }
         glyf = subGlyf;
@@ -151,22 +180,23 @@ var OTFReader = exports.default = /*#__PURE__*/function () {
   }, {
     key: "cleanTables",
     value: function cleanTables(font) {
-      delete font.readOptions;
-      delete font.tables;
-      delete font.hmtx;
-      delete font.post.glyphNameIndex;
-      delete font.post.names;
-      delete font.subsetMap;
+      /** 优化245: delete → null 赋值，避免 V8 隐藏类转换 */
+      font.readOptions = null;
+      font.tables = null;
+      font.hmtx = null;
+      font.post.glyphNameIndex = null;
+      font.post.names = null;
+      font.subsetMap = null;
 
-      // 删除无用的表
+      // 清除无用的表
       var cff = font.CFF;
-      delete cff.glyf;
-      delete cff.charset;
-      delete cff.encoding;
-      delete cff.gsubrs;
-      delete cff.gsubrsBias;
-      delete cff.subrs;
-      delete cff.subrsBias;
+      cff.glyf = null;
+      cff.charset = null;
+      cff.encoding = null;
+      cff.gsubrs = null;
+      cff.gsubrsBias = null;
+      cff.subrs = null;
+      cff.subrsBias = null;
     }
 
     /**

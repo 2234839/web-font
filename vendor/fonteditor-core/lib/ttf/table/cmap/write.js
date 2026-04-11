@@ -19,20 +19,16 @@ function writeSubTable0(writer, unicodes) {
   view.setUint16(pos, 262, false); pos += 2;
   view.setUint16(pos, 0, false); pos += 2;
 
-  var i = -1;
+  /** 优化218: 使用 writer.writeEmpty 批量填充 0，替代逐字节 setUint8 */
+  writer.writeEmpty(256);
+  var base = writer.offset - 256;
+  pos = base;
+
   for (var j = 0; j < unicodes.length; j += 2) {
-    var unicode = unicodes[j];
-    var glyphId = unicodes[j + 1];
-    while (++i < unicode) {
-      view.setUint8(pos++, 0);
-    }
-    view.setUint8(pos++, glyphId);
-    i = unicode;
+    pos = base + unicodes[j];
+    view.setUint8(pos, unicodes[j + 1]);
   }
-  while (++i < 256) {
-    view.setUint8(pos++, 0);
-  }
-  writer.offset = pos;
+  writer.offset = base + 256;
   return writer;
 }
 
@@ -43,8 +39,8 @@ function writeSubTable4(writer, segments) {
   var pos = writer.offset;
   var view = writer.view;
   var segCount = segments.length / 4 + 1;
-  var maxExponent = Math.floor(Math.log(segCount) / Math.LN2);
-  var searchRange = 2 * Math.pow(2, maxExponent);
+  var maxExponent = 31 - Math.clz32(segCount);
+  var searchRange = 2 * (1 << maxExponent);
 
   view.setUint16(pos, 4, false); pos += 2;
   view.setUint16(pos, 16 + segCount * 8, false); pos += 2;

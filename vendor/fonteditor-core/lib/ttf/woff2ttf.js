@@ -66,8 +66,8 @@ function woff2ttf(woffBuffer) {
   }
   var writer = new _writer.default(new ArrayBuffer(ttfSize));
   // 写头部
-  var entrySelector = Math.floor(Math.log(numTables) / Math.LN2);
-  var searchRange = Math.pow(2, entrySelector) * 16;
+  var entrySelector = 31 - Math.clz32(numTables);
+  var searchRange = (1 << entrySelector) * 16;
   var rangeShift = numTables * 16 - searchRange;
   writer.writeUint32(flavor);
   writer.writeUint16(numTables);

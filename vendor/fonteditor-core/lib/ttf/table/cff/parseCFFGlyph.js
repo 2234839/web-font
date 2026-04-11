@@ -26,6 +26,12 @@ function parseCFFCharstring(code, font, index) {
   var nStems = 0;
   var haveWidth = false;
   var width = font.defaultWidthX;
+  /** 优化211: 解构 font 热路径属性，消除重复属性查找 */
+  var subrs = font.subrs;
+  var subrsBias = font.subrsBias;
+  var gsubrs = font.gsubrs;
+  var gsubrsBias = font.gsubrsBias;
+  var nominalWidthX = font.nominalWidthX;
   var open = false;
   var x = 0;
   var y = 0;
@@ -90,7 +96,7 @@ function parseCFFCharstring(code, font, index) {
             /** parseStems 内联 */
             var sLen = sp - si;
             if (sLen & 1 && !haveWidth) {
-              width = stack[si++] + font.nominalWidthX;
+              width = stack[si++] + nominalWidthX;
               sLen--;
             }
             nStems += sLen >> 1;
@@ -101,7 +107,7 @@ function parseCFFCharstring(code, font, index) {
         case 4:
           // vmoveto
           if (sp - si > 1 && !haveWidth) {
-            width = stack[si++] + font.nominalWidthX;
+            width = stack[si++] + nominalWidthX;
             haveWidth = true;
           }
           y += stack[--sp];
@@ -156,8 +162,8 @@ function parseCFFCharstring(code, font, index) {
           break;
         case 10:
           // callsubr
-          codeIndex = stack[--sp] + font.subrsBias;
-          subrCode = font.subrs[codeIndex];
+          codeIndex = stack[--sp] + subrsBias;
+          subrCode = subrs[codeIndex];
           if (subrCode) {
             parse(subrCode);
           }
@@ -265,7 +271,7 @@ function parseCFFCharstring(code, font, index) {
         case 14:
           // endchar
           if (sp - si === 1 && !haveWidth) {
-            width = stack[si++] + font.nominalWidthX;
+            width = stack[si++] + nominalWidthX;
             haveWidth = true;
           } else if (sp - si === 4) {
             glyfs[1] = {
@@ -280,7 +286,7 @@ function parseCFFCharstring(code, font, index) {
             glyfs[1].transform.e = stack[--sp];
           } else if (sp - si === 5) {
             if (!haveWidth) {
-              width = stack[si++] + font.nominalWidthX;
+              width = stack[si++] + nominalWidthX;
             }
             haveWidth = true;
             glyfs[1] = {
@@ -306,7 +312,7 @@ function parseCFFCharstring(code, font, index) {
           {
             var sLen2 = sp - si;
             if (sLen2 & 1 && !haveWidth) {
-              width = stack[si++] + font.nominalWidthX;
+              width = stack[si++] + nominalWidthX;
               sLen2--;
             }
             nStems += sLen2 >> 1;
@@ -318,7 +324,7 @@ function parseCFFCharstring(code, font, index) {
         case 21:
           // rmoveto
           if (sp - si > 2 && !haveWidth) {
-            width = stack[si++] + font.nominalWidthX;
+            width = stack[si++] + nominalWidthX;
             haveWidth = true;
           }
           y += stack[--sp];
@@ -329,7 +335,7 @@ function parseCFFCharstring(code, font, index) {
         case 22:
           // hmoveto
           if (sp - si > 1 && !haveWidth) {
-            width = stack[si++] + font.nominalWidthX;
+            width = stack[si++] + nominalWidthX;
             haveWidth = true;
           }
           x += stack[--sp];
@@ -417,8 +423,8 @@ function parseCFFCharstring(code, font, index) {
           break;
         case 29:
           // callgsubr
-          codeIndex = stack[--sp] + font.gsubrsBias;
-          subrCode = font.gsubrs[codeIndex];
+          codeIndex = stack[--sp] + gsubrsBias;
+          subrCode = gsubrs[codeIndex];
           if (subrCode) {
             parse(subrCode);
           }

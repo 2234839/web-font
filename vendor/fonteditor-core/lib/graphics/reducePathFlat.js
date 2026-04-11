@@ -31,7 +31,8 @@ function reducePathFlat(contour) {
 
   var dx = px - nextX;
   var dy = py - nextY;
-  if ((po && nextO || !po && !nextO) && dx * dx + dy * dy <= 1) { removed++; }
+  /* 优化191: flag 只有 0 或 1，简化条件判断 */
+  if (po === nextO && dx * dx + dy * dy <= 1) { removed++; }
   else {
     var cross = (nextY - py) * (prevX - px) - (prevY - py) * (nextX - px);
     if (prevO && nextO && cross > -0.001 && cross < 0.001) { removed++; }
@@ -49,7 +50,7 @@ function reducePathFlat(contour) {
 
     dx = px - nextX;
     dy = py - nextY;
-    if ((po && nextO || !po && !nextO) && dx * dx + dy * dy <= 1) { removed++; continue; }
+    if (po === nextO && dx * dx + dy * dy <= 1) { removed++; continue; }
     cross = (nextY - py) * (prevX - px) - (prevY - py) * (nextX - px);
     if (prevO && nextO && cross > -0.001 && cross < 0.001) { removed++; continue; }
 
@@ -65,7 +66,7 @@ function reducePathFlat(contour) {
 
     dx = px - nextX;
     dy = py - nextY;
-    if ((po && nextO || !po && !nextO) && dx * dx + dy * dy <= 1) { removed++; }
+    if (po === nextO && dx * dx + dy * dy <= 1) { removed++; }
     else {
       cross = (nextY - py) * (prevX - px) - (prevY - py) * (nextX - px);
       if (prevO && nextO && cross > -0.001 && cross < 0.001) { removed++; }

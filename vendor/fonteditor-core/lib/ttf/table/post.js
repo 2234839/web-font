@@ -19,22 +19,22 @@ function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { de
 var Posthead = _table.default.create('posthead', [['format', _struct.default.Fixed], ['italicAngle', _struct.default.Fixed], ['underlinePosition', _struct.default.Int16], ['underlineThickness', _struct.default.Int16], ['isFixedPitch', _struct.default.Uint32], ['minMemType42', _struct.default.Uint32], ['maxMemType42', _struct.default.Uint32], ['minMemType1', _struct.default.Uint32], ['maxMemType1', _struct.default.Uint32]]);
 
 /**
- * 优化64: 从原始字节按需提取单个 pascal string
+ * 优化64+252: 从原始字节按需提取单个 pascal string，使用 fromCharCode.apply 替代数组+join
  */
 function getPascalStringAt(bytes, offset) {
   var length = bytes[offset];
   if (length === 0) return '';
   var chars = new Array(length);
   for (var i = 0; i < length; i++) {
-    chars[i] = String.fromCharCode(bytes[offset + 1 + i]);
+    chars[i] = bytes[offset + 1 + i];
   }
-  return chars.join('');
+  return String.fromCharCode.apply(null, chars);
 }
 
 var _default = exports.default = _table.default.create('post', [], {
   read: function read(reader, ttf) {
-    var format = reader.readFixed(this.offset);
     var tbl = new Posthead(this.offset).read(reader, ttf);
+    var format = tbl.format;
 
     if (format === 2) {
       var numberOfGlyphs = reader.readUint16();
@@ -77,8 +77,8 @@ var _default = exports.default = _table.default.create('post', [], {
     /* 优化77: post header 直接 view 写入 32 字节 */
     var view = writer.view;
     var pos = writer.offset;
-    view.setInt32(pos, Math.round(post.format * 65536), false); pos += 4;
-    view.setInt32(pos, Math.round((post.italicAngle || 0) * 65536), false); pos += 4;
+    view.setInt32(pos, post.format * 65536 + 0.5 | 0, false); pos += 4;
+    view.setInt32(pos, (post.italicAngle || 0) * 65536 + 0.5 | 0, false); pos += 4;
     view.setInt16(pos, post.underlinePosition || 0, false); pos += 2;
     view.setInt16(pos, post.underlineThickness || 0, false); pos += 2;
     view.setUint32(pos, post.isFixedPitch || 0, false); pos += 4;
@@ -118,26 +118,26 @@ var _default = exports.default = _table.default.create('post', [], {
 
     var size = 34 + numberOfGlyphs * 2;
     var glyphNames = [];
-    var nameIndexArr = [];
+    var nameIndexArr = new Array(numberOfGlyphs);
     var nameIndex = 0;
 
     for (var i = 0; i < numberOfGlyphs; i++) {
       if (i === 0) {
-        nameIndexArr.push(0);
+        nameIndexArr[i] = 0;
       } else {
         var glyf = ttf.glyf[i];
         var unicode = glyf.unicode ? glyf.unicode[0] : 0;
         var unicodeNameIndex = _unicodeName.default[unicode];
         if (undefined !== unicodeNameIndex) {
-          nameIndexArr.push(unicodeNameIndex);
+          nameIndexArr[i] = unicodeNameIndex;
         } else {
           var name = glyf.name;
           if (!name || name.charCodeAt(0) < 32) {
-            nameIndexArr.push(258 + nameIndex++);
+            nameIndexArr[i] = 258 + nameIndex++;
             glyphNames.push([0]);
             size++;
           } else {
-            nameIndexArr.push(258 + nameIndex++);
+            nameIndexArr[i] = 258 + nameIndex++;
             var bytes = _string.default.toPascalStringBytes(name);
             glyphNames.push(bytes);
             size += bytes.length;

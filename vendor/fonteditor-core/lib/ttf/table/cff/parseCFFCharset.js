@@ -30,28 +30,31 @@ function parseCFFCharset(reader, start, nGlyphs, strings) {
   var count;
   // The .notdef glyph is not included, so subtract 1.
   nGlyphs -= 1;
-  var charset = ['.notdef'];
+  /** 优化250: 预分配 charset 数组，避免 push 扩容 */
+  var charset = new Array(nGlyphs + 1);
+  charset[0] = '.notdef';
+  var ci = 1;
   var format = reader.readUint8();
   if (format === 0) {
     for (i = 0; i < nGlyphs; i += 1) {
       sid = reader.readUint16();
-      charset.push((0, _getCFFString.default)(strings, sid));
+      charset[ci++] = (0, _getCFFString.default)(strings, sid);
     }
   } else if (format === 1) {
-    while (charset.length <= nGlyphs) {
+    while (ci <= nGlyphs) {
       sid = reader.readUint16();
       count = reader.readUint8();
       for (i = 0; i <= count; i += 1) {
-        charset.push((0, _getCFFString.default)(strings, sid));
+        charset[ci++] = (0, _getCFFString.default)(strings, sid);
         sid += 1;
       }
     }
   } else if (format === 2) {
-    while (charset.length <= nGlyphs) {
+    while (ci <= nGlyphs) {
       sid = reader.readUint16();
       count = reader.readUint16();
       for (i = 0; i <= count; i += 1) {
-        charset.push((0, _getCFFString.default)(strings, sid));
+        charset[ci++] = (0, _getCFFString.default)(strings, sid);
         sid += 1;
       }
     }

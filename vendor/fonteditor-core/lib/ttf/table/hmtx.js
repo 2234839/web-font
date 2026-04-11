@@ -52,8 +52,10 @@ var _default = exports.default = _table.default.create('hmtx', [], {
       pos += 4;
     }
     var numOfLast = glyfs.length - numOfLongHorMetrics;
+    /* 优化: 提取 numOfLongHorMetrics 到循环外变量，消除每次迭代属性链查找 + 加法 */
+    var lastBase = numOfLongHorMetrics;
     for (var j = 0; j < numOfLast; j++) {
-      wView.setInt16(pos, glyfs[numOfLongHorMetrics + j].leftSideBearing, false);
+      wView.setInt16(pos, glyfs[lastBase + j].leftSideBearing, false);
       pos += 2;
     }
     writer.offset = pos;

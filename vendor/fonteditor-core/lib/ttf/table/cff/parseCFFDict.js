@@ -131,7 +131,6 @@ function entriesToObject(entries) {
   for (var i = 0, l = entries.length; i < l; i++) {
     var key = entries[i][0];
     if (undefined !== hash[key]) {
-      console.warn('dict already has key:' + key);
       continue;
     }
     var values = entries[i][1];

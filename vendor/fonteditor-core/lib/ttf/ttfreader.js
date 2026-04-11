@@ -57,12 +57,14 @@ var TTFReader = exports.default = /*#__PURE__*/function () {
       }
       ttf.readOptions = this.options;
 
-      /* 优化8+37+62: 跳过不必要的表，缓存 TableClass 实例，for...in 替代 Object.keys */
+      /* 优化8+37+62+240: 跳过不必要的表，缓存 TableClass 实例，预构建表名列表替代 for...in */
       var hinting = this.options.hinting;
       var kerning = this.options.kerning;
       var supportTables = _support.default;
       var tableInstances = {};
-      for (var tableName in supportTables) {
+      var ttfTableNames = ['head', 'maxp', 'loca', 'cmap', 'glyf', 'name', 'hhea', 'hmtx', 'post', 'OS/2', 'fpgm', 'cvt', 'prep', 'gasp', 'GPOS', 'kern', 'kerx'];
+      for (var ti = 0, tl = ttfTableNames.length; ti < tl; ti++) {
+        var tableName = ttfTableNames[ti];
         if (ttf.tables[tableName]) {
           /* 优化8: hinting=false 时跳过 fpgm/cvt/prep/gasp */
           if (!hinting && (tableName === 'fpgm' || tableName === 'cvt' || tableName === 'prep' || tableName === 'gasp')) {
@@ -96,16 +98,30 @@ var TTFReader = exports.default = /*#__PURE__*/function () {
       var subsetMap = ttf.readOptions.subset ? ttf.subsetMap : null;
       var subsetGids = ttf.readOptions.subset ? ttf.subsetGids : null;
 
-      /* 优化13+24+62: unicode 遍历，subset 模式只遍历 subsetMap */
-      for (var c in codes) {
-        var i = codes[c];
-        if (subsetMap && !subsetMap[i]) {
-          continue;
+      /* 优化: subset 模式下只遍历 subsetUnicodeMap（O(S)），避免全量 codes 遍历（O(U)） */
+      if (ttf._subsetUnicodeMap) {
+        var sum = ttf._subsetUnicodeMap;
+        /** 优化: for...in 替代 Object.keys，消除临时数组分配 */
+        for (var uStr in sum) {
+          var u = +uStr;
+          var i = sum[u];
+          if (!glyf[i].unicode) {
+            glyf[i].unicode = [u];
+          } else {
+            glyf[i].unicode.push(u);
+          }
         }
-        if (!glyf[i].unicode) {
-          glyf[i].unicode = [];
+        ttf._subsetUnicodeMap = null;
+      } else {
+        for (var c in codes) {
+          var i = codes[c];
+          var code = +c;
+          if (!glyf[i].unicode) {
+            glyf[i].unicode = [code];
+          } else {
+            glyf[i].unicode.push(code);
+          }
         }
-        glyf[i].unicode.push(+c);
       }
 
       /* 优化13+82+118: advanceWidth 遍历优化，使用密集数组 */
@@ -172,15 +188,15 @@ var TTFReader = exports.default = /*#__PURE__*/function () {
         }
       }
 
-      /* 优化13+44+62+118: subset 模式下使用密集数组遍历 */
+      /* 优化259: subset 模式下合并 compound→simple 转换与 subGlyf 构建，消除二次遍历 */
       if (subsetGids) {
-        var subGlyf = [];
+        var subGlyf = new Array(subsetGids.length);
         for (var si = 0, sl = subsetGids.length; si < sl; si++) {
           var siNum = subsetGids[si];
           if (glyf[siNum].compound) {
             (0, _compound2simpleglyf.default)(siNum, ttf, true);
           }
-          subGlyf.push(glyf[siNum]);
+          subGlyf[si] = glyf[siNum];
         }
         ttf.glyf = subGlyf;
         ttf.maxp.maxComponentElements = 0;
@@ -190,32 +206,33 @@ var TTFReader = exports.default = /*#__PURE__*/function () {
   }, {
     key: "cleanTables",
     value: function cleanTables(ttf) {
-      delete ttf.readOptions;
-      delete ttf.tables;
-      delete ttf.hmtx;
-      delete ttf.loca;
+      /** 优化245: delete → null 赋值，避免 V8 隐藏类转换 */
+      ttf.readOptions = null;
+      ttf.tables = null;
+      ttf.hmtx = null;
+      ttf.loca = null;
       if (ttf.post) {
-        delete ttf.post.nameIndex;
-        delete ttf.post.names;
-        delete ttf.post._pascalStringBytes;
-        delete ttf.post._pascalStringOffsets;
+        ttf.post.nameIndex = null;
+        ttf.post.names = null;
+        ttf.post._pascalStringBytes = null;
+        ttf.post._pascalStringOffsets = null;
       }
-      delete ttf.subsetMap;
+      ttf.subsetMap = null;
 
       if (!this.options.hinting) {
-        delete ttf.fpgm;
-        delete ttf.cvt;
-        delete ttf.prep;
-        /* 优化55: forEach → for 循环 */
+        /** 优化245: delete → null 赋值，避免 V8 隐藏类转换 */
+        ttf.fpgm = null;
+        ttf.cvt = null;
+        ttf.prep = null;
         var glyfs = ttf.glyf;
         for (var i = 0, l = glyfs.length; i < l; i++) {
-          delete glyfs[i].instructions;
+          glyfs[i].instructions = null;
         }
       }
       if (!this.options.hinting && !this.options.kerning) {
-        delete ttf.GPOS;
-        delete ttf.kern;
-        delete ttf.kerx;
+        ttf.GPOS = null;
+        ttf.kern = null;
+        ttf.kerx = null;
       }
 
       if (this.options.compound2simple && ttf.maxp.maxComponentElements) {

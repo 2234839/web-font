@@ -62,116 +62,97 @@ function getFormat0SegmentFlat(unicodeArr, idArr) {
   return unicodes;
 }
 
-function getSegments(glyfUnicodes, bound) {
-  var prevGlyph = null;
-  var result = [];
-  var segment = {};
-  for (var i = 0, l = glyfUnicodes.length; i < l; i++) {
-    var glyph = glyfUnicodes[i];
-    if (bound === undefined || glyph.unicode <= bound) {
-      if (prevGlyph === null || glyph.unicode !== prevGlyph.unicode + 1 || glyph.id !== prevGlyph.id + 1) {
-        if (prevGlyph !== null) {
-          segment.end = prevGlyph.unicode;
-          result.push(segment);
-          segment = {
-            start: glyph.unicode,
-            startId: glyph.id,
-            delta: encodeDelta(glyph.id - glyph.unicode)
-          };
-        } else {
-          segment.start = glyph.unicode;
-          segment.startId = glyph.id;
-          segment.delta = encodeDelta(glyph.id - glyph.unicode);
-        }
-      }
-      prevGlyph = glyph;
-    }
-  }
-  if (prevGlyph !== null) {
-    segment.end = prevGlyph.unicode;
-    result.push(segment);
-  }
-  return result;
-}
-
-function getFormat0Segment(glyfUnicodes) {
-  var unicodes = [];
-  for (var i = 0, l = glyfUnicodes.length; i < l; i++) {
-    var u = glyfUnicodes[i];
-    if (u.unicode < 256) {
-      unicodes.push([u.unicode, u.id]);
-    }
-  }
-  /* 数据已排序，无需再次 sort */
-  return unicodes;
-}
-
 function sizeof(ttf) {
   ttf.support.cmap = {};
-  /* 优化155: 使用并行扁平数组替代对象数组，减少 GC 压力 */
+  /* 优化249: 两遍扫描 — 第一遍统计 unicode 总数，预分配数组避免 push 扩容 */
   var glyfs = ttf.glyf;
-  var unicodeArr = [];
-  var idArr = [];
-  for (var index = 0, gl = glyfs.length; index < gl; index++) {
-    var glyph = glyfs[index];
-    var unicodes = glyph.unicode;
-    if (typeof glyph.unicode === 'number') {
-      unicodes = [glyph.unicode];
+  var gl = glyfs.length;
+  var totalCount = 0;
+  for (var index = 0; index < gl; index++) {
+    var unicodes = glyfs[index].unicode;
+    if (unicodes) {
+      totalCount += unicodes.length;
+    } else if (unicodes === 0 || unicodes === '') {
+      totalCount++;
     }
-    if (unicodes && unicodes.length) {
-      for (var ui = 0, ul = unicodes.length; ui < ul; ui++) {
-        unicodeArr.push(unicodes[ui]);
-        idArr.push(unicodes[ui] !== 0xFFFF ? index : 0);
+  }
+  var unicodeArr = new Array(totalCount);
+  var idArr = new Array(totalCount);
+  var ai = 0;
+  for (var index2 = 0; index2 < gl; index2++) {
+    var glyph = glyfs[index2];
+    var ucs = glyph.unicode;
+    if (ucs) {
+      for (var ui = 0, ul = ucs.length; ui < ul; ui++) {
+        unicodeArr[ai] = ucs[ui];
+        idArr[ai] = ucs[ui] !== 0xFFFF ? index2 : 0;
+        ai++;
       }
+    } else if (ucs === 0 || ucs === '') {
+      unicodeArr[ai] = ucs;
+      idArr[ai] = ucs !== 0xFFFF ? index2 : 0;
+      ai++;
     }
   }
-  /* 优化179: 二分插入排序，O(n log n) 查找 + O(n) 移位 */
-  var len = unicodeArr.length;
-  for (var i = 1; i < len; i++) {
-    var uKey = unicodeArr[i];
-    var iKey = idArr[i];
-    var lo = 0, hi = i - 1;
-    while (lo <= hi) {
-      var mid = (lo + hi) >> 1;
-      if (unicodeArr[mid] > uKey) hi = mid - 1;
-      else lo = mid + 1;
+  /* 优化187+247: Int32Array 索引排序，V8 对 TypedArray 比较器排序更高效（避免装箱） */
+  var len = ai;
+  if (len > 1) {
+    var indices = new Int32Array(len);
+    for (var ii = 0; ii < len; ii++) indices[ii] = ii;
+    indices.sort(function(a, b) { return unicodeArr[a] - unicodeArr[b]; });
+    var sortedU = new Array(len);
+    var sortedI = new Array(len);
+    for (var ii2 = 0; ii2 < len; ii2++) {
+      var idx = indices[ii2];
+      sortedU[ii2] = unicodeArr[idx];
+      sortedI[ii2] = idArr[idx];
     }
-    if (lo !== i) {
-      unicodeArr.copyWithin(lo + 1, lo, i);
-      idArr.copyWithin(lo + 1, lo, i);
-      unicodeArr[lo] = uKey;
-      idArr[lo] = iKey;
+    unicodeArr = sortedU;
+    idArr = sortedI;
+  }
+
+  /* 优化: 合并 format12 和 format4 的 getSegmentsFlat 为单次调用
+   * format12 不设 bound（包含所有字符），format4 截断到 0xFFFF
+   * 大多数字体只有 BMP 字符，此时两者完全相同 */
+  var format12Segments = getSegmentsFlat(unicodeArr, idArr);
+  var cmapSupport = ttf.support.cmap;
+  cmapSupport.format12Segments = format12Segments;
+  cmapSupport.format12Size = 16 + (format12Segments.length >> 2) * 12;
+
+  /* 检查是否有 > 0xFFFF 的字符，没有则 format4 直接复用 format12 */
+  var hasOver2Bytes = false;
+  for (var ci = 0, cl = format12Segments.length; ci < cl; ci += 4) {
+    if (format12Segments[ci + 1] > 0xFFFF) {
+      hasOver2Bytes = true;
+      break;
     }
   }
 
-  ttf.support.cmap.format4Segments = getSegmentsFlat(unicodeArr, idArr, 0xFFFF);
-  /** format4Size 需要包含 sentinel segment (+1)，与 write.js 中的 segCount = segments.length/4 + 1 一致 */
-  /**
-   * format4Size = header(14) + reservedPad(2) + segCount * 2 * 4(four arrays)
-   * segCount = 实际段数 + 1(sentinel 0xFFFF)
-   */
-  var format4SegCount = ttf.support.cmap.format4Segments.length / 4 + 1;
-  ttf.support.cmap.format4Size = 16 + format4SegCount * 8;
-  ttf.support.cmap.format0Segments = getFormat0SegmentFlat(unicodeArr, idArr);
-  ttf.support.cmap.hasFormat0 = ttf.support.cmap.format0Segments.length > 0;
-  ttf.support.cmap.format0Size = ttf.support.cmap.hasFormat0 ? 262 : 0;
+  if (hasOver2Bytes) {
+    cmapSupport.format4Segments = getSegmentsFlat(unicodeArr, idArr, 0xFFFF);
+  } else {
+    cmapSupport.format4Segments = format12Segments;
+  }
 
-  /** 始终生成 format 12 subtable（platformID=3, encodingID=10），
-   *  现代浏览器使用 unicode-range 时依赖 format 12 来匹配字符。
-   *  仅当有 cmap 映射数据时才生成（避免 nGroups=0 的无效 subtable） */
   var hasGLyphsOver2Bytes = len > 0;
   if (hasGLyphsOver2Bytes) {
-    ttf.support.cmap.hasGLyphsOver2Bytes = true;
-    ttf.support.cmap.format12Segments = getSegmentsFlat(unicodeArr, idArr);
-    ttf.support.cmap.format12Size = 16 + (ttf.support.cmap.format12Segments.length / 4) * 12;
+    cmapSupport.hasGLyphsOver2Bytes = true;
   }
+
+  /** format4Size 需要包含 sentinel segment (+1)，与 write.js 中的 segCount = segments.length/4 + 1 一致 */
+  var format4SegCount = cmapSupport.format4Segments.length / 4 + 1;
+  cmapSupport.format4Size = 16 + format4SegCount * 8;
+  cmapSupport.format0Segments = getFormat0SegmentFlat(unicodeArr, idArr);
+  cmapSupport.hasFormat0 = cmapSupport.format0Segments.length > 0;
+  cmapSupport.format0Size = cmapSupport.hasFormat0 ? 262 : 0;
+
   /** 记录头大小必须动态计算，与 write.js 中的 numRecords 保持一致，否则会导致表偏移错位 */
-  var numRecords = 2 + (ttf.support.cmap.hasFormat0 ? 1 : 0) + (ttf.support.cmap.hasGLyphsOver2Bytes ? 1 : 0);
+  var numRecords = 2 + (cmapSupport.hasFormat0 ? 1 : 0) + (cmapSupport.hasGLyphsOver2Bytes ? 1 : 0);
   var recordHeaderSize = 4 + numRecords * 8;
   var size = recordHeaderSize
-  + ttf.support.cmap.format0Size
-  + ttf.support.cmap.format4Size
-  + (ttf.support.cmap.hasGLyphsOver2Bytes ? ttf.support.cmap.format12Size : 0);
+  + cmapSupport.format0Size
+  + cmapSupport.format4Size
+  + (cmapSupport.hasGLyphsOver2Bytes ? cmapSupport.format12Size : 0);
 
   return size;
 }

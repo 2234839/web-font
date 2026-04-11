@@ -48,7 +48,7 @@ var _default = exports.default = _table.default.create('hhea', [['version', _str
     var h = ttf.hhea;
     var pos = writer.offset;
     var view = writer.view;
-    view.setInt32(pos, Math.round(h.version * 65536), false); pos += 4;
+    view.setInt32(pos, h.version * 65536 + 0.5 | 0, false); pos += 4;
     view.setInt16(pos, h.ascent, false); pos += 2;
     view.setInt16(pos, h.descent, false); pos += 2;
     view.setInt16(pos, h.lineGap, false); pos += 2;

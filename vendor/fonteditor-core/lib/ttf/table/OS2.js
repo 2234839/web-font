@@ -220,25 +220,25 @@ var _default = exports.default = _table.default.create('OS/2', [['version', _str
             }
           }
         }
-        maxComponentElements = Math.max(maxComponentElements, subGlyfs.length);
-        maxCompositePoints = Math.max(maxCompositePoints, compositePoints);
-        maxCompositeContours = Math.max(maxCompositeContours, compositeContours);
+        if (subGlyfs.length > maxComponentElements) maxComponentElements = subGlyfs.length;
+        if (compositePoints > maxCompositePoints) maxCompositePoints = compositePoints;
+        if (compositeContours > maxCompositeContours) maxCompositeContours = compositeContours;
       } else if (glyf._numContours != null && glyf._numContours > 0) {
         /* 优化106: 使用 _numContours/_totalPoints 快速路径 */
-        maxContours = Math.max(maxContours, glyf._numContours);
-        maxPoints = Math.max(maxPoints, glyf._totalPoints);
+        if (glyf._numContours > maxContours) maxContours = glyf._numContours;
+        if (glyf._totalPoints > maxPoints) maxPoints = glyf._totalPoints;
       } else if (glyf.contours && glyf.contours.length) {
         var gContours = glyf.contours;
-        maxContours = Math.max(maxContours, gContours.length);
+        if (gContours.length > maxContours) maxContours = gContours.length;
         var points = 0;
         var isFlat = glyf._flatContours;
         for (var ci = 0, cil = gContours.length; ci < cil; ci++) {
-          points += isFlat ? gContours[ci].length / 3 : gContours[ci].length;
+          points += isFlat ? gContours[ci].length / 3 | 0 : gContours[ci].length;
         }
-        maxPoints = Math.max(maxPoints, points);
+        if (points > maxPoints) maxPoints = points;
       }
       if (hinting && glyf.instructions) {
-        maxSizeOfInstructions = Math.max(maxSizeOfInstructions, glyf.instructions.length);
+        if (glyf.instructions.length > maxSizeOfInstructions) maxSizeOfInstructions = glyf.instructions.length;
       }
       var gXMin = glyf.xMin;
       var gYMin = glyf.yMin;
@@ -248,11 +248,12 @@ var _default = exports.default = _table.default.create('OS/2', [['version', _str
       if (null != gYMin && gYMin < yMin) yMin = gYMin;
       if (null != gXMax && gXMax > xMax) xMax = gXMax;
       if (null != gYMax && gYMax > yMax) yMax = gYMax;
-      advanceWidthMax = Math.max(advanceWidthMax, glyf.advanceWidth);
-      minLeftSideBearing = Math.min(minLeftSideBearing, glyf.leftSideBearing);
+      if (glyf.advanceWidth > advanceWidthMax) advanceWidthMax = glyf.advanceWidth;
+      if (glyf.leftSideBearing < minLeftSideBearing) minLeftSideBearing = glyf.leftSideBearing;
       if (null != gXMax) {
-        minRightSideBearing = Math.min(minRightSideBearing, glyf.advanceWidth - gXMax);
-        xMaxExtent = Math.max(xMaxExtent, gXMax);
+        var rsb = glyf.advanceWidth - gXMax;
+        if (rsb < minRightSideBearing) minRightSideBearing = rsb;
+        if (gXMax > xMaxExtent) xMaxExtent = gXMax;
       }
       if (null != glyf.advanceWidth) {
         xAvgCharWidth += glyf.advanceWidth;

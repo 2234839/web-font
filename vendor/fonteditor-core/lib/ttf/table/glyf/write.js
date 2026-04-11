@@ -60,27 +60,27 @@ function write(writer, ttf) {
       var subGlyfs = glyf.glyfs;
       for (var gi = 0, gl2 = subGlyfs.length; gi < gl2; gi++) {
         var g = subGlyfs[gi];
-        var flags = g.points ? 0 : ARGS_ARE_XY_VALUES + ROUND_XY_TO_GRID;
-        if (gi < gl2 - 1) flags += MORE_COMPONENTS;
-        flags += g.useMyMetrics ? USE_MY_METRICS : 0;
-        flags += g.overlapCompound ? OVERLAP_COMPOUND : 0;
+        var flags = g.points ? 0 : ARGS_ARE_XY_VALUES | ROUND_XY_TO_GRID;
+        if (gi < gl2 - 1) flags |= MORE_COMPONENTS;
+        if (g.useMyMetrics) flags |= USE_MY_METRICS;
+        if (g.overlapCompound) flags |= OVERLAP_COMPOUND;
         var transform = g.transform;
         var a = transform.a;
         var b = transform.b;
         var c = transform.c;
         var d = transform.d;
-        var pts = g.points;
-        var e = pts ? pts[0] : transform.e;
-        var f = pts ? pts[1] : transform.f;
+        /** 优化225: 优先无 points 路径（大多数复合 glyph），减少分支 */
+        var e = g.points ? g.points[0] : transform.e;
+        var f = g.points ? g.points[1] : transform.f;
         if (e < 0 || e > 0x7F || f < 0 || f > 0x7F) {
-          flags += ARG_1_AND_2_ARE_WORDS;
+          flags |= ARG_1_AND_2_ARE_WORDS;
         }
         if (b || c) {
-          flags += WE_HAVE_A_TWO_BY_TWO;
+          flags |= WE_HAVE_A_TWO_BY_TWO;
         } else if ((a !== 1 || d !== 1) && a === d) {
-          flags += WE_HAVE_A_SCALE;
+          flags |= WE_HAVE_A_SCALE;
         } else if (a !== 1 || d !== 1) {
-          flags += WE_HAVE_AN_X_AND_Y_SCALE;
+          flags |= WE_HAVE_AN_X_AND_Y_SCALE;
         }
         view.setUint16(pos, flags, false); pos += 2;
         view.setUint16(pos, g.glyphIndex, false); pos += 2;
@@ -92,15 +92,15 @@ function write(writer, ttf) {
           view.setUint8(pos, f); pos += 1;
         }
         if (WE_HAVE_A_SCALE & flags) {
-          view.setInt16(pos, Math.round(a * 16384), false); pos += 2;
+          view.setInt16(pos, a * 16384 + 0.5 | 0, false); pos += 2;
         } else if (WE_HAVE_AN_X_AND_Y_SCALE & flags) {
-          view.setInt16(pos, Math.round(a * 16384), false); pos += 2;
-          view.setInt16(pos, Math.round(d * 16384), false); pos += 2;
+          view.setInt16(pos, a * 16384 + 0.5 | 0, false); pos += 2;
+          view.setInt16(pos, d * 16384 + 0.5 | 0, false); pos += 2;
         } else if (WE_HAVE_A_TWO_BY_TWO & flags) {
-          view.setInt16(pos, Math.round(a * 16384), false); pos += 2;
-          view.setInt16(pos, Math.round(b * 16384), false); pos += 2;
-          view.setInt16(pos, Math.round(c * 16384), false); pos += 2;
-          view.setInt16(pos, Math.round(d * 16384), false); pos += 2;
+          view.setInt16(pos, a * 16384 + 0.5 | 0, false); pos += 2;
+          view.setInt16(pos, b * 16384 + 0.5 | 0, false); pos += 2;
+          view.setInt16(pos, c * 16384 + 0.5 | 0, false); pos += 2;
+          view.setInt16(pos, d * 16384 + 0.5 | 0, false); pos += 2;
         }
       }
     } else {
@@ -138,10 +138,11 @@ function write(writer, ttf) {
         pos += 2;
       }
 
-      /* 优化11+79+135: flags 直接 view 写入，避免临时 TypedArray */
-      var flags = gSupport.flags || [];
-      for (var fi = 0, fl = flags.length; fi < fl; fi++) {
-        view.setUint8(pos++, flags[fi]);
+      /* 优化11+79+135+230+237: flags 是 Uint8Array，直接 set 批量写入替代逐字节循环 */
+      var flags = gSupport.flags;
+      if (flags && flags.length > 0) {
+        fullView.set(flags, pos);
+        pos += flags.length;
       }
 
       /* 优化21+98+119+165: xCoord 预编码 Uint8Array 直接 set，复用全局视图 */

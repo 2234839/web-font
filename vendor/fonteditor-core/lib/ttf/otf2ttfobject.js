@@ -34,14 +34,14 @@ function otf2ttfobject(otfBuffer, options) {
 
   // 转换otf轮廓，同时获取包围盒
   var glyf = otfObject.glyf;
+  /** 优化220: 绑定模块导入到局部变量，消除循环内 interop 属性查找 */
+  var convertContours = _otfContours2ttfContours.default;
   for (var i = 0, l = glyf.length; i < l; i++) {
     var g = glyf[i];
-    var result = (0, _otfContours2ttfContours.default)(g.contours);
+    var result = convertContours(g.contours);
     g.contours = result.contours;
-    /** 优化178: 标记扁平 contour 格式 */
-    if (result.contours.length > 0 && typeof result.contours[0][0] === 'number') {
-      g._flatContours = true;
-    }
+    /** 优化: transformContourFlat 始终返回扁平格式，直接设置标志 */
+    g._flatContours = true;
     if (result.xMin != null) {
       g.xMin = result.xMin;
       g.xMax = result.xMax;
@@ -68,7 +68,8 @@ function otf2ttfobject(otfBuffer, options) {
    */
   otfObject.head.flags = (otfObject.head.flags || 0) & ~(0x0008 | 0x0800);
   otfObject.head.fontDirectionHint = 2;
-  delete otfObject.CFF;
-  delete otfObject.VORG;
+  /** 优化245: delete → null 赋值，避免 V8 隐藏类转换 */
+  otfObject.CFF = null;
+  otfObject.VORG = null;
   return otfObject;
 }

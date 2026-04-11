@@ -8,6 +8,7 @@ var _writer = _interopRequireDefault(require("./writer"));
 var _directory = _interopRequireDefault(require("./table/directory"));
 var _support = _interopRequireDefault(require("./table/support"));
 var _checkSum = _interopRequireDefault(require("./util/checkSum"));
+var _checkSumArrayBuffer = _interopRequireDefault(require("./util/checkSum")).checkSumArrayBuffer;
 var _error = _interopRequireDefault(require("./error"));
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
@@ -84,10 +85,11 @@ var TTFWriter = exports.default = /*#__PURE__*/function () {
       var ttfHeadOffset = 0;
 
       /* 优化35+56: 缓存 TableClass 实例，forEach → for 循环 */
-      ttf.support.tables = [];
       var writeTables = ttf.writeOptions.tables;
       var supportTables = _support.default;
       var tableInstances = {};
+      var supportTablesArr = new Array(writeTables.length);
+      ttf.support.tables = supportTablesArr;
       for (var ti = 0, tl = writeTables.length; ti < tl; ti++) {
         var tableName = writeTables[ti];
         var offset = ttfSize;
@@ -99,36 +101,40 @@ var TTFWriter = exports.default = /*#__PURE__*/function () {
         if (tableName === 'head') {
           ttfHeadOffset = offset;
         }
-        if (size % 4) {
-          size += 4 - size % 4;
-        }
-        ttf.support.tables.push({
+        size = (size + 3) & ~3;
+        supportTablesArr[ti] = {
           name: tableName,
           checkSum: 0,
           offset: offset,
           length: tableSize,
           size: size
-        });
+        };
         ttfSize += size;
       }
       var writer = new _writer.default(new ArrayBuffer(ttfSize));
 
-      /* 优化36: 头部直接 view 写入 */
+      /* 优化36+184: 头部直接 view 写入，Math.round 替换为位运算 */
       var wView = writer.view;
       var pos = writer.offset;
-      wView.setInt32(pos, Math.round(ttf.version * 65536), false); pos += 4;
+      wView.setInt32(pos, ttf.version * 65536 + 0.5 | 0, false); pos += 4;
       wView.setUint16(pos, ttf.numTables, false); pos += 2;
       wView.setUint16(pos, ttf.searchRange, false); pos += 2;
       wView.setUint16(pos, ttf.entrySelector, false); pos += 2;
       wView.setUint16(pos, ttf.rangeShift, false); pos += 2;
       writer.offset = pos;
 
-      new _directory.default().write(writer, ttf);
+      /* 优化: directory 实例复用 tableInstances 缓存 */
+      if (!tableInstances['directory']) {
+        tableInstances['directory'] = new _directory.default();
+      }
+      tableInstances['directory'].write(writer, ttf);
 
-      /* 优化56+87+179: forEach → for 循环，缓存 buffer 引用，累加各表校验和避免全局重算 */
+      /* 优化56+87+179+184: forEach → for 循环，缓存 buffer 引用，累加各表校验和避免全局重算
+       * 优化184: 内联 writeEmpty 为 fullView.fill(0)，避免 writer.writeEmpty 的函数调用 + 边界检查开销 */
       var supportTableList = ttf.support.tables;
       var buf = writer.getBuffer();
       var wholeCheckSum = 0;
+      var fullView = new Uint8Array(buf);
       for (var si = 0, sl = supportTableList.length; si < sl; si++) {
         var table = supportTableList[si];
         var tableStart = writer.offset;
@@ -137,10 +143,12 @@ var TTFWriter = exports.default = /*#__PURE__*/function () {
           tableInstances[tName] = new supportTables[tName]();
         }
         tableInstances[tName].write(writer, ttf);
-        if (table.length % 4) {
-          writer.writeEmpty(4 - table.length % 4);
+        var pad = table.length % 4;
+        if (pad) {
+          fullView.fill(0, wView.byteOffset + writer.offset, wView.byteOffset + writer.offset + (4 - pad));
+          writer.offset += 4 - pad;
         }
-        table.checkSum = (0, _checkSum.default)(buf, tableStart, table.size);
+        table.checkSum = _checkSumArrayBuffer(buf, tableStart, table.size, fullView);
         wholeCheckSum = (wholeCheckSum + table.checkSum) >>> 0;
       }
 
@@ -152,7 +160,7 @@ var TTFWriter = exports.default = /*#__PURE__*/function () {
       }
 
       /* 优化179: 用累加的各表校验和替代全局 checkSum，避免重遍历整个 buffer */
-      var ttfCheckSum = (0xB1B0AFBA - wholeCheckSum + 0x100000000) % 0x100000000;
+      var ttfCheckSum = (0xB1B0AFBA - wholeCheckSum) >>> 0;
       csView.setUint32(ttfHeadOffset + 8, ttfCheckSum, false);
       delete ttf.writeOptions;
       delete ttf.support;
@@ -168,22 +176,27 @@ var TTFWriter = exports.default = /*#__PURE__*/function () {
       if (!ttf['OS/2'] || !ttf.head || !ttf.name) {
         _error.default.raise(10204);
       }
-      var tables = SUPPORT_TABLES.slice(0);
+      /* 优化: 无 hinting/kerning 时直接使用 SUPPORT_TABLES，避免 concat 开销 */
+      /* 优化186: 使用 slice() 创建副本，防止 push 变异模块级数组导致后续调用表膨胀 */
+      var tables = SUPPORT_TABLES;
       ttf.writeOptions = {};
-      /* 优化56: forEach → for 循环 */
-      if (this.options.hinting) {
-        var hintTables = ['cvt', 'fpgm', 'prep', 'gasp', 'GPOS', 'kern', 'kerx'];
-        for (var i = 0; i < hintTables.length; i++) {
-          if (ttf[hintTables[i]]) {
-            tables.push(hintTables[i]);
+      /* 优化228: 合并 hinting 和 kerning 分支，消除重复 slice 检查 */
+      if (this.options.hinting || this.options.kerning) {
+        tables = SUPPORT_TABLES.slice();
+        if (this.options.hinting) {
+          var hintTables = ['cvt', 'fpgm', 'prep', 'gasp', 'GPOS', 'kern', 'kerx'];
+          for (var i = 0; i < hintTables.length; i++) {
+            if (ttf[hintTables[i]]) {
+              tables.push(hintTables[i]);
+            }
           }
         }
-      }
-      if (this.options.kerning) {
-        var kernTables = ['GPOS', 'kern', 'kerx'];
-        for (var j = 0; j < kernTables.length; j++) {
-          if (ttf[kernTables[j]]) {
-            tables.push(kernTables[j]);
+        if (this.options.kerning) {
+          var kernTables = ['GPOS', 'kern', 'kerx'];
+          for (var j = 0; j < kernTables.length; j++) {
+            if (ttf[kernTables[j]]) {
+              tables.push(kernTables[j]);
+            }
           }
         }
       }

@@ -24,6 +24,8 @@ if (typeof ArrayBuffer === 'undefined' || typeof DataView === 'undefined') {
 /** 优化178: 全局 Uint8Array 视图缓存，避免 writeBytes/writeEmpty 每次创建视图 */
 var _globalView = null;
 var _globalViewBuf = null;
+/** 优化: 预编译正则，避免 writeLongDateTime 每次创建 RegExp */
+var _isAllDigits = /^\d+$/;
 
 // 数据类型
 var dataType = {
@@ -221,7 +223,7 @@ var Writer = /*#__PURE__*/function () {
       if (undefined === offset) {
         offset = this.offset;
       }
-      this.writeInt32(Math.round(value * 65536), offset);
+      this.writeInt32((value * 65536 + 0.5) | 0, offset);
       return this;
     }
 
@@ -246,7 +248,7 @@ var Writer = /*#__PURE__*/function () {
         value = delta;
       } else if (typeof value.getTime === 'function') {
         value = value.getTime();
-      } else if (/^\d+$/.test(value)) {
+      } else if (_isAllDigits.test(value)) {
         value = +value;
       } else {
         value = Date.parse(value);

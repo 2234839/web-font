@@ -72,15 +72,15 @@ function parseCFFIndex(reader, offset, conversionFn) {
     reader.seek(offset);
   }
   var start = reader.offset;
-  var offsets = [];
-  var objects = [];
   var count = reader.readUint16();
+  var offsets = new Array(count + 1);
+  var objects = new Array(count);
   var i;
   var l;
   if (count !== 0) {
     var offsetSize = reader.readUint8();
     for (i = 0, l = count + 1; i < l; i++) {
-      offsets.push(getOffset(reader, offsetSize));
+      offsets[i] = getOffset(reader, offsetSize);
     }
     for (i = 0, l = count; i < l; i++) {
       /** 优化179: 直接从 view 创建 Uint8Array 视图，避免 readBytes 的 slice */
@@ -90,7 +90,7 @@ function parseCFFIndex(reader, offset, conversionFn) {
       if (conversionFn) {
         value = conversionFn(value);
       }
-      objects.push(value);
+      objects[i] = value;
     }
   }
   return {
@@ -141,13 +141,32 @@ function parseCFFIndexOffsets(reader, offset) {
  * @return {Uint8Array}          object 数据
  */
 /**
- * 优化169+179: 直接从 view 创建 Uint8Array 视图，避免 readBytes 的 slice 开销
+ * 优化169+179+244: 预创建全量 charstring 大视图，用 subarray 替代 new Uint8Array(buffer, off, len)
+ * subarray 不需要参数验证，比 new Uint8Array 更快
  */
 function readCFFIndexObject(reader, indexInfo, idx) {
   var off = indexInfo.offsets;
+  var view = indexInfo._view;
+  if (view) {
+    /** 使用预创建的大视图 + subarray，baseOffset 已含 -1 修正 */
+    return view.subarray(off[idx] - 1, off[idx + 1] - 1);
+  }
   var size = off[idx + 1] - off[idx];
   var start = indexInfo.dataStart + off[idx] - 1;
   return new Uint8Array(reader.view.buffer, reader.view.byteOffset + start, size);
+}
+
+/**
+ * 优化244: 为 parseCFFIndexOffsets 的结果预创建全量数据视图
+ * 后续 readCFFIndexObject 将使用 subarray 替代 new Uint8Array
+ */
+function prepareCFFIndexView(reader, indexInfo) {
+  var off = indexInfo.offsets;
+  if (!off || off.length < 2) return;
+  var totalSize = off[off.length - 1] - 1;
+  /** baseOffset 对齐原始 readCFFIndexObject 中的 byteOffset + dataStart + off[idx] - 1 */
+  var baseOffset = reader.view.byteOffset + indexInfo.dataStart;
+  indexInfo._view = new Uint8Array(reader.view.buffer, baseOffset, totalSize);
 }
 
 // Subroutines are encoded using the negative half of the number space.
@@ -382,6 +401,8 @@ var _default = exports.default = _table.default.create('cff', [], {
     if (!isCID) {
       var charStringsInfo = parseCFFIndexOffsets(reader, offset + topDict.charStrings);
     }
+    /** 优化244: 预创建全量 charstring 大视图，后续 readCFFIndexObject 用 subarray 替代 new Uint8Array */
+    prepareCFFIndexView(reader, charStringsInfo);
     var nGlyphs = charStringsInfo.count;
 
     if (topDict.charset < 3) {
@@ -400,7 +421,7 @@ var _default = exports.default = _table.default.create('cff', [], {
     } else {
       cff.encoding = (0, _parseCFFEncoding.default)(reader, offset + topDict.encoding);
     }
-    cff.glyf = [];
+    cff.glyf = new Array(nGlyphs);
 
     /**
      * 为指定 glyph 构建 per-glyph 的 font 对象
@@ -435,39 +456,59 @@ var _default = exports.default = _table.default.create('cff', [], {
       var subsetMap = {
         0: true // 设置.notdef
       };
+      /** 优化251: 构建 subsetMap 时同步收集 subsetGids，避免全量 nGlyphs 遍历 */
+      var subsetGids = [0];
       var codes = font.cmap;
 
-      // unicode to index — 用 Set 替代 indexOf 实现 O(1) 查找
-      var subsetSet = {};
-      /** 优化：合并 subsetSet 和 subsetMap 构建为单次遍历 */
+      // unicode to index
       for (var si = 0, sl = subset.length; si < sl; si++) {
         var code = subset[si];
-        subsetSet[code] = true;
         var ci = codes[code];
-        if (ci !== undefined) subsetMap[ci] = true;
+        if (ci !== undefined && !subsetMap[ci]) {
+          subsetMap[ci] = true;
+          subsetGids.push(ci);
+        }
       }
       font.subsetMap = subsetMap;
-      /** 优化163+167: 构建 subsetGids 密集数组，传递给 otfreader 复用 */
-      var subsetGids = [];
-      for (var gi = 0; gi < nGlyphs; gi++) {
-        if (subsetMap[gi]) subsetGids.push(gi);
-      }
-      for (var si = 0, sl = subsetGids.length; si < sl; si++) {
-        var i = subsetGids[si];
-        var charstring = readCFFIndexObject(reader, charStringsInfo, i);
-        var glyf = (0, _parseCFFGlyph.default)(charstring, getGlyphFont(i), i);
-        glyf.name = cff.charset[i];
-        cff.glyf[i] = glyf;
+      /* 优化258: CID/non-CID 分支到循环外，消除每 glyph 的三元分支 */
+      if (fdGlyphFonts) {
+        for (var si = 0, sl = subsetGids.length; si < sl; si++) {
+          var i = subsetGids[si];
+          var charstring = readCFFIndexObject(reader, charStringsInfo, i);
+          var glyf = (0, _parseCFFGlyph.default)(charstring, getGlyphFont(i), i);
+          glyf.name = cff.charset[i];
+          cff.glyf[i] = glyf;
+        }
+      } else {
+        for (var si = 0, sl = subsetGids.length; si < sl; si++) {
+          var i = subsetGids[si];
+          var charstring = readCFFIndexObject(reader, charStringsInfo, i);
+          var glyf = (0, _parseCFFGlyph.default)(charstring, cff, i);
+          glyf.name = cff.charset[i];
+          cff.glyf[i] = glyf;
+        }
       }
       font.subsetGids = subsetGids;
     }
     // parse all
     else {
-      for (var i = 0, l = nGlyphs; i < l; i++) {
-        var charstring = readCFFIndexObject(reader, charStringsInfo, i);
-        var glyf = (0, _parseCFFGlyph.default)(charstring, getGlyphFont(i), i);
-        glyf.name = cff.charset[i];
-        cff.glyf.push(glyf);
+      /* 优化202+230: 非 CID 字体直接使用 cff，缓存属性到局部变量 */
+      var charset = cff.charset;
+      var glyfArr = cff.glyf;
+      if (fdGlyphFonts) {
+        for (var i = 0, l = nGlyphs; i < l; i++) {
+          var charstring = readCFFIndexObject(reader, charStringsInfo, i);
+          var glyf = (0, _parseCFFGlyph.default)(charstring, getGlyphFont(i), i);
+          glyf.name = charset[i];
+          glyfArr[i] = glyf;
+        }
+      } else {
+        for (var i = 0, l = nGlyphs; i < l; i++) {
+          var charstring = readCFFIndexObject(reader, charStringsInfo, i);
+          var glyf = (0, _parseCFFGlyph.default)(charstring, cff, i);
+          glyf.name = charset[i];
+          glyfArr[i] = glyf;
+        }
       }
     }
     return cff;

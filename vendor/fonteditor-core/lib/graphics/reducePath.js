@@ -20,18 +20,23 @@ function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { de
  * @return {boolean}
  */
 function redundant(prev, p, next) {
+  /* 优化: Math.pow(x,2) → x*x，提取 dx/dy 避免重复计算 */
+  var dx = p.x - next.x;
+  var dy = p.y - next.y;
   // 是否重合的点, 只有两个点同在曲线上或者同不在曲线上移出
-  if ((p.onCurve && next.onCurve || !p.onCurve && !next.onCurve) && Math.pow(p.x - next.x, 2) + Math.pow(p.y - next.y, 2) <= 1) {
+  if ((p.onCurve && next.onCurve || !p.onCurve && !next.onCurve) && dx * dx + dy * dy <= 1) {
     return true;
   }
 
+  /* 优化: 提取叉积计算，合并两个分支消除重复的 Math.abs 表达式 */
+  var cross = Math.abs((next.y - p.y) * (prev.x - p.x) - (prev.y - p.y) * (next.x - p.x));
   // 三点同线 检查直线点
-  if (p.onCurve && prev.onCurve && next.onCurve && Math.abs((next.y - p.y) * (prev.x - p.x) - (prev.y - p.y) * (next.x - p.x)) <= 0.001) {
+  if (p.onCurve && prev.onCurve && next.onCurve && cross <= 0.001) {
     return true;
   }
 
   // 三点同线 检查控制点
-  if (!p.onCurve && prev.onCurve && next.onCurve && Math.abs((next.y - p.y) * (prev.x - p.x) - (prev.y - p.y) * (next.x - p.x)) <= 0.001) {
+  if (!p.onCurve && prev.onCurve && next.onCurve && cross <= 0.001) {
     return true;
   }
   return false;
