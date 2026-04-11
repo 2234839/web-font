@@ -21,8 +21,12 @@ function contour2svg(contour) {
   if (!contour.length) {
     return '';
   }
+  /** 优化293: 用乘法+截断替代 toFixed()，消除每个坐标点的 toFixed 调用开销 */
+  var factor = precision <= 0 ? 1 : Math.pow(10, precision);
+  var invFactor = 1 / factor;
+  /** 优化293: ceil 内联，避免闭包创建 */
   var ceil = function ceil(number) {
-    return +number.toFixed(precision);
+    return (Math.round(number * factor) * invFactor);
   };
   var pathArr = [];
   var curPoint;

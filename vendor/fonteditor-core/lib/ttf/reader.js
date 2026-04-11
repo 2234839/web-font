@@ -175,13 +175,12 @@ var Reader = exports.default = /*#__PURE__*/function () {
      */
   }, {
     key: "readUint24",
+    /** 优化268: 直接 view 读取 3 字节，消除 readBytes + _slicedToArray 的临时数组分配 */
     value: function readUint24(offset) {
-      var _this$readBytes = this.readBytes(offset || this.offset, 3),
-        _this$readBytes2 = _slicedToArray(_this$readBytes, 3),
-        i = _this$readBytes2[0],
-        j = _this$readBytes2[1],
-        k = _this$readBytes2[2];
-      return (i << 16) + (j << 8) + k;
+      if (offset === undefined) offset = this.offset;
+      var vOff = this.view.byteOffset + offset;
+      var buf = this.view.buffer;
+      return (buf[vOff] << 16) + (buf[vOff + 1] << 8) + buf[vOff + 2];
     }
 
     /**
@@ -246,7 +245,8 @@ var Reader = exports.default = /*#__PURE__*/function () {
   }, {
     key: "dispose",
     value: function dispose() {
-      delete this.view;
+      /** 优化262: delete → null 赋值，避免 V8 隐藏类转换 */
+      this.view = null;
     }
   }]);
 }(); // 优化19+20: 直接绑定方法 + switch 分发，避免 curry 闭包和动态属性查找

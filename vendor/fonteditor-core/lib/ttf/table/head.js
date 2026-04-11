@@ -59,14 +59,14 @@ var _default = exports.default = _table.default.create('head', [['version', _str
     view.setUint32(pos, head.magickNumber, false); pos += 4;
     view.setUint16(pos, head.flags, false); pos += 2;
     view.setUint16(pos, head.unitsPerEm, false); pos += 2;
-    /** 优化216: 内联 writeLDT，消除函数定义+调用开销 */
+    /** 优化281: resolveTTF 已将 created/modified 转为 number，消除 typeof 链 */
     var delta = -2077545600000;
-    var cMs = typeof head.created.getTime === 'function' ? head.created.getTime() : typeof head.created === 'number' ? head.created : Date.parse(head.created);
+    var cMs = +head.created;
     view.setUint32(pos, 0, false); pos += 4;
-    view.setUint32(pos, Math.round((cMs - delta) / 1000), false); pos += 4;
-    var mMs = typeof head.modified.getTime === 'function' ? head.modified.getTime() : typeof head.modified === 'number' ? head.modified : Date.parse(head.modified);
+    view.setUint32(pos, (cMs - delta + 500 | 0) / 1000 | 0, false); pos += 4;
+    var mMs = +head.modified;
     view.setUint32(pos, 0, false); pos += 4;
-    view.setUint32(pos, Math.round((mMs - delta) / 1000), false); pos += 4;
+    view.setUint32(pos, (mMs - delta + 500 | 0) / 1000 | 0, false); pos += 4;
     view.setInt16(pos, head.xMin, false); pos += 2;
     view.setInt16(pos, head.yMin, false); pos += 2;
     view.setInt16(pos, head.xMax, false); pos += 2;

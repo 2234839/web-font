@@ -7,6 +7,9 @@ exports.default = void 0;
 var _unicodeName = _interopRequireDefault(require("../enum/unicodeName"));
 var _postName = _interopRequireDefault(require("../enum/postName"));
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
+
+/** 优化291: 模块级 TextDecoder 单例，避免每次 getUTF8String 创建新实例 */
+var _utf8Decoder = typeof TextDecoder !== 'undefined' ? new TextDecoder('utf-8', { fatal: false }) : null;
 /**
  * @file ttf字符串相关函数
  * @author mengke01(kekee000@gmail.com)
@@ -24,6 +27,10 @@ function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { de
  */
 function stringify(str) {
   if (!str) {
+    return str;
+  }
+  /** 优化291: 快速路径，无 null 字符直接返回原字符串 */
+  if (str.indexOf('\0') === -1) {
     return str;
   }
   var newStr = '';
@@ -124,12 +131,12 @@ var _default = exports.default = {
    */
   toUCS2Bytes: function toUCS2Bytes(str) {
     str = stringify(str);
-    /* 优化: 预分配 Uint8Array 替代动态 push */
-    var byteArr = new Uint8Array(str.length * 2);
-    for (var i = 0, l = str.length; i < l; i++) {
+    /* 优化291: 递增偏移替代 i*2 乘法 */
+    var byteArr = new Uint8Array(str.length << 1);
+    for (var i = 0, j = 0, l = str.length; i < l; i++, j += 2) {
       var ch = str.charCodeAt(i);
-      byteArr[i * 2] = ch >> 8;
-      byteArr[i * 2 + 1] = ch & 0xFF;
+      byteArr[j] = ch >> 8;
+      byteArr[j + 1] = ch & 0xFF;
     }
     return byteArr;
   },
@@ -158,9 +165,9 @@ var _default = exports.default = {
    * @return {string} 字符串
    */
   getUTF8String: function getUTF8String(bytes) {
-    /** 优化254: 使用 TextDecoder 替代手动 UTF-8 解码 + unescape */
-    if (typeof TextDecoder !== 'undefined') {
-      return new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+    /** 优化291: 使用模块级 TextDecoder 单例 */
+    if (_utf8Decoder) {
+      return _utf8Decoder.decode(bytes);
     }
     var str = '';
     for (var i = 0, l = bytes.length; i < l; i++) {

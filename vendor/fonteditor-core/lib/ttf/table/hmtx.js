@@ -74,7 +74,9 @@ var _default = exports.default = _table.default.create('hmtx', [], {
         break;
       }
     }
-    ttf.hhea.numOfLongHorMetrics = gl - numOfLast;
-    return 4 * ttf.hhea.numOfLongHorMetrics + 2 * numOfLast;
+    /** 优化287: 缓存到局部变量，避免设置后立即重读 */
+    var nlm = gl - numOfLast;
+    ttf.hhea.numOfLongHorMetrics = nlm;
+    return 4 * nlm + 2 * numOfLast;
   }
 });

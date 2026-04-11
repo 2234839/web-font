@@ -4,9 +4,6 @@ Object.defineProperty(exports, "__esModule", {
   value: true
 });
 exports.default = transformGlyfContours;
-var _pathCeil = _interopRequireDefault(require("../../graphics/pathCeil"));
-var _pathTransform = _interopRequireDefault(require("../../graphics/pathTransform"));
-var _lang = require("../../common/lang");
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
 /**
  * @file 转换复合字形的contours，以便于显示
@@ -69,11 +66,17 @@ function transformGlyfContours(glyf, ttf) {
         compoundContours.push(transformAndCeilFlat(contour, ta, tb, tc, td, te, tf));
       }
     } else {
-      /* 传统对象格式 - 深拷贝 + 分别调用 transform+ceil */
-      var contours = (0, _lang.clone)(sourceContours);
-      for (var i = 0, l = contours.length; i < l; i++) {
-        (0, _pathTransform.default)(contours[i], ta, tb, tc, td, te, tf);
-        compoundContours.push((0, _pathCeil.default)(contours[i]));
+      /* 优化265: 浅拷贝 contour 数组 + 内联 transform+ceil，消除 deep clone 开销 */
+      for (var i = 0, l = sourceContours.length; i < l; i++) {
+        var srcContour = sourceContours[i];
+        var newContour = new Array(srcContour.length);
+        for (var pi = 0, pl = srcContour.length; pi < pl; pi++) {
+          var p = srcContour[pi];
+          var px = p.x * ta + p.y * tc + te;
+          var py = p.x * tb + p.y * td + tf;
+          newContour[pi] = { x: (px + 0.5) | 0, y: (py + 0.5) | 0, onCurve: p.onCurve };
+        }
+        compoundContours.push(newContour);
       }
     }
   }

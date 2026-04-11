@@ -8,6 +8,13 @@ exports.ceilReduceAndSizeFlat = ceilReduceAndSizeFlat;
 var _reduceGlyf = _interopRequireDefault(require("./reduceGlyf"));
 var _glyFlag = _interopRequireDefault(require("../enum/glyFlag"));
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
+/** 优化279: 枚举常量提升到模块级别，消除每个 glyph 调用时的属性查找 */
+var _ONCURVE = _glyFlag.default.ONCURVE;
+var _XSHORT = _glyFlag.default.XSHORT;
+var _YSHORT = _glyFlag.default.YSHORT;
+var _XSAME = _glyFlag.default.XSAME;
+var _YSAME = _glyFlag.default.YSAME;
+var _REPEAT = _glyFlag.default.REPEAT;
 /**
  * @file 对ttf对象进行优化，查找错误，去除冗余点
  * @author mengke01(kekee000@gmail.com)
@@ -27,12 +34,12 @@ function ceilReduceAndSizeFromTypedArrays(glyf) {
   var endPts = glyf.endPtsOfContours;
   var numContours = endPts.length;
 
-  var ONCURVE = _glyFlag.default.ONCURVE;
-  var XSHORT = _glyFlag.default.XSHORT;
-  var YSHORT = _glyFlag.default.YSHORT;
-  var XSAME = _glyFlag.default.XSAME;
-  var YSAME = _glyFlag.default.YSAME;
-  var REPEAT = _glyFlag.default.REPEAT;
+  var ONCURVE = _ONCURVE;
+  var XSHORT = _XSHORT;
+  var YSHORT = _YSHORT;
+  var XSAME = _XSAME;
+  var YSAME = _YSAME;
+  var REPEAT = _REPEAT;
 
   var numPoints = xArr.length;
   var flagsC = new Uint8Array(numPoints);
@@ -127,35 +134,39 @@ function ceilReduceAndSizeFromTypedArrays(glyf) {
  * 优化256: 写入方直接 trim subarray，消除 sizeof.js 二次 slicing
  */
 function ceilReduceAndSizeFlat(glyf) {
-  var contours = glyf.contours;
-  /* 优化91+164: 跳过 reducePathFlat，用 write-index 替代 splice */
-  var writeIdx = 0;
-  for (var j = 0, cl = contours.length; j < cl; j++) {
-    if (contours[j].length > 6) {
-      contours[writeIdx++] = contours[j];
-    }
-  }
-  contours.length = writeIdx;
-  if (0 === contours.length) {
-    glyf.contours = null;
-    return;
-  }
-
+  /** 优化279: _precomputedGlyfSupport 守卫提前，避免已缓存 glyph 的无效 contour 过滤 */
   if (glyf._precomputedGlyfSupport) {
     return;
   }
 
-  var ONCURVE = _glyFlag.default.ONCURVE;
-  var XSHORT = _glyFlag.default.XSHORT;
-  var YSHORT = _glyFlag.default.YSHORT;
-  var XSAME = _glyFlag.default.XSAME;
-  var YSAME = _glyFlag.default.YSAME;
-  var REPEAT = _glyFlag.default.REPEAT;
-
+  var contours = glyf.contours;
+  /* 优化279: 合并 contour 过滤和 totalPoints 计算 + _pointsPerContour 缓存为单次遍历 */
+  var writeIdx = 0;
   var totalPoints = 0;
+  var ppcArr = new Array(contours.length);
   for (var j = 0, cl = contours.length; j < cl; j++) {
-    totalPoints += contours[j].length / 3 | 0;
+    if (contours[j].length > 6) {
+      var pts = contours[j].length / 3 | 0;
+      ppcArr[writeIdx] = pts;
+      totalPoints += pts;
+      contours[writeIdx] = contours[j];
+      writeIdx++;
+    }
   }
+  contours.length = writeIdx;
+  ppcArr.length = writeIdx;
+  if (0 === contours.length) {
+    glyf.contours = null;
+    return;
+  }
+  glyf._pointsPerContour = ppcArr;
+
+  var ONCURVE = _ONCURVE;
+  var XSHORT = _XSHORT;
+  var YSHORT = _YSHORT;
+  var XSAME = _XSAME;
+  var YSAME = _YSAME;
+  var REPEAT = _REPEAT;
   var flagsC = new Uint8Array(totalPoints);
   var fi = 0;
   var prevFlag = -1;
@@ -182,11 +193,13 @@ function ceilReduceAndSizeFlat(glyf) {
   flagsC[fi++] = prevFlag = fFlag;
   var prevX = fpx, prevY = fpy;
 
-  var skipFirst = true;
+  /** 优化213+262: 首点提取到循环外，第一个 contour 从 i=3 开始跳过首点，消除 per-point skipFirst 分支 */
+  var skipFirstContour = true;
   for (var j = 0, cl2 = contours.length; j < cl2; j++) {
     var contour = contours[j];
-    for (var i = 0, l = contour.length; i < l; i += 3) {
-      if (skipFirst) { skipFirst = false; continue; }
+    var startI = skipFirstContour ? 3 : 0;
+    skipFirstContour = false;
+    for (var i = startI, l = contour.length; i < l; i += 3) {
       var px = contour[i];
       var py = contour[i + 1];
       var onCurve = contour[i + 2];
@@ -383,16 +396,20 @@ function optimizettf(ttf) {
 
   /* 优化99+103: hasCompound 已在主循环中追踪，过滤使用 _numContours 或 contours.length */
   if (!hasCompound) {
-    /* 优化：glyf 过滤时同步重映射 cmap 索引，防止 format12 startId 超出 numGlyphs */
-    var filtered = [glyfs[0]];
-    var indexMap = [0];
+    /* 优化284: 预分配 filtered + 索引赋值替代 push，indexMap 保持稀疏数组 */
+    var filtered = new Array(gl);
+    var indexMap = [];
+    var fLen = 0;
+    filtered[fLen++] = glyfs[0];
+    indexMap[0] = 0;
     for (var gi = 1; gi < gl; gi++) {
       var g = glyfs[gi];
       if (g._numContours != null ? g._numContours > 0 : (g.contours && g.contours.length)) {
-        indexMap[gi] = filtered.length;
-        filtered.push(g);
+        indexMap[gi] = fLen;
+        filtered[fLen++] = g;
       }
     }
+    filtered.length = fLen;
     ttf.glyf = filtered;
     if (ttf.support && ttf.support.maxp) {
       ttf.support.maxp.numGlyphs = filtered.length;

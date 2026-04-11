@@ -6,7 +6,7 @@ Object.defineProperty(exports, "__esModule", {
 exports.default = otf2ttfobject;
 var _error = _interopRequireDefault(require("./error"));
 var _otfreader = _interopRequireDefault(require("./otfreader"));
-var _otfContours2ttfContours = _interopRequireDefault(require("./util/otfContours2ttfContours"));
+var _otfContours2ttfContours = require("./util/otfContours2ttfContours");
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
 /**
  * @file otf格式转ttf格式对象
@@ -34,25 +34,10 @@ function otf2ttfobject(otfBuffer, options) {
 
   // 转换otf轮廓，同时获取包围盒
   var glyf = otfObject.glyf;
-  /** 优化220: 绑定模块导入到局部变量，消除循环内 interop 属性查找 */
-  var convertContours = _otfContours2ttfContours.default;
+  /** 优化291: 使用就地写入版本，消除每个 glyph 一次中间对象分配 */
+  var convertInPlace = _otfContours2ttfContours.otfContours2ttfContoursInPlace;
   for (var i = 0, l = glyf.length; i < l; i++) {
-    var g = glyf[i];
-    var result = convertContours(g.contours);
-    g.contours = result.contours;
-    /** 优化: transformContourFlat 始终返回扁平格式，直接设置标志 */
-    g._flatContours = true;
-    if (result.xMin != null) {
-      g.xMin = result.xMin;
-      g.xMax = result.xMax;
-      g.yMin = result.yMin;
-      g.yMax = result.yMax;
-    } else {
-      g.xMin = 0;
-      g.xMax = 0;
-      g.yMin = 0;
-      g.yMax = 0;
-    }
+    convertInPlace(glyf[i].contours, glyf[i]);
   }
   otfObject.version = 0x1;
 

@@ -34,8 +34,9 @@ function lookupFormat12(groups, unicode) {
 
 /**
  * 优化114: format4 二分查找 segment，替代线性扫描
+ * 优化293: 接受预计算的 graphIdArrayIndexOffset 参数，避免每次调用重复计算
  */
-function lookupFormat4(format4, unicode) {
+function lookupFormat4(format4, unicode, _graphIdArrayIndexOffset) {
   var startCode = format4.startCode;
   var endCode = format4.endCode;
   var idDelta = format4.idDelta;
@@ -54,8 +55,8 @@ function lookupFormat4(format4, unicode) {
       if (idRangeOffset[i] === 0) {
         return (unicode + idDelta[i]) % 0x10000;
       }
-      var graphIdArrayIndexOffset = format4.glyphIdArrayIndexOffset != null ? format4.glyphIdArrayIndexOffset : (format4.glyphIdArrayOffset - format4.idRangeOffsetOffset) / 2;
-      var index = i + idRangeOffset[i] / 2 + (unicode - startCode[i]) - graphIdArrayIndexOffset;
+      var graphIdArrayIndexOffset = _graphIdArrayIndexOffset != null ? _graphIdArrayIndexOffset : (format4.glyphIdArrayOffset - format4.idRangeOffsetOffset) / 2;
+      var index = i + (idRangeOffset[i] >> 1) + (unicode - startCode[i]) - graphIdArrayIndexOffset;
       var graphId;
       if (format4.glyphIdArray) {
         graphId = format4.glyphIdArray[index];
@@ -97,11 +98,13 @@ function readWindowsAllCodes(tables, ttf) {
 
   /* 优化65: subset 模式 - 只查找 subset 字符的 glyphId */
   if (subset && subset.length > 0) {
+    /** 优化293: 预计算 graphIdArrayIndexOffset，避免在 subset 循环中重复计算 */
+    var f4GIAO = format4 ? (format4.glyphIdArrayIndexOffset != null ? format4.glyphIdArrayIndexOffset : (format4.glyphIdArrayOffset - format4.idRangeOffsetOffset) / 2) : -1;
     if (format12) {
       for (var si = 0, sl = subset.length; si < sl; si++) {
         var u = subset[si];
         if (u < 0x10000 && format4) {
-          var gid = lookupFormat4(format4, u);
+          var gid = lookupFormat4(format4, u, f4GIAO);
           if (gid >= 0) { codes[u] = gid; continue; }
         }
         var gid12 = lookupFormat12(format12.groups, u);
@@ -110,7 +113,7 @@ function readWindowsAllCodes(tables, ttf) {
     } else if (format4) {
       for (var si2 = 0, sl2 = subset.length; si2 < sl2; si2++) {
         var u2 = subset[si2];
-        var gid4 = lookupFormat4(format4, u2);
+        var gid4 = lookupFormat4(format4, u2, f4GIAO);
         if (gid4 >= 0) { codes[u2] = gid4; }
       }
     }
@@ -174,52 +177,64 @@ function readWindowsAllCodes(tables, ttf) {
       }
     }
   } else if (format4) {
+    /** 优化262: 属性链缓存到局部变量 + 跳过 65535 避免 delete 导致 V8 隐藏类退化 */
     var segCount = format4.segCountX2 / 2;
     var graphIdArrayIndexOffset = (format4.glyphIdArrayOffset - format4.idRangeOffsetOffset) / 2;
+    var f4StartCode = format4.startCode;
+    var f4EndCode = format4.endCode;
+    var f4IdDelta = format4.idDelta;
+    var f4IdRangeOffset = format4.idRangeOffset;
+    var f4GlyphIdArray = format4.glyphIdArray;
     for (var si3 = 0; si3 < segCount; ++si3) {
-      for (var _start = format4.startCode[si3], _end = format4.endCode[si3]; _start <= _end; ++_start) {
-        if (format4.idRangeOffset[si3] === 0) {
-          codes[_start] = (_start + format4.idDelta[si3]) % 0x10000;
+      var segEnd = f4EndCode[si3];
+      if (segEnd > 0xFFFE) segEnd = 0xFFFE;
+      for (var _start = f4StartCode[si3]; _start <= segEnd; ++_start) {
+        if (f4IdRangeOffset[si3] === 0) {
+          codes[_start] = (_start + f4IdDelta[si3]) & 0xFFFF;
         } else {
-          var index = si3 + format4.idRangeOffset[si3] / 2 + (_start - format4.startCode[si3]) - graphIdArrayIndexOffset;
-          var graphId = format4.glyphIdArray[index];
+          var index = si3 + (f4IdRangeOffset[si3] >> 1) + (_start - f4StartCode[si3]) - graphIdArrayIndexOffset;
+          var graphId = f4GlyphIdArray[index];
           if (graphId !== 0) {
-            codes[_start] = (graphId + format4.idDelta[si3]) % 0x10000;
+            codes[_start] = (graphId + f4IdDelta[si3]) & 0xFFFF;
           } else {
             codes[_start] = 0;
           }
         }
       }
     }
-    delete codes[65535];
   } else if (format2) {
+    /** 优化262: 缓存 subHeads[0] 和 subHeads[k] 到局部变量，消除重复属性链查找 */
     var subHeadKeys = format2.subHeadKeys;
     var subHeads = format2.subHeads;
     var glyphs = format2.glyphs;
     var numGlyphs = ttf.maxp.numGlyphs;
     var _index = 0;
+    var sh0 = subHeads[0];
     for (var bi = 0; bi < 256; bi++) {
       if (subHeadKeys[bi] === 0) {
         if (bi >= format2.maxPos) {
           _index = 0;
-        } else if (bi < subHeads[0].firstCode || bi >= subHeads[0].firstCode + subHeads[0].entryCount || subHeads[0].idRangeOffset + (bi - subHeads[0].firstCode) >= glyphs.length) {
+        } else if (bi < sh0.firstCode || bi >= sh0.firstCode + sh0.entryCount || sh0.idRangeOffset + (bi - sh0.firstCode) >= glyphs.length) {
           _index = 0;
-        } else if ((_index = glyphs[subHeads[0].idRangeOffset + (bi - subHeads[0].firstCode)]) !== 0) {
-          _index = _index + subHeads[0].idDelta;
+        } else if ((_index = glyphs[sh0.idRangeOffset + (bi - sh0.firstCode)]) !== 0) {
+          _index = _index + sh0.idDelta;
         }
         if (_index !== 0 && _index < numGlyphs) {
           codes[bi] = _index;
         }
       } else {
-        var k = subHeadKeys[bi];
-        for (var j = 0, entryCount = subHeads[k].entryCount; j < entryCount; j++) {
-          if (subHeads[k].idRangeOffset + j >= glyphs.length) {
+        var sh = subHeads[subHeadKeys[bi]];
+        var shIdRangeOffset = sh.idRangeOffset;
+        var shIdDelta = sh.idDelta;
+        var shFirstCode = sh.firstCode;
+        for (var j = 0, entryCount = sh.entryCount; j < entryCount; j++) {
+          if (shIdRangeOffset + j >= glyphs.length) {
             _index = 0;
-          } else if ((_index = glyphs[subHeads[k].idRangeOffset + j]) !== 0) {
-            _index = _index + subHeads[k].idDelta;
+          } else if ((_index = glyphs[shIdRangeOffset + j]) !== 0) {
+            _index = _index + shIdDelta;
           }
           if (_index !== 0 && _index < numGlyphs) {
-            var _unicode = (bi << 8 | j + subHeads[k].firstCode) % 0xffff;
+            var _unicode = (bi << 8 | j + shFirstCode) & 0xffff;
             codes[_unicode] = _index;
           }
         }

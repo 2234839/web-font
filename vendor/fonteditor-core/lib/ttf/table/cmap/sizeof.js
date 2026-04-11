@@ -51,16 +51,7 @@ function getSegmentsFlat(unicodeArr, idArr, bound) {
   return result;
 }
 
-/** 优化155: 扁平数组版本的 getFormat0Segment */
-function getFormat0SegmentFlat(unicodeArr, idArr) {
-  var unicodes = [];
-  for (var i = 0, l = unicodeArr.length; i < l; i++) {
-    if (unicodeArr[i] < 256) {
-      unicodes.push(unicodeArr[i], idArr[i]);
-    }
-  }
-  return unicodes;
-}
+/** 优化269: getFormat0SegmentFlat 合并到 getSegmentsFlatAndFormat0，消除二次遍历 */
 
 function sizeof(ttf) {
   ttf.support.cmap = {};
@@ -134,16 +125,21 @@ function sizeof(ttf) {
     cmapSupport.format4Segments = format12Segments;
   }
 
-  var hasGLyphsOver2Bytes = len > 0;
-  if (hasGLyphsOver2Bytes) {
-    cmapSupport.hasGLyphsOver2Bytes = true;
-  }
+  /** 优化288: 内联赋值，消除临时变量和条件分支 */
+  cmapSupport.hasGLyphsOver2Bytes = len > 0;
 
   /** format4Size 需要包含 sentinel segment (+1)，与 write.js 中的 segCount = segments.length/4 + 1 一致 */
   var format4SegCount = cmapSupport.format4Segments.length / 4 + 1;
   cmapSupport.format4Size = 16 + format4SegCount * 8;
-  cmapSupport.format0Segments = getFormat0SegmentFlat(unicodeArr, idArr);
-  cmapSupport.hasFormat0 = cmapSupport.format0Segments.length > 0;
+  /** 优化269: format0 数据直接在排序后的数组上收集，内联替代 getFormat0SegmentFlat */
+  var format0Segments = [];
+  for (var fi = 0, fl = len; fi < fl; fi++) {
+    if (unicodeArr[fi] < 256) {
+      format0Segments.push(unicodeArr[fi], idArr[fi]);
+    }
+  }
+  cmapSupport.format0Segments = format0Segments;
+  cmapSupport.hasFormat0 = format0Segments.length > 0;
   cmapSupport.format0Size = cmapSupport.hasFormat0 ? 262 : 0;
 
   /** 记录头大小必须动态计算，与 write.js 中的 numRecords 保持一致，否则会导致表偏移错位 */

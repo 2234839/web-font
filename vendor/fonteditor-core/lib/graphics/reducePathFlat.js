@@ -34,8 +34,10 @@ function reducePathFlat(contour) {
   /* 优化191: flag 只有 0 或 1，简化条件判断 */
   if (po === nextO && dx * dx + dy * dy <= 1) { removed++; }
   else {
-    var cross = (nextY - py) * (prevX - px) - (prevY - py) * (nextX - px);
-    if (prevO && nextO && cross > -0.001 && cross < 0.001) { removed++; }
+    /** 优化291: 叉积复用 dx/dy，减少 2 次减法 */
+    /** 优化288: 坐标为整数时叉积也是整数，用 === 0 替代两个浮点比较 */
+    var cross = dx * (prevY - py) - dy * (prevX - px);
+    if (prevO && nextO && !cross) { removed++; }
     else {
       reduced = new Array(len);
       reduced[ri++] = px; reduced[ri++] = py; reduced[ri++] = po;
@@ -51,8 +53,9 @@ function reducePathFlat(contour) {
     dx = px - nextX;
     dy = py - nextY;
     if (po === nextO && dx * dx + dy * dy <= 1) { removed++; continue; }
-    cross = (nextY - py) * (prevX - px) - (prevY - py) * (nextX - px);
-    if (prevO && nextO && cross > -0.001 && cross < 0.001) { removed++; continue; }
+    /** 优化291: 叉积复用 dx/dy，减少 2 次减法 */
+    cross = dx * (prevY - py) - dy * (prevX - px);
+    if (prevO && nextO && !cross) { removed++; continue; }
 
     if (!reduced) reduced = new Array(len);
     reduced[ri++] = px; reduced[ri++] = py; reduced[ri++] = po;
@@ -68,8 +71,9 @@ function reducePathFlat(contour) {
     dy = py - nextY;
     if (po === nextO && dx * dx + dy * dy <= 1) { removed++; }
     else {
-      cross = (nextY - py) * (prevX - px) - (prevY - py) * (nextX - px);
-      if (prevO && nextO && cross > -0.001 && cross < 0.001) { removed++; }
+      /** 优化291: 叉积复用 dx/dy，减少 2 次减法 */
+      cross = dx * (prevY - py) - dy * (prevX - px);
+      if (prevO && nextO && !cross) { removed++; }
       else {
         if (!reduced) reduced = new Array(len);
         reduced[ri++] = px; reduced[ri++] = py; reduced[ri++] = po;

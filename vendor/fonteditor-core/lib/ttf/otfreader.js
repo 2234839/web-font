@@ -98,7 +98,7 @@ var OTFReader = exports.default = /*#__PURE__*/function () {
       var codes = font.cmap;
       var glyf = font.CFF.glyf;
       var subsetMap = font.readOptions.subset ? font.subsetMap : null;
-      /** 优化231: 用 Object.keys + for 循环替代 for...in，消除原型链遍历 + 字符串键开销 */
+      /** 优化290: subsetMap 检查提到循环外，消除每次迭代的分支判断 */
       var cmapKeys = Object.keys(codes);
       if (subsetMap) {
         for (var ki = 0, kl = cmapKeys.length; ki < kl; ki++) {
@@ -121,7 +121,7 @@ var OTFReader = exports.default = /*#__PURE__*/function () {
       var hmtxData = font.hmtx;
       var isFlat = hmtxData instanceof Int32Array;
       var hLen = isFlat ? hmtxData.length / 2 : hmtxData.length;
-      /** 优化231: subsetMap 判断外提，消除循环内条件分支 */
+      /** 优化290: subsetMap 检查提到循环外，消除每次迭代的分支判断 */
       if (subsetMap) {
         if (isFlat) {
           for (var hi = 0, j = 0; hi < hLen; hi++, j += 2) {
@@ -221,8 +221,9 @@ var OTFReader = exports.default = /*#__PURE__*/function () {
   }, {
     key: "dispose",
     value: function dispose() {
-      delete this.font;
-      delete this.options;
+      /** 优化262: delete → null 赋值，避免 V8 隐藏类转换 */
+      this.font = null;
+      this.options = null;
     }
   }]);
 }();

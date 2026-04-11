@@ -113,46 +113,50 @@ var _default = exports.default = _table.default.create('OS/2', [['version', _str
   },
   size: function size(ttf) {
     /* 优化120: 使用 optimizettf 预计算的 metrics，跳过全 glyf 遍历 */
+    /** 优化288: 缓存频繁访问的属性链到局部变量 */
+    var os2 = ttf['OS/2'];
+    var hhea = ttf.hhea;
+    var head = ttf.head;
+    var maxp = ttf.maxp || (ttf.maxp = {});
     var metrics = ttf._metrics;
     var hinting = ttf.writeOptions ? ttf.writeOptions.hinting : false;
 
     if (metrics) {
-      ttf['OS/2'].version = 0x4;
-      ttf['OS/2'].achVendID = (ttf['OS/2'].achVendID + '    ').slice(0, 4);
-      ttf['OS/2'].xAvgCharWidth = metrics.xAvgCharWidth;
-      ttf['OS/2'].ulUnicodeRange2 = 268435456;
-      ttf['OS/2'].usFirstCharIndex = metrics.usFirstCharIndex;
-      ttf['OS/2'].usLastCharIndex = metrics.usLastCharIndex;
+      os2.version = 0x4;
+      os2.achVendID = (os2.achVendID + '    ').slice(0, 4);
+      os2.xAvgCharWidth = metrics.xAvgCharWidth;
+      os2.ulUnicodeRange2 = 268435456;
+      os2.usFirstCharIndex = metrics.usFirstCharIndex;
+      os2.usLastCharIndex = metrics.usLastCharIndex;
 
-      ttf.hhea.version = ttf.hhea.version || 0x1;
-      ttf.hhea.advanceWidthMax = metrics.advanceWidthMax;
-      ttf.hhea.minLeftSideBearing = metrics.minLeftSideBearing;
-      ttf.hhea.minRightSideBearing = metrics.minRightSideBearing;
-      ttf.hhea.xMaxExtent = metrics.xMaxExtent;
+      hhea.version = hhea.version || 0x1;
+      hhea.advanceWidthMax = metrics.advanceWidthMax;
+      hhea.minLeftSideBearing = metrics.minLeftSideBearing;
+      hhea.minRightSideBearing = metrics.minRightSideBearing;
+      hhea.xMaxExtent = metrics.xMaxExtent;
 
-      ttf.head.version = ttf.head.version || 0x1;
-      ttf.head.lowestRecPPEM = ttf.head.lowestRecPPEM || 0x8;
-      ttf.head.xMin = metrics.xMin;
-      ttf.head.yMin = metrics.yMin;
-      ttf.head.xMax = metrics.xMax;
-      ttf.head.yMax = metrics.yMax;
+      head.version = head.version || 0x1;
+      head.lowestRecPPEM = head.lowestRecPPEM || 0x8;
+      head.xMin = metrics.xMin;
+      head.yMin = metrics.yMin;
+      head.xMax = metrics.xMax;
+      head.yMax = metrics.yMax;
 
       if (ttf.support.head) {
         var _ttf$support$head = ttf.support.head;
-        if (_ttf$support$head.xMin != null) ttf.head.xMin = _ttf$support$head.xMin;
-        if (_ttf$support$head.yMin != null) ttf.head.yMin = _ttf$support$head.yMin;
-        if (_ttf$support$head.xMax != null) ttf.head.xMax = _ttf$support$head.xMax;
-        if (_ttf$support$head.yMax != null) ttf.head.yMax = _ttf$support$head.yMax;
+        if (_ttf$support$head.xMin != null) head.xMin = _ttf$support$head.xMin;
+        if (_ttf$support$head.yMin != null) head.yMin = _ttf$support$head.yMin;
+        if (_ttf$support$head.xMax != null) head.xMax = _ttf$support$head.xMax;
+        if (_ttf$support$head.yMax != null) head.yMax = _ttf$support$head.yMax;
       }
       if (ttf.support.hhea) {
         var _ttf$support$hhea = ttf.support.hhea;
-        if (_ttf$support$hhea.advanceWidthMax != null) ttf.hhea.advanceWidthMax = _ttf$support$hhea.advanceWidthMax;
-        if (_ttf$support$hhea.xMaxExtent != null) ttf.hhea.xMaxExtent = _ttf$support$hhea.xMaxExtent;
-        if (_ttf$support$hhea.minLeftSideBearing != null) ttf.hhea.minLeftSideBearing = _ttf$support$hhea.minLeftSideBearing;
-        if (_ttf$support$hhea.minRightSideBearing != null) ttf.hhea.minRightSideBearing = _ttf$support$hhea.minRightSideBearing;
+        if (_ttf$support$hhea.advanceWidthMax != null) hhea.advanceWidthMax = _ttf$support$hhea.advanceWidthMax;
+        if (_ttf$support$hhea.xMaxExtent != null) hhea.xMaxExtent = _ttf$support$hhea.xMaxExtent;
+        if (_ttf$support$hhea.minLeftSideBearing != null) hhea.minLeftSideBearing = _ttf$support$hhea.minLeftSideBearing;
+        if (_ttf$support$hhea.minRightSideBearing != null) hhea.minRightSideBearing = _ttf$support$hhea.minRightSideBearing;
       }
 
-      ttf.maxp = ttf.maxp || {};
       ttf.support.maxp = {
         version: 1.0,
         numGlyphs: ttf.glyf.length,
@@ -160,17 +164,18 @@ var _default = exports.default = _table.default.create('OS/2', [['version', _str
         maxContours: metrics.maxContours,
         maxCompositePoints: 0,
         maxCompositeContours: 0,
-        maxZones: ttf.maxp.maxZones || 0,
-        maxTwilightPoints: ttf.maxp.maxTwilightPoints || 0,
-        maxStorage: ttf.maxp.maxStorage || 0,
-        maxFunctionDefs: ttf.maxp.maxFunctionDefs || 0,
-        maxStackElements: ttf.maxp.maxStackElements || 0,
+        maxZones: maxp.maxZones || 0,
+        maxTwilightPoints: maxp.maxTwilightPoints || 0,
+        maxStorage: maxp.maxStorage || 0,
+        maxFunctionDefs: maxp.maxFunctionDefs || 0,
+        maxStackElements: maxp.maxStackElements || 0,
         maxSizeOfInstructions: 0,
         maxComponentElements: 0,
         maxComponentDepth: 0
       };
 
-      delete ttf._metrics;
+      /** 优化260: delete → null 赋值，避免 V8 隐藏类转换 */
+      ttf._metrics = null;
       return _table.default.size.call(this, ttf);
     }
 
@@ -189,10 +194,14 @@ var _default = exports.default = _table.default.create('OS/2', [['version', _str
     var maxComponentElements = 0;
     var glyfNotEmpty = 0;
 
+    /** 优化288: 内联 Math.max 为条件判断，消除函数调用开销 */
     if (hinting) {
-      if (ttf.cvt) maxSizeOfInstructions = Math.max(maxSizeOfInstructions, ttf.cvt.length);
-      if (ttf.prep) maxSizeOfInstructions = Math.max(maxSizeOfInstructions, ttf.prep.length);
-      if (ttf.fpgm) maxSizeOfInstructions = Math.max(maxSizeOfInstructions, ttf.fpgm.length);
+      var cvtLen = ttf.cvt ? ttf.cvt.length : 0;
+      if (cvtLen > maxSizeOfInstructions) maxSizeOfInstructions = cvtLen;
+      var prepLen = ttf.prep ? ttf.prep.length : 0;
+      if (prepLen > maxSizeOfInstructions) maxSizeOfInstructions = prepLen;
+      var fpgmLen = ttf.fpgm ? ttf.fpgm.length : 0;
+      if (fpgmLen > maxSizeOfInstructions) maxSizeOfInstructions = fpgmLen;
     }
     var glyfs = ttf.glyf;
     for (var gi = 0, gl = glyfs.length; gi < gl; gi++) {
@@ -202,7 +211,9 @@ var _default = exports.default = _table.default.create('OS/2', [['version', _str
         var compositePoints = 0;
         var subGlyfs = glyf.glyfs;
         for (var sg = 0, sgl = subGlyfs.length; sg < sgl; sg++) {
-          var cglyf = ttf.glyf[subGlyfs[sg].glyphIndex];
+          /** 优化291: 缓存 subGlyfs[sg] 避免双重属性查找 */
+          var sgRef = subGlyfs[sg];
+          var cglyf = glyfs[sgRef.glyphIndex];
           if (!cglyf) continue;
           if (cglyf._numContours != null) {
             compositeContours += cglyf._numContours;
@@ -271,41 +282,40 @@ var _default = exports.default = _table.default.create('OS/2', [['version', _str
       }
     }
 
-    ttf['OS/2'].version = 0x4;
-    ttf['OS/2'].achVendID = (ttf['OS/2'].achVendID + '    ').slice(0, 4);
-    ttf['OS/2'].xAvgCharWidth = xAvgCharWidth / (glyfNotEmpty || 1);
-    ttf['OS/2'].ulUnicodeRange2 = 268435456;
-    ttf['OS/2'].usFirstCharIndex = usFirstCharIndex;
-    ttf['OS/2'].usLastCharIndex = usLastCharIndex;
+    os2.version = 0x4;
+    os2.achVendID = (os2.achVendID + '    ').slice(0, 4);
+    os2.xAvgCharWidth = xAvgCharWidth / (glyfNotEmpty || 1);
+    os2.ulUnicodeRange2 = 268435456;
+    os2.usFirstCharIndex = usFirstCharIndex;
+    os2.usLastCharIndex = usLastCharIndex;
 
-    ttf.hhea.version = ttf.hhea.version || 0x1;
-    ttf.hhea.advanceWidthMax = advanceWidthMax;
-    ttf.hhea.minLeftSideBearing = minLeftSideBearing;
-    ttf.hhea.minRightSideBearing = minRightSideBearing;
-    ttf.hhea.xMaxExtent = xMaxExtent;
+    hhea.version = hhea.version || 0x1;
+    hhea.advanceWidthMax = advanceWidthMax;
+    hhea.minLeftSideBearing = minLeftSideBearing;
+    hhea.minRightSideBearing = minRightSideBearing;
+    hhea.xMaxExtent = xMaxExtent;
 
-    ttf.head.version = ttf.head.version || 0x1;
-    ttf.head.lowestRecPPEM = ttf.head.lowestRecPPEM || 0x8;
-    ttf.head.xMin = xMin;
-    ttf.head.yMin = yMin;
-    ttf.head.xMax = xMax;
-    ttf.head.yMax = yMax;
+    head.version = head.version || 0x1;
+    head.lowestRecPPEM = head.lowestRecPPEM || 0x8;
+    head.xMin = xMin;
+    head.yMin = yMin;
+    head.xMax = xMax;
+    head.yMax = yMax;
 
     if (ttf.support.head) {
       var _ttf$support$head = ttf.support.head;
-      if (_ttf$support$head.xMin != null) ttf.head.xMin = _ttf$support$head.xMin;
-      if (_ttf$support$head.yMin != null) ttf.head.yMin = _ttf$support$head.yMin;
-      if (_ttf$support$head.xMax != null) ttf.head.xMax = _ttf$support$head.xMax;
-      if (_ttf$support$head.yMax != null) ttf.head.yMax = _ttf$support$head.yMax;
+      if (_ttf$support$head.xMin != null) head.xMin = _ttf$support$head.xMin;
+      if (_ttf$support$head.yMin != null) head.yMin = _ttf$support$head.yMin;
+      if (_ttf$support$head.xMax != null) head.xMax = _ttf$support$head.xMax;
+      if (_ttf$support$head.yMax != null) head.yMax = _ttf$support$head.yMax;
     }
     if (ttf.support.hhea) {
       var _ttf$support$hhea = ttf.support.hhea;
-      if (_ttf$support$hhea.advanceWidthMax != null) ttf.hhea.advanceWidthMax = _ttf$support$hhea.advanceWidthMax;
-      if (_ttf$support$hhea.xMaxExtent != null) ttf.hhea.xMaxExtent = _ttf$support$hhea.xMaxExtent;
-      if (_ttf$support$hhea.minLeftSideBearing != null) ttf.hhea.minLeftSideBearing = _ttf$support$hhea.minLeftSideBearing;
-      if (_ttf$support$hhea.minRightSideBearing != null) ttf.hhea.minRightSideBearing = _ttf$support$hhea.minRightSideBearing;
+      if (_ttf$support$hhea.advanceWidthMax != null) hhea.advanceWidthMax = _ttf$support$hhea.advanceWidthMax;
+      if (_ttf$support$hhea.xMaxExtent != null) hhea.xMaxExtent = _ttf$support$hhea.xMaxExtent;
+      if (_ttf$support$hhea.minLeftSideBearing != null) hhea.minLeftSideBearing = _ttf$support$hhea.minLeftSideBearing;
+      if (_ttf$support$hhea.minRightSideBearing != null) hhea.minRightSideBearing = _ttf$support$hhea.minRightSideBearing;
     }
-    ttf.maxp = ttf.maxp || {};
     ttf.support.maxp = {
       version: 1.0,
       numGlyphs: ttf.glyf.length,
@@ -313,11 +323,11 @@ var _default = exports.default = _table.default.create('OS/2', [['version', _str
       maxContours: maxContours,
       maxCompositePoints: maxCompositePoints,
       maxCompositeContours: maxCompositeContours,
-      maxZones: ttf.maxp.maxZones || 0,
-      maxTwilightPoints: ttf.maxp.maxTwilightPoints || 0,
-      maxStorage: ttf.maxp.maxStorage || 0,
-      maxFunctionDefs: ttf.maxp.maxFunctionDefs || 0,
-      maxStackElements: ttf.maxp.maxStackElements || 0,
+      maxZones: maxp.maxZones || 0,
+      maxTwilightPoints: maxp.maxTwilightPoints || 0,
+      maxStorage: maxp.maxStorage || 0,
+      maxFunctionDefs: maxp.maxFunctionDefs || 0,
+      maxStackElements: maxp.maxStackElements || 0,
       maxSizeOfInstructions: maxSizeOfInstructions,
       maxComponentElements: maxComponentElements,
       maxComponentDepth: maxComponentElements ? 1 : 0

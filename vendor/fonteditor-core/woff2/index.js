@@ -41,8 +41,9 @@ const woff2Module = {
      * @param {ArrayBuffer|Buffer|Array} ttfBuffer ttf buffer
      * @return {Uint8Array} uint8 array
      */
+    /** 优化267: encodeTTFToWOFF2 直接返回 Uint8Array，消除二次包装 */
     encode(ttfBuffer) {
-        return new Uint8Array(encodeTTFToWOFF2(ttfBuffer));
+        return encodeTTFToWOFF2(ttfBuffer);
     },
 
     /**

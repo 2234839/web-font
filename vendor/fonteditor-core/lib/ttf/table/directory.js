@@ -12,6 +12,17 @@ function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { de
  *
  * https://developer.apple.com/fonts/TrueType-Reference-Manual/RM06/Chap6.html
  */
+
+/** 优化280: KNOWN_TAG_U32 提升到模块级，消除每次 write() 调用的对象分配 */
+var KNOWN_TAG_U32 = {
+  'OS/2': 0x4F532F32, 'cmap': 0x636D6170, 'glyf': 0x676C7966,
+  'head': 0x68656164, 'hhea': 0x68686561, 'hmtx': 0x686D7478,
+  'loca': 0x6C6F6361, 'maxp': 0x6D617870, 'name': 0x6E616D65,
+  'post': 0x706F7374, 'CFF ': 0x43464620, 'VORG': 0x564F5247,
+  'GPOS': 0x47504F53, 'kern': 0x6B65726E, 'kerx': 0x6B657278,
+  'cvt ': 0x63767420, 'fpgm': 0x6670676D, 'prep': 0x70726570,
+  'gasp': 0x67617370
+};
 var _default = exports.default = _table.default.create('directory', [], {
   read: function read(reader, ttf) {
     var tables = {};
@@ -44,16 +55,6 @@ var _default = exports.default = _table.default.create('directory', [], {
     var tables = ttf.support.tables;
     var view = writer.view;
     var pos = writer.offset;
-    /** 优化235: 预计算 tag 的 Uint32 值，避免循环内 4 次 charCodeAt 调用 */
-    var KNOWN_TAG_U32 = {
-      'OS/2': 0x4F532F32, 'cmap': 0x636D6170, 'glyf': 0x676C7966,
-      'head': 0x68656164, 'hhea': 0x68686561, 'hmtx': 0x686D7478,
-      'loca': 0x6C6F6361, 'maxp': 0x6D617870, 'name': 0x6E616D65,
-      'post': 0x706F7374, 'CFF ': 0x43464620, 'VORG': 0x564F5247,
-      'GPOS': 0x47504F53, 'kern': 0x6B65726E, 'kerx': 0x6B657278,
-      'cvt ': 0x63767420, 'fpgm': 0x6670676D, 'prep': 0x70726570,
-      'gasp': 0x67617370
-    };
     for (var i = 0, l = tables.length; i < l; i++) {
       var t = tables[i];
       var tagU32 = KNOWN_TAG_U32[t.name];

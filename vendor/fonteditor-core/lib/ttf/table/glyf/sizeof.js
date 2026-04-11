@@ -6,6 +6,13 @@ Object.defineProperty(exports, "__esModule", {
 exports.default = sizeof;
 var _glyFlag = _interopRequireDefault(require("../../enum/glyFlag"));
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
+/** 优化279: 枚举常量提升到模块级别，消除每个 glyph 调用时的属性查找 */
+var _ONCURVE = _glyFlag.default.ONCURVE;
+var _XSHORT = _glyFlag.default.XSHORT;
+var _YSHORT = _glyFlag.default.YSHORT;
+var _XSAME = _glyFlag.default.XSAME;
+var _YSAME = _glyFlag.default.YSAME;
+var _REPEAT = _glyFlag.default.REPEAT;
 /**
  * @file 获取glyf的大小，同时对glyf写入进行预处理
  * @author mengke01(kekee000@gmail.com)
@@ -40,12 +47,12 @@ function getFlagsAndSize(glyf, glyfSupport, hinting) {
     return 12 + nc * 2 + glyfSupport.flags.length + encSz + instructionSize;
   }
 
-  var ONCURVE = _glyFlag.default.ONCURVE;
-  var XSHORT = _glyFlag.default.XSHORT;
-  var YSHORT = _glyFlag.default.YSHORT;
-  var XSAME = _glyFlag.default.XSAME;
-  var YSAME = _glyFlag.default.YSAME;
-  var REPEAT = _glyFlag.default.REPEAT;
+  var ONCURVE = _ONCURVE;
+  var XSHORT = _XSHORT;
+  var YSHORT = _YSHORT;
+  var XSAME = _XSAME;
+  var YSAME = _YSAME;
+  var REPEAT = _REPEAT;
 
   var contours = glyf.contours;
   var isFlat = glyf._flatContours;
@@ -72,121 +79,71 @@ function getFlagsAndSize(glyf, glyfSupport, hinting) {
 
   for (var j = 0, cl = contours.length; j < cl; j++) {
     var contour = contours[j];
+    /** 优化293: 统一 isFlat 和非 isFlat 的编码循环，消除 60 行重复代码 */
+    var step, cLen;
     if (isFlat) {
-      for (var i = 0, l = contour.length; i < l; i += 3) {
-        var px = contour[i];
-        var py = contour[i + 1];
-        var onCurve = contour[i + 2];
-        var flag = onCurve ? ONCURVE : 0;
-        var dx, dy;
-
-        if (!started) {
-          dx = px; dy = py; started = true;
-        } else {
-          dx = px - prevX; dy = py - prevY;
-        }
-        prevX = px; prevY = py;
-
-        if (dx === 0) {
-          flag += XSAME;
-        } else if (dx > -256 && dx < 256) {
-          flag += XSHORT;
-          if (dx > 0) flag += XSAME;
-          xCoordBuf[xbi++] = dx > 0 ? dx : -dx;
-          encodedCoordSize += 1;
-        } else {
-          xCoordBuf[xbi++] = (dx >> 8) & 0xFF;
-          xCoordBuf[xbi++] = dx & 0xFF;
-          encodedCoordSize += 2;
-        }
-
-        if (dy === 0) {
-          flag += YSAME;
-        } else if (dy > -256 && dy < 256) {
-          flag += YSHORT;
-          if (dy > 0) flag += YSAME;
-          yCoordBuf[ybi++] = dy > 0 ? dy : -dy;
-          encodedCoordSize += 1;
-        } else {
-          yCoordBuf[ybi++] = (dy >> 8) & 0xFF;
-          yCoordBuf[ybi++] = dy & 0xFF;
-          encodedCoordSize += 2;
-        }
-
-        if (flag === prevFlag && started) {
-          if (repeatPoint === -1) {
-            repeatPoint = fi - 1;
-            flagsC[repeatPoint] |= REPEAT;
-            flagsC[fi++] = 1;
-          } else if (flagsC[repeatPoint + 1] < 255) {
-            ++flagsC[repeatPoint + 1];
-          } else {
-            /* 优化188: repeat count 达到 255 上限 */
-            repeatPoint = -1;
-            flagsC[fi++] = prevFlag = flag;
-          }
-        } else {
-          repeatPoint = -1;
-          flagsC[fi++] = prevFlag = flag;
-        }
-      }
+      step = 3; cLen = contour.length;
     } else {
-      for (var i = 0, l = contour.length; i < l; i++) {
-        var point = contour[i];
-        var px = point.x;
-        var py = point.y;
-        var flag = point.onCurve ? ONCURVE : 0;
-        var dx, dy;
+      step = 1; cLen = contour.length;
+    }
+    for (var i = 0; i < cLen; i += step) {
+      var px, py, onCurve;
+      if (isFlat) {
+        px = contour[i]; py = contour[i + 1]; onCurve = contour[i + 2];
+      } else {
+        px = contour[i].x; py = contour[i].y; onCurve = contour[i].onCurve;
+      }
+      var flag = onCurve ? ONCURVE : 0;
+      var dx, dy;
 
-        if (!started) {
-          dx = px; dy = py; started = true;
-        } else {
-          dx = px - prevX; dy = py - prevY;
-        }
-        prevX = px; prevY = py;
+      if (!started) {
+        dx = px; dy = py; started = true;
+      } else {
+        dx = px - prevX; dy = py - prevY;
+      }
+      prevX = px; prevY = py;
 
-        if (dx === 0) {
-          flag += XSAME;
-        } else if (dx > -256 && dx < 256) {
-          flag += XSHORT;
-          if (dx > 0) flag += XSAME;
-          xCoordBuf[xbi++] = dx > 0 ? dx : -dx;
-          encodedCoordSize += 1;
-        } else {
-          xCoordBuf[xbi++] = (dx >> 8) & 0xFF;
-          xCoordBuf[xbi++] = dx & 0xFF;
-          encodedCoordSize += 2;
-        }
+      if (dx === 0) {
+        flag += XSAME;
+      } else if (dx > -256 && dx < 256) {
+        flag += XSHORT;
+        if (dx > 0) flag += XSAME;
+        xCoordBuf[xbi++] = dx > 0 ? dx : -dx;
+        encodedCoordSize += 1;
+      } else {
+        xCoordBuf[xbi++] = (dx >> 8) & 0xFF;
+        xCoordBuf[xbi++] = dx & 0xFF;
+        encodedCoordSize += 2;
+      }
 
-        if (dy === 0) {
-          flag += YSAME;
-        } else if (dy > -256 && dy < 256) {
-          flag += YSHORT;
-          if (dy > 0) flag += YSAME;
-          yCoordBuf[ybi++] = dy > 0 ? dy : -dy;
-          encodedCoordSize += 1;
-        } else {
-          yCoordBuf[ybi++] = (dy >> 8) & 0xFF;
-          yCoordBuf[ybi++] = dy & 0xFF;
-          encodedCoordSize += 2;
-        }
+      if (dy === 0) {
+        flag += YSAME;
+      } else if (dy > -256 && dy < 256) {
+        flag += YSHORT;
+        if (dy > 0) flag += YSAME;
+        yCoordBuf[ybi++] = dy > 0 ? dy : -dy;
+        encodedCoordSize += 1;
+      } else {
+        yCoordBuf[ybi++] = (dy >> 8) & 0xFF;
+        yCoordBuf[ybi++] = dy & 0xFF;
+        encodedCoordSize += 2;
+      }
 
-        if (flag === prevFlag && started) {
-          if (repeatPoint === -1) {
-            repeatPoint = fi - 1;
-            flagsC[repeatPoint] |= REPEAT;
-            flagsC[fi++] = 1;
-          } else if (flagsC[repeatPoint + 1] < 255) {
-            ++flagsC[repeatPoint + 1];
-          } else {
-            /* 优化188: repeat count 达到 255 上限 */
-            repeatPoint = -1;
-            flagsC[fi++] = prevFlag = flag;
-          }
+      if (flag === prevFlag && started) {
+        if (repeatPoint === -1) {
+          repeatPoint = fi - 1;
+          flagsC[repeatPoint] |= REPEAT;
+          flagsC[fi++] = 1;
+        } else if (flagsC[repeatPoint + 1] < 255) {
+          ++flagsC[repeatPoint + 1];
         } else {
+          /* 优化188: repeat count 达到 255 上限 */
           repeatPoint = -1;
           flagsC[fi++] = prevFlag = flag;
         }
+      } else {
+        repeatPoint = -1;
+        flagsC[fi++] = prevFlag = flag;
       }
     }
   }
@@ -229,6 +186,9 @@ function sizeofCompound(glyf) {
 /**
  * 优化49: sizeof glyf.forEach → for 循环
  */
+/** 优化262: 空 glyph 预分配单例，避免每个空 glyph 创建新对象 */
+var EMPTY_GLYF_SUPPORT = { glyfSize: 0, size: 0 };
+
 function sizeof(ttf) {
   var glyfs = ttf.glyf;
   var glyfSupportArr = new Array(glyfs.length);
@@ -240,13 +200,16 @@ function sizeof(ttf) {
 
   for (var i = 0, gl = glyfs.length; i < gl; i++) {
     var glyf = glyfs[i];
-    var glyfSupport = {};
+    var glyfSupport;
     var glyfSize;
     if (glyf.compound) {
+      glyfSupport = {};
       glyfSize = sizeofCompound(glyf);
     } else if (!writeZeroContoursGlyfData && (!glyf.contours || !glyf.contours.length)) {
       glyfSize = 0;
+      glyfSupport = EMPTY_GLYF_SUPPORT;
     } else {
+      glyfSupport = {};
       glyfSize = getFlagsAndSize(glyf, glyfSupport, hinting);
     }
 

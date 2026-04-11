@@ -18,11 +18,11 @@ function writeSubTable0(writer, unicodes) {
   view.setUint16(pos, 0, false); pos += 2;
   view.setUint16(pos, 262, false); pos += 2;
   view.setUint16(pos, 0, false); pos += 2;
+  writer.offset = pos;
 
   /** 优化218: 使用 writer.writeEmpty 批量填充 0，替代逐字节 setUint8 */
   writer.writeEmpty(256);
   var base = writer.offset - 256;
-  pos = base;
 
   for (var j = 0; j < unicodes.length; j += 2) {
     pos = base + unicodes[j];
@@ -51,26 +51,27 @@ function writeSubTable4(writer, segments) {
   view.setUint16(pos, 2 * segCount - searchRange, false); pos += 2;
 
   var numSegs = segments.length / 4;
-  for (var i = 0; i < numSegs; i++) {
-    view.setUint16(pos, segments[i * 4 + 1], false); pos += 2;
+  /** 优化262: 使用递增索引替代 i * 4 乘法 */
+  for (var i = 0, off = 0; i < numSegs; i++, off += 4) {
+    view.setUint16(pos, segments[off + 1], false); pos += 2;
   }
   view.setUint16(pos, 0xFFFF, false); pos += 2;
   view.setUint16(pos, 0, false); pos += 2;
 
-  for (var j = 0; j < numSegs; j++) {
-    view.setUint16(pos, segments[j * 4], false); pos += 2;
+  for (var j = 0, off2 = 0; j < numSegs; j++, off2 += 4) {
+    view.setUint16(pos, segments[off2], false); pos += 2;
   }
   view.setUint16(pos, 0xFFFF, false); pos += 2;
 
-  for (var k = 0; k < numSegs; k++) {
-    view.setUint16(pos, segments[k * 4 + 3], false); pos += 2;
+  for (var k = 0, off3 = 0; k < numSegs; k++, off3 += 4) {
+    view.setUint16(pos, segments[off3 + 3], false); pos += 2;
   }
   view.setUint16(pos, 1, false); pos += 2;
 
-  for (var m = 0; m < numSegs; m++) {
-    view.setUint16(pos, 0, false); pos += 2;
-  }
-  view.setUint16(pos, 0, false); pos += 2;
+  /** 优化279: idRangeOffset 全零数组用 Uint8Array.fill(0) 批量填充，替代 numSegs+1 次 setUint16 */
+  var idRangeOffsetLen = (numSegs + 1) * 2;
+  new Uint8Array(view.buffer, view.byteOffset + pos, idRangeOffsetLen).fill(0);
+  pos += idRangeOffsetLen;
 
   writer.offset = pos;
   return writer;
@@ -89,8 +90,8 @@ function writeSubTable12(writer, segments) {
   view.setUint32(pos, 0, false); pos += 4;
   view.setUint32(pos, numSegs, false); pos += 4;
 
-  for (var i = 0; i < numSegs; i++) {
-    var off = i * 4;
+  /** 优化262: 使用递增索引替代 i * 4 乘法 */
+  for (var i = 0, off = 0; i < numSegs; i++, off += 4) {
     view.setUint32(pos, segments[off], false); pos += 4;
     view.setUint32(pos, segments[off + 1], false); pos += 4;
     view.setUint32(pos, segments[off + 2], false); pos += 4;
@@ -100,8 +101,10 @@ function writeSubTable12(writer, segments) {
 }
 
 function write(writer, ttf) {
-  var hasGLyphsOver2Bytes = ttf.support.cmap.hasGLyphsOver2Bytes;
-  var hasFormat0 = ttf.support.cmap.hasFormat0;
+  /** 优化288: 缓存 ttf.support.cmap 到局部变量，消除重复属性链查找 */
+  var cmap = ttf.support.cmap;
+  var hasGLyphsOver2Bytes = cmap.hasGLyphsOver2Bytes;
+  var hasFormat0 = cmap.hasFormat0;
   var pos = writer.offset;
   var view = writer.view;
 
@@ -111,8 +114,8 @@ function write(writer, ttf) {
 
   /* 优化88: encoding records 直接 view 写入 */
   var headerSize = 4 + numRecords * 8;
-  var format4Size = ttf.support.cmap.format4Size;
-  var format0Size = ttf.support.cmap.format0Size;
+  var format4Size = cmap.format4Size;
+  var format0Size = cmap.format0Size;
 
   view.setUint16(pos, 0, false); pos += 2;
   view.setUint16(pos, 3, false); pos += 2;
@@ -132,12 +135,12 @@ function write(writer, ttf) {
   }
   writer.offset = pos;
 
-  writeSubTable4(writer, ttf.support.cmap.format4Segments);
+  writeSubTable4(writer, cmap.format4Segments);
   if (hasFormat0) {
-    writeSubTable0(writer, ttf.support.cmap.format0Segments);
+    writeSubTable0(writer, cmap.format0Segments);
   }
   if (hasGLyphsOver2Bytes) {
-    writeSubTable12(writer, ttf.support.cmap.format12Segments);
+    writeSubTable12(writer, cmap.format12Segments);
   }
   return writer;
 }

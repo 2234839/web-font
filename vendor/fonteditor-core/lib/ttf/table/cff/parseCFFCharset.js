@@ -4,8 +4,10 @@ Object.defineProperty(exports, "__esModule", {
   value: true
 });
 exports.default = parseCFFCharset;
-var _getCFFString = _interopRequireDefault(require("./getCFFString"));
+var _cffStandardStrings = _interopRequireDefault(require("./cffStandardStrings"));
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
+/** 优化280: 内联 getCFFString 逻辑，消除每次调用的函数调用开销 + interop 解包 */
+var STD_STRINGS = _cffStandardStrings.default;
 /**
  * @file 解析cff字符集
  * @author mengke01(kekee000@gmail.com)
@@ -28,7 +30,6 @@ function parseCFFCharset(reader, start, nGlyphs, strings) {
   var i;
   var sid;
   var count;
-  // The .notdef glyph is not included, so subtract 1.
   nGlyphs -= 1;
   /** 优化250: 预分配 charset 数组，避免 push 扩容 */
   var charset = new Array(nGlyphs + 1);
@@ -38,14 +39,14 @@ function parseCFFCharset(reader, start, nGlyphs, strings) {
   if (format === 0) {
     for (i = 0; i < nGlyphs; i += 1) {
       sid = reader.readUint16();
-      charset[ci++] = (0, _getCFFString.default)(strings, sid);
+      charset[ci++] = sid <= 390 ? STD_STRINGS[sid] : strings[sid - 391];
     }
   } else if (format === 1) {
     while (ci <= nGlyphs) {
       sid = reader.readUint16();
       count = reader.readUint8();
       for (i = 0; i <= count; i += 1) {
-        charset[ci++] = (0, _getCFFString.default)(strings, sid);
+        charset[ci++] = sid <= 390 ? STD_STRINGS[sid] : strings[sid - 391];
         sid += 1;
       }
     }
@@ -54,7 +55,7 @@ function parseCFFCharset(reader, start, nGlyphs, strings) {
       sid = reader.readUint16();
       count = reader.readUint16();
       for (i = 0; i <= count; i += 1) {
-        charset[ci++] = (0, _getCFFString.default)(strings, sid);
+        charset[ci++] = sid <= 390 ? STD_STRINGS[sid] : strings[sid - 391];
         sid += 1;
       }
     }

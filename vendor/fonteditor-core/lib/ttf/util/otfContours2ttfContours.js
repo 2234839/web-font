@@ -4,6 +4,7 @@ Object.defineProperty(exports, "__esModule", {
   value: true
 });
 exports.default = otfContours2ttfContours;
+exports.otfContours2ttfContoursInPlace = otfContours2ttfContoursInPlace;
 var _bezierCubic2Q = require("../../math/bezierCubic2Q2");
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
 /**
@@ -85,7 +86,7 @@ function normalizeContourFlat(arr) {
 /**
  * 转换已标准化的轮廓，全扁平数组操作
  * 优化178: 输入和输出都是扁平数组 [x, y, flag, ...]
- * 精度优化: 全程浮点运算，最后统一 Math.round，消除累积取整误差
+ * 优化285: 就地取整 + bbox 同步计算，消除最后的 Math.round 遍历
  */
 function transformContourFlat(arr) {
   var normalized = normalizeContourFlat(arr);
@@ -95,31 +96,29 @@ function transformContourFlat(arr) {
   var estimatedMax = normalized.length * 2 + 6;
   var contour = new Array(estimatedMax);
   var ci = 0;
-  /** 第一个点一定是 onCurve — 保持浮点 */
-  var r = Math.round;
-  var firstX = normalized[0], firstY = normalized[1];
-  var rfx = r(firstX), rfy = r(firstY);
-  contour[ci++] = rfx; contour[ci++] = rfy; contour[ci++] = 1;
 
-  /** 优化: 在转换过程中同时计算包围盒，避免二次遍历 */
-  var xMin = rfx, xMax = rfx, yMin = rfy, yMax = rfy;
+  /** 优化285: 首点取整，后续 lastX/lastY 始终为取整值 */
+  var firstX = normalized[0], firstY = normalized[1];
+  var rX = Math.round(firstX), rY = Math.round(firstY);
+  contour[ci++] = rX; contour[ci++] = rY; contour[ci++] = 1;
+  var xMin = rX, xMax = rX, yMin = rY, yMax = rY;
+  var lastX = firstX, lastY = firstY;
 
   var i = 3;
   var nLen = normalized.length;
-  var lastX = firstX;
-  var lastY = firstY;
+  /** 优化291: 预分配 bboxArr，循环中复用避免每次 cubic 曲线分配新数组 */
+  var bboxArr = [xMin, xMax, yMin, yMax];
 
   while (i < nLen) {
     var isOnCurve = normalized[i + 2];
     if (isOnCurve) {
-      /** 线段：直接添加 onCurve 端点 */
+      /** 线段：取整后添加 onCurve 端点，同步 bbox */
       var px = normalized[i], py = normalized[i + 1];
-      var rpx = r(px), rpy = r(py);
-      contour[ci++] = rpx; contour[ci++] = rpy; contour[ci++] = 1;
-      if (rpx < xMin) xMin = rpx; else if (rpx > xMax) xMax = rpx;
-      if (rpy < yMin) yMin = rpy; else if (rpy > yMax) yMax = rpy;
-      lastX = px;
-      lastY = py;
+      rX = Math.round(px); rY = Math.round(py);
+      contour[ci++] = rX; contour[ci++] = rY; contour[ci++] = 1;
+      lastX = px; lastY = py;
+      if (rX < xMin) xMin = rX; else if (rX > xMax) xMax = rX;
+      if (rY < yMin) yMin = rY; else if (rY > yMax) yMax = rY;
       i += 3;
     } else {
       /** offCurve 点 */
@@ -137,20 +136,14 @@ function transformContourFlat(arr) {
         }
         i = endIdx + 3;
 
-        /** 优化255: 使用 bezierCubic2Q2PushRounded，写入时直接取整，消除二次遍历 */
-        var ciBefore = ci;
-        ci = (0, _bezierCubic2Q.bezierCubic2Q2PushRounded)(lastX, lastY, c1x, c1y, c2x, c2y, endX, endY, contour, ci);
-        /** 更新 bbox（坐标已在 PushRounded 中取整） */
-        for (var bi = ciBefore; bi < ci; bi += 3) {
-          var bx = contour[bi];
-          if (bx < xMin) xMin = bx; else if (bx > xMax) xMax = bx;
-          var by = contour[bi + 1];
-          if (by < yMin) yMin = by; else if (by > yMax) yMax = by;
-        }
+        /** 优化291: 复用 bboxArr，避免每次 cubic 曲线分配新数组 */
+        bboxArr[0] = xMin; bboxArr[1] = xMax; bboxArr[2] = yMin; bboxArr[3] = yMax;
+        ci = (0, _bezierCubic2Q.bezierCubic2Q2PushRounded)(lastX, lastY, c1x, c1y, c2x, c2y, endX, endY, contour, ci, bboxArr);
         lastX = endX;
         lastY = endY;
+        xMin = bboxArr[0]; xMax = bboxArr[1]; yMin = bboxArr[2]; yMax = bboxArr[3];
       } else {
-        /** 单个 offCurve → 二次贝塞尔曲线（TTF 原生支持） */
+        /** 单个 offCurve → 二次贝塞尔曲线 */
         var endX2, endY2;
         if (nextIdx < nLen && normalized[nextIdx + 2]) {
           endX2 = normalized[nextIdx]; endY2 = normalized[nextIdx + 1];
@@ -158,21 +151,23 @@ function transformContourFlat(arr) {
           endX2 = firstX; endY2 = firstY;
         }
         i = nextIdx + 3;
-        var rc1x = r(c1x), rc1y = r(c1y);
-        var re2x = r(endX2), re2y = r(endY2);
+        /** 控制点也取整 */
+        var rc1x = Math.round(c1x), rc1y = Math.round(c1y);
+        rX = Math.round(endX2); rY = Math.round(endY2);
         contour[ci++] = rc1x; contour[ci++] = rc1y; contour[ci++] = 0;
-        contour[ci++] = re2x; contour[ci++] = re2y; contour[ci++] = 1;
-        if (rc1x < xMin) xMin = rc1x; else if (rc1x > xMax) xMax = rc1x;
-        if (rc1y < yMin) yMin = rc1y; else if (rc1y > yMax) yMax = rc1y;
-        if (re2x < xMin) xMin = re2x; else if (re2x > xMax) xMax = re2x;
-        if (re2y < yMin) yMin = re2y; else if (re2y > yMax) yMax = re2y;
+        contour[ci++] = rX; contour[ci++] = rY; contour[ci++] = 1;
         lastX = endX2;
         lastY = endY2;
+        if (rc1x < xMin) xMin = rc1x; else if (rc1x > xMax) xMax = rc1x;
+        if (rc1y < yMin) yMin = rc1y; else if (rc1y > yMax) yMax = rc1y;
+        if (rX < xMin) xMin = rX; else if (rX > xMax) xMax = rX;
+        if (rY < yMin) yMin = rY; else if (rY > yMax) yMax = rY;
       }
     }
   }
 
   contour.length = ci;
+
   return { contour: contour, xMin: xMin, yMin: yMin, xMax: xMax, yMax: yMax };
 }
 
@@ -231,6 +226,64 @@ function otfContours2ttfContours(otfContours) {
     xMax: right,
     yMax: bottom
   };
+}
+
+/**
+ * 就地写入版本：直接将转换结果写入 target 对象，避免创建中间返回对象
+ * 优化291: 消除每个 glyph 一次 { contours, xMin, yMin, xMax, yMax } 对象分配
+ */
+function otfContours2ttfContoursInPlace(otfContours, target) {
+  if (!otfContours || !otfContours.length) {
+    return;
+  }
+  var contours = new Array(otfContours.length);
+  var cLen = 0;
+  var left = Infinity, right = -Infinity, top = Infinity, bottom = -Infinity;
+  var isFlat = otfContours[0] && (otfContours[0]._flatContours || (typeof otfContours[0][0] === 'number' && typeof otfContours[0][1] === 'number'));
+  for (var i = 0, l = otfContours.length; i < l; i++) {
+    var otfContour = otfContours[i];
+    if (!otfContour || otfContour.length < 6) continue;
+
+    var contour;
+    var contourBbox;
+    if (isFlat) {
+      var result = transformContourFlat(otfContour);
+      if (!result) continue;
+      contour = result.contour;
+      contourBbox = result;
+    } else {
+      contour = transformContourObj(otfContour);
+    }
+    if (contour.length < 3) continue;
+    contours[cLen++] = contour;
+
+    if (contourBbox) {
+      if (contourBbox.xMin < left) left = contourBbox.xMin;
+      if (contourBbox.xMax > right) right = contourBbox.xMax;
+      if (contourBbox.yMin < top) top = contourBbox.yMin;
+      if (contourBbox.yMax > bottom) bottom = contourBbox.yMax;
+    } else {
+      for (var ci = 0, cl = contour.length; ci < cl; ci++) {
+        var p = contour[ci];
+        if (p.x < left) left = p.x; else if (p.x > right) right = p.x;
+        if (p.y < top) top = p.y; else if (p.y > bottom) bottom = p.y;
+      }
+    }
+  }
+  contours.length = cLen;
+  target.contours = contours;
+  target._flatContours = true;
+  if (left !== Infinity) {
+    target.xMin = left;
+    target.yMin = top;
+    target.xMax = right;
+    target.yMax = bottom;
+  } else {
+    target.xMin = 0;
+    target.yMin = 0;
+    target.xMax = 0;
+    target.yMax = 0;
+  }
 }
 
 /**

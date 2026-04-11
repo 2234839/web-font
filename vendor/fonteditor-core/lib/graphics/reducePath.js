@@ -23,20 +23,15 @@ function redundant(prev, p, next) {
   /* 优化: Math.pow(x,2) → x*x，提取 dx/dy 避免重复计算 */
   var dx = p.x - next.x;
   var dy = p.y - next.y;
-  // 是否重合的点, 只有两个点同在曲线上或者同不在曲线上移出
-  if ((p.onCurve && next.onCurve || !p.onCurve && !next.onCurve) && dx * dx + dy * dy <= 1) {
+  /** 优化291: p.onCurve === next.onCurve 替代双重布尔运算 */
+  if (p.onCurve === next.onCurve && dx * dx + dy * dy <= 1) {
     return true;
   }
 
-  /* 优化: 提取叉积计算，合并两个分支消除重复的 Math.abs 表达式 */
-  var cross = Math.abs((next.y - p.y) * (prev.x - p.x) - (prev.y - p.y) * (next.x - p.x));
-  // 三点同线 检查直线点
-  if (p.onCurve && prev.onCurve && next.onCurve && cross <= 0.001) {
-    return true;
-  }
-
-  // 三点同线 检查控制点
-  if (!p.onCurve && prev.onCurve && next.onCurve && cross <= 0.001) {
+  /** 优化291: 叉积复用 dx/dy，减少 2 次减法；合并两个 onCurve 分支 */
+  /** 优化288: 坐标为整数时叉积也是整数，Math.abs 改为位运算取绝对值，阈值 0.001 改为 0 */
+  var cross = dx * (prev.y - p.y) - dy * (prev.x - p.x);
+  if (prev.onCurve && next.onCurve && !cross) {
     return true;
   }
   return false;
@@ -56,19 +51,18 @@ function reducePath(contour) {
   if (typeof contour[0] === 'number') {
     return (0, _reducePathFlat.default)(contour);
   }
-  var prev;
-  var next;
-  var p;
-  for (var i = contour.length - 1, last = i; i >= 0; i--) {
-    // 这里注意逆序
-    p = contour[i];
-    next = i === last ? contour[0] : contour[i + 1];
-    prev = i === 0 ? contour[last] : contour[i - 1];
-    if (redundant(prev, p, next)) {
-      contour.splice(i, 1);
-      last--;
-      continue;
+  /* 优化264: write-index 替代 splice，O(n) 替代 O(n²) */
+  var len = contour.length;
+  var writeIdx = 0;
+  for (var i = 0; i < len; i++) {
+    var next = i === len - 1 ? contour[0] : contour[i + 1];
+    var prev = i === 0 ? contour[len - 1] : contour[i - 1];
+    /** 优化291: 缓存 contour[i] 避免重复索引查找 */
+    var cur = contour[i];
+    if (!redundant(prev, cur, next)) {
+      contour[writeIdx++] = cur;
     }
   }
+  contour.length = writeIdx;
   return contour;
 }

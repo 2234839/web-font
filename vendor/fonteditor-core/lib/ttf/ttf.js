@@ -426,9 +426,9 @@ var TTF = exports.default = /*#__PURE__*/function () {
         list = glyf;
       }
       if (list.length) {
-        list.forEach(function (g) {
-          delete g.name;
-        });
+        for (var i = 0, l = list.length; i < l; i++) {
+          list[i].name = null;
+        }
       }
       return list;
     }
@@ -638,7 +638,8 @@ var TTF = exports.default = /*#__PURE__*/function () {
   }, {
     key: "setGlyf",
     value: function setGlyf(glyfList) {
-      delete this.glyf;
+      /** 优化262: delete → null 赋值，避免 V8 隐藏类转换 */
+      this.glyf = null;
       this.ttf.glyf = glyfList || [];
       return this.ttf.glyf;
     }

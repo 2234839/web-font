@@ -79,18 +79,26 @@ function parseCFFIndex(reader, offset, conversionFn) {
   var l;
   if (count !== 0) {
     var offsetSize = reader.readUint8();
-    for (i = 0, l = count + 1; i < l; i++) {
-      offsets[i] = getOffset(reader, offsetSize);
-    }
-    for (i = 0, l = count; i < l; i++) {
-      /** 优化179: 直接从 view 创建 Uint8Array 视图，避免 readBytes 的 slice */
-      var objSize = offsets[i + 1] - offsets[i];
-      var value = new Uint8Array(reader.view.buffer, reader.view.byteOffset + reader.offset, objSize);
-      reader.offset += objSize;
-      if (conversionFn) {
-        value = conversionFn(value);
+    /** 优化289: 内联 getOffset，消除函数调用开销（与 parseCFFIndexOffsets 保持一致） */
+    if (offsetSize === 1) {
+      for (i = 0; i <= count; i++) offsets[i] = reader.readUint8();
+    } else if (offsetSize === 2) {
+      for (i = 0; i <= count; i++) offsets[i] = reader.readUint16();
+    } else if (offsetSize === 3) {
+      for (i = 0; i <= count; i++) {
+        offsets[i] = reader.readUint8() << 16 | reader.readUint8() << 8 | reader.readUint8();
       }
-      objects[i] = value;
+    } else {
+      for (i = 0; i <= count; i++) offsets[i] = reader.readUint32();
+    }
+    /** 优化291: 缓存 reader.view.byteOffset 到局部变量，消除循环内属性链查找 */
+    /** 优化293: 合并 conversionFn 的两个循环，消除代码重复 */
+    var viewByteOffset = reader.view.byteOffset;
+    for (i = 0, l = count; i < l; i++) {
+      var objSize = offsets[i + 1] - offsets[i];
+      var value = new Uint8Array(reader.view.buffer, viewByteOffset + reader.offset, objSize);
+      reader.offset += objSize;
+      objects[i] = conversionFn ? conversionFn(value) : value;
     }
   }
   return {

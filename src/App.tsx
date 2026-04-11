@@ -1,7 +1,8 @@
-import { createMemo, createSignal, createEffect, onMount, Show, For } from "solid-js";
+import { createMemo, createSignal, createEffect, onMount, Show } from "solid-js";
 import { fetchFonts, fetchConfig, type FontInfo, type ServerConfig } from "./api";
 import UploadSection from "./UploadSection";
 import { SelectorRow } from "./FontSelector";
+import FontDebugPreview from "./FontDebugPreview";
 
 const s = {
   wrap: {
@@ -112,7 +113,7 @@ function App() {
     }
     if (fontList.length > 0) {
       /** 标语随机使用一个可用字体展示 */
-      const usableFonts = fontList.filter((f) => /\.(ttf|otf)$/i.test(f.name));
+      const usableFonts = fontList.filter((f) => /\.(ttf)$/i.test(f.name));
       const randomFont = usableFonts[Math.floor(Math.random() * usableFonts.length)];
       (globalThis as any).WebFont?.loadText({
         fontName: randomFont.name,
@@ -274,6 +275,10 @@ function App() {
           </div>
           <pre style={s.pre}>{cssStyle()}</pre>
         </section>
+      </Show>
+
+      <Show when={import.meta.env.DEV}>
+        <FontDebugPreview />
       </Show>
 
       <UploadSection config={serverConfig()} onUploaded={refreshFonts} />

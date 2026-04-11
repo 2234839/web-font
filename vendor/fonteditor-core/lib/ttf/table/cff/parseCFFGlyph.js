@@ -36,20 +36,36 @@ function parseCFFCharstring(code, font, index) {
   var x = 0;
   var y = 0;
 
-  /**
-   * 优化179: 模块级 closeContour，避免闭包捕获
-   */
-  function closeContour(arr) {
-    var cLen = arr.length;
-    if (cLen >= 6 && arr[0] === arr[cLen - 3] && arr[1] === arr[cLen - 2]) {
-      arr.length = cLen - 3;
+  /** 优化277: contour 预分配 + 索引赋值替代 push，减少动态扩容 */
+  var contourCap = 256;
+  var contourBuf = new Array(contourCap);
+  var ci = 0;
+
+  function closeContour() {
+    if (ci >= 6 && contourBuf[0] === contourBuf[ci - 3] && contourBuf[1] === contourBuf[ci - 2]) {
+      ci -= 3;
     }
+    var arr = contourBuf.slice(0, ci);
     contours.push(arr);
   }
   function startContour(px, py) {
-    if (open) closeContour(contour);
-    contour = [px, py, ON_CURVE];
+    if (open) closeContour();
+    ci = 0;
+    contourBuf[ci++] = px;
+    contourBuf[ci++] = py;
+    contourBuf[ci++] = ON_CURVE;
     open = true;
+  }
+  function pushContour(x, y, flag) {
+    if (ci >= contourCap) {
+      contourCap = contourCap << 1;
+      var newBuf = new Array(contourCap);
+      for (var k = 0; k < ci; k++) newBuf[k] = contourBuf[k];
+      contourBuf = newBuf;
+    }
+    contourBuf[ci++] = x;
+    contourBuf[ci++] = y;
+    contourBuf[ci++] = flag;
   }
 
   /**
@@ -116,47 +132,58 @@ function parseCFFCharstring(code, font, index) {
           break;
         case 5:
           // rlineto
-          while (sp - si > 0) {
+          /** 优化263: 缓存 sp-si 差值，消除每次迭代的减法 */
+          var sLen = sp - si;
+          while (sLen > 0) {
             x += stack[si++];
             y += stack[si++];
-            contour.push(x, y, ON_CURVE);
+            pushContour(x, y, ON_CURVE);
+            sLen -= 2;
           }
           sp = si = 0;
           break;
         case 6:
           // hlineto
-          while (sp - si > 0) {
+          sLen = sp - si;
+          while (sLen > 0) {
             x += stack[si++];
-            contour.push(x, y, ON_CURVE);
-            if (sp - si === 0) break;
+            pushContour(x, y, ON_CURVE);
+            sLen--;
+            if (sLen === 0) break;
             y += stack[si++];
-            contour.push(x, y, ON_CURVE);
+            pushContour(x, y, ON_CURVE);
+            sLen--;
           }
           sp = si = 0;
           break;
         case 7:
           // vlineto
-          while (sp - si > 0) {
+          sLen = sp - si;
+          while (sLen > 0) {
             y += stack[si++];
-            contour.push(x, y, ON_CURVE);
-            if (sp - si === 0) break;
+            pushContour(x, y, ON_CURVE);
+            sLen--;
+            if (sLen === 0) break;
             x += stack[si++];
-            contour.push(x, y, ON_CURVE);
+            pushContour(x, y, ON_CURVE);
+            sLen--;
           }
           sp = si = 0;
           break;
         case 8:
           // rrcurveto
-          while (sp - si > 0) {
+          sLen = sp - si;
+          while (sLen > 0) {
             c1x = x + stack[si++];
             c1y = y + stack[si++];
             c2x = c1x + stack[si++];
             c2y = c1y + stack[si++];
             x = c2x + stack[si++];
             y = c2y + stack[si++];
-            contour.push(c1x, c1y, 0);
-            contour.push(c2x, c2y, 0);
-            contour.push(x, y, ON_CURVE);
+            pushContour(c1x, c1y, 0);
+            pushContour(c2x, c2y, 0);
+            pushContour(x, y, ON_CURVE);
+            sLen -= 6;
           }
           sp = si = 0;
           break;
@@ -192,12 +219,12 @@ function parseCFFCharstring(code, font, index) {
               x = c4x + stack[si++];
               y = c4y + stack[si++];
               si++;
-              contour.push(c1x, c1y, 0);
-              contour.push(c2x, c2y, 0);
-              contour.push(jpx, jpy, ON_CURVE);
-              contour.push(c3x, c3y, 0);
-              contour.push(c4x, c4y, 0);
-              contour.push(x, y, ON_CURVE);
+              pushContour(c1x, c1y, 0);
+              pushContour(c2x, c2y, 0);
+              pushContour(jpx, jpy, ON_CURVE);
+              pushContour(c3x, c3y, 0);
+              pushContour(c4x, c4y, 0);
+              pushContour(x, y, ON_CURVE);
               break;
             case 34:
               // hflex
@@ -212,12 +239,12 @@ function parseCFFCharstring(code, font, index) {
               c4x = c3x + stack[si++];
               c4y = y;
               x = c4x + stack[si++];
-              contour.push(c1x, c1y, 0);
-              contour.push(c2x, c2y, 0);
-              contour.push(jpx, jpy, ON_CURVE);
-              contour.push(c3x, c3y, 0);
-              contour.push(c4x, c4y, 0);
-              contour.push(x, y, ON_CURVE);
+              pushContour(c1x, c1y, 0);
+              pushContour(c2x, c2y, 0);
+              pushContour(jpx, jpy, ON_CURVE);
+              pushContour(c3x, c3y, 0);
+              pushContour(c4x, c4y, 0);
+              pushContour(x, y, ON_CURVE);
               break;
             case 36:
               // hflex1
@@ -232,12 +259,12 @@ function parseCFFCharstring(code, font, index) {
               c4x = c3x + stack[si++];
               c4y = c3y + stack[si++];
               x = c4x + stack[si++];
-              contour.push(c1x, c1y, 0);
-              contour.push(c2x, c2y, 0);
-              contour.push(jpx, jpy, ON_CURVE);
-              contour.push(c3x, c3y, 0);
-              contour.push(c4x, c4y, 0);
-              contour.push(x, y, ON_CURVE);
+              pushContour(c1x, c1y, 0);
+              pushContour(c2x, c2y, 0);
+              pushContour(jpx, jpy, ON_CURVE);
+              pushContour(c3x, c3y, 0);
+              pushContour(c4x, c4y, 0);
+              pushContour(x, y, ON_CURVE);
               break;
             case 37:
               // flex1
@@ -256,12 +283,12 @@ function parseCFFCharstring(code, font, index) {
               } else {
                 y = c4y + stack[si++];
               }
-              contour.push(c1x, c1y, 0);
-              contour.push(c2x, c2y, 0);
-              contour.push(jpx, jpy, ON_CURVE);
-              contour.push(c3x, c3y, 0);
-              contour.push(c4x, c4y, 0);
-              contour.push(x, y, ON_CURVE);
+              pushContour(c1x, c1y, 0);
+              pushContour(c2x, c2y, 0);
+              pushContour(jpx, jpy, ON_CURVE);
+              pushContour(c3x, c3y, 0);
+              pushContour(c4x, c4y, 0);
+              pushContour(x, y, ON_CURVE);
               break;
             default:
               console.warn('Glyph ' + index + ': unknown operator ' + (1200 + v));
@@ -301,7 +328,7 @@ function parseCFFCharstring(code, font, index) {
             glyfs[1].transform.e = stack[--sp];
           }
           if (open) {
-            closeContour(contour);
+            closeContour();
             open = false;
           }
           sp = si = 0;
@@ -344,28 +371,34 @@ function parseCFFCharstring(code, font, index) {
           break;
         case 24:
           // rcurveline
-          while (sp - si > 2) {
+          /** 优化263: 缓存 sp-si 差值 */
+          sLen = sp - si;
+          while (sLen > 2) {
             c1x = x + stack[si++];
             c1y = y + stack[si++];
             c2x = c1x + stack[si++];
             c2y = c1y + stack[si++];
             x = c2x + stack[si++];
             y = c2y + stack[si++];
-            contour.push(c1x, c1y, 0);
-            contour.push(c2x, c2y, 0);
-            contour.push(x, y, ON_CURVE);
+            pushContour(c1x, c1y, 0);
+            pushContour(c2x, c2y, 0);
+            pushContour(x, y, ON_CURVE);
+            sLen -= 6;
           }
           x += stack[si++];
           y += stack[si++];
-          contour.push(x, y, ON_CURVE);
+          pushContour(x, y, ON_CURVE);
           sp = si = 0;
           break;
         case 25:
           // rlinecurve
-          while (sp - si > 6) {
+          /** 优化272: 缓存 sp-si 差值，消除每次迭代的减法 */
+          var _sLen = sp - si;
+          while (_sLen > 6) {
             x += stack[si++];
             y += stack[si++];
-            contour.push(x, y, ON_CURVE);
+            pushContour(x, y, ON_CURVE);
+            _sLen -= 2;
           }
           c1x = x + stack[si++];
           c1y = y + stack[si++];
@@ -373,44 +406,52 @@ function parseCFFCharstring(code, font, index) {
           c2y = c1y + stack[si++];
           x = c2x + stack[si++];
           y = c2y + stack[si++];
-          contour.push(c1x, c1y, 0);
-          contour.push(c2x, c2y, 0);
-          contour.push(x, y, ON_CURVE);
+          pushContour(c1x, c1y, 0);
+          pushContour(c2x, c2y, 0);
+          pushContour(x, y, ON_CURVE);
           sp = si = 0;
           break;
         case 26:
           // vvcurveto
-          if ((sp - si) & 1) {
+          /** 优化272: 缓存 sp-si 差值 */
+          _sLen = sp - si;
+          if (_sLen & 1) {
             x += stack[si++];
+            _sLen--;
           }
-          while (sp - si > 0) {
+          while (_sLen > 0) {
             c1x = x;
             c1y = y + stack[si++];
             c2x = c1x + stack[si++];
             c2y = c1y + stack[si++];
             x = c2x;
             y = c2y + stack[si++];
-            contour.push(c1x, c1y, 0);
-            contour.push(c2x, c2y, 0);
-            contour.push(x, y, ON_CURVE);
+            pushContour(c1x, c1y, 0);
+            pushContour(c2x, c2y, 0);
+            pushContour(x, y, ON_CURVE);
+            _sLen -= 4;
           }
           sp = si = 0;
           break;
         case 27:
           // hhcurveto
-          if ((sp - si) & 1) {
+          /** 优化272: 缓存 sp-si 差值 */
+          _sLen = sp - si;
+          if (_sLen & 1) {
             y += stack[si++];
+            _sLen--;
           }
-          while (sp - si > 0) {
+          while (_sLen > 0) {
             c1x = x + stack[si++];
             c1y = y;
             c2x = c1x + stack[si++];
             c2y = c1y + stack[si++];
             x = c2x + stack[si++];
             y = c2y;
-            contour.push(c1x, c1y, 0);
-            contour.push(c2x, c2y, 0);
-            contour.push(x, y, ON_CURVE);
+            pushContour(c1x, c1y, 0);
+            pushContour(c2x, c2y, 0);
+            pushContour(x, y, ON_CURVE);
+            _sLen -= 4;
           }
           sp = si = 0;
           break;
@@ -432,53 +473,87 @@ function parseCFFCharstring(code, font, index) {
           break;
         case 30:
           // vhcurveto
-          while (sp - si > 0) {
-            c1x = x;
-            c1y = y + stack[si++];
-            c2x = c1x + stack[si++];
-            c2y = c1y + stack[si++];
-            x = c2x + stack[si++];
-            y = c2y + (sp - si === 1 ? stack[si++] : 0);
-            contour.push(c1x, c1y, 0);
-            contour.push(c2x, c2y, 0);
-            contour.push(x, y, ON_CURVE);
-            if (sp - si === 0) break;
-            c1x = x + stack[si++];
-            c1y = y;
-            c2x = c1x + stack[si++];
-            c2y = c1y + stack[si++];
-            y = c2y + stack[si++];
-            x = c2x + (sp - si === 1 ? stack[si++] : 0);
-            contour.push(c1x, c1y, 0);
-            contour.push(c2x, c2y, 0);
-            contour.push(x, y, ON_CURVE);
+          {
+            /** 优化272: 缓存 sp-si 差值，消除每次迭代的减法 */
+            var vhLen = sp - si;
+            while (vhLen > 0) {
+              c1x = x;
+              c1y = y + stack[si++];
+              c2x = c1x + stack[si++];
+              c2y = c1y + stack[si++];
+              x = c2x + stack[si++];
+              vhLen -= 4;
+              /** 最后一段曲线的可选参数：只剩1个值时为 dy3，消费后结束 */
+              if (vhLen === 1) {
+                y = c2y + stack[si++];
+                vhLen = 0;
+              } else {
+                y = c2y;
+              }
+              pushContour(c1x, c1y, 0);
+              pushContour(c2x, c2y, 0);
+              pushContour(x, y, ON_CURVE);
+              if (vhLen === 0) break;
+              c1x = x + stack[si++];
+              c1y = y;
+              c2x = c1x + stack[si++];
+              c2y = c1y + stack[si++];
+              y = c2y + stack[si++];
+              x = c2x;
+              vhLen -= 4;
+              /** 最后一段曲线的可选参数：只剩1个值时为 dx3，消费后结束 */
+              if (vhLen === 1) {
+                x = c2x + stack[si++];
+                vhLen = 0;
+              }
+              pushContour(c1x, c1y, 0);
+              pushContour(c2x, c2y, 0);
+              pushContour(x, y, ON_CURVE);
+            }
+            sp = si = 0;
           }
-          sp = si = 0;
           break;
         case 31:
           // hvcurveto
-          while (sp - si > 0) {
-            c1x = x + stack[si++];
-            c1y = y;
-            c2x = c1x + stack[si++];
-            c2y = c1y + stack[si++];
-            y = c2y + stack[si++];
-            x = c2x + (sp - si === 1 ? stack[si++] : 0);
-            contour.push(c1x, c1y, 0);
-            contour.push(c2x, c2y, 0);
-            contour.push(x, y, ON_CURVE);
-            if (sp - si === 0) break;
-            c1x = x;
-            c1y = y + stack[si++];
-            c2x = c1x + stack[si++];
-            c2y = c1y + stack[si++];
-            x = c2x + stack[si++];
-            y = c2y + (sp - si === 1 ? stack[si++] : 0);
-            contour.push(c1x, c1y, 0);
-            contour.push(c2x, c2y, 0);
-            contour.push(x, y, ON_CURVE);
+          {
+            /** 优化272: 缓存 sp-si 差值，消除每次迭代的减法 */
+            var hvLen = sp - si;
+            while (hvLen > 0) {
+              c1x = x + stack[si++];
+              c1y = y;
+              c2x = c1x + stack[si++];
+              c2y = c1y + stack[si++];
+              y = c2y + stack[si++];
+              hvLen -= 4;
+              /** 最后一段曲线的可选参数：只剩1个值时为 dx3，消费后结束 */
+              if (hvLen === 1) {
+                x = c2x + stack[si++];
+                hvLen = 0;
+              } else {
+                x = c2x;
+              }
+              pushContour(c1x, c1y, 0);
+              pushContour(c2x, c2y, 0);
+              pushContour(x, y, ON_CURVE);
+              if (hvLen === 0) break;
+              c1x = x;
+              c1y = y + stack[si++];
+              c2x = c1x + stack[si++];
+              c2y = c1y + stack[si++];
+              x = c2x + stack[si++];
+              y = c2y;
+              hvLen -= 4;
+              /** 最后一段曲线的可选参数：只剩1个值时为 dy3，消费后结束 */
+              if (hvLen === 1) {
+                y = c2y + stack[si++];
+                hvLen = 0;
+              }
+              pushContour(c1x, c1y, 0);
+              pushContour(c2x, c2y, 0);
+              pushContour(x, y, ON_CURVE);
+            }
+            sp = si = 0;
           }
-          sp = si = 0;
           break;
         default:
           if (v < 32) {

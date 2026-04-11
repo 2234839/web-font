@@ -308,7 +308,8 @@ var Writer = /*#__PURE__*/function () {
   }, {
     key: "dispose",
     value: function dispose() {
-      delete this.view;
+      /** 优化262: delete → null 赋值，避免 V8 隐藏类转换 */
+      this.view = null;
     }
   }]);
 }(); // 优化19: 直接绑定方法，避免 curry 闭包开销

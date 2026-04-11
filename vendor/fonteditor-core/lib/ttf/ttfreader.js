@@ -12,6 +12,9 @@ var _error = _interopRequireDefault(require("./error"));
 var _compound2simpleglyf = _interopRequireDefault(require("./util/compound2simpleglyf"));
 var _post = require("./table/post");
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
+
+/** 优化291: 表名列表提升为模块级常量，避免每次 readBuffer 创建新数组 */
+var TTF_TABLE_NAMES = ['head', 'maxp', 'loca', 'cmap', 'glyf', 'name', 'hhea', 'hmtx', 'post', 'OS/2', 'fpgm', 'cvt', 'prep', 'gasp', 'GPOS', 'kern', 'kerx'];
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
 function _defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } }
 function _createClass(Constructor, protoProps, staticProps) { if (protoProps) _defineProperties(Constructor.prototype, protoProps); if (staticProps) _defineProperties(Constructor, staticProps); Object.defineProperty(Constructor, "prototype", { writable: false }); return Constructor; }
@@ -62,7 +65,7 @@ var TTFReader = exports.default = /*#__PURE__*/function () {
       var kerning = this.options.kerning;
       var supportTables = _support.default;
       var tableInstances = {};
-      var ttfTableNames = ['head', 'maxp', 'loca', 'cmap', 'glyf', 'name', 'hhea', 'hmtx', 'post', 'OS/2', 'fpgm', 'cvt', 'prep', 'gasp', 'GPOS', 'kern', 'kerx'];
+      var ttfTableNames = TTF_TABLE_NAMES;
       for (var ti = 0, tl = ttfTableNames.length; ti < tl; ti++) {
         var tableName = ttfTableNames[ti];
         if (ttf.tables[tableName]) {
@@ -257,8 +260,9 @@ var TTFReader = exports.default = /*#__PURE__*/function () {
   }, {
     key: "dispose",
     value: function dispose() {
-      delete this.ttf;
-      delete this.options;
+      /** 优化262: delete → null 赋值，避免 V8 隐藏类转换 */
+      this.ttf = null;
+      this.options = null;
     }
   }]);
 }();

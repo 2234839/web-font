@@ -50,8 +50,10 @@ var _default = exports.default = _table.default.create('name', [], {
     var language = 0;
 
     /* 检查是否有 windows english name */
+    /** 优化291: 缓存 nameRecordTbl[k] 避免重复属性查找 */
     for (var k = 0; k < count; k++) {
-      if (nameRecordTbl[k].platform === _platform.default.Microsoft && nameRecordTbl[k].encoding === _encoding.win.UCS2 && nameRecordTbl[k].language === 1033) {
+      var nr = nameRecordTbl[k];
+      if (nr.platform === _platform.default.Microsoft && nr.encoding === _encoding.win.UCS2 && nr.language === 1033) {
         platform = _platform.default.Microsoft;
         encoding = _encoding.win.UCS2;
         language = 1033;

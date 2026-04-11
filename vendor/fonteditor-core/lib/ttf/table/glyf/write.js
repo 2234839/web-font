@@ -15,8 +15,10 @@ function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { de
  * 优化11+21+25+31+32+50+51+52+53+58: glyf write 全面优化
  */
 function write(writer, ttf) {
-  var hinting = ttf.writeOptions ? ttf.writeOptions.hinting : false;
-  var writeZeroContoursGlyfData = ttf.writeOptions ? ttf.writeOptions.writeZeroContoursGlyfData : false;
+  /** 优化290: 缓存 writeOptions 到局部变量，消除重复属性链查找 */
+  var writeOpts = ttf.writeOptions || {};
+  var hinting = writeOpts.hinting;
+  var writeZeroContoursGlyfData = writeOpts.writeZeroContoursGlyfData;
 
   /* 优化53: 缓存 glyfSupport 到局部变量 */
   var glyfSupport = ttf.support.glyf;
@@ -48,7 +50,8 @@ function write(writer, ttf) {
 
     /* 优化31+103: header 直接 view 写入 10 字节，优先使用 _numContours */
     var pos = writer.offset;
-    var numC = glyf._numContours != null ? glyf._numContours : (glyf.contours || []).length;
+    /** 优化284: 避免 || [] 创建临时空数组 */
+    var numC = glyf._numContours != null ? glyf._numContours : (glyf.contours ? glyf.contours.length : 0);
     view.setInt16(pos, glyf.compound ? -1 : numC, false);
     view.setInt16(pos + 2, glyf.xMin, false);
     view.setInt16(pos + 4, glyf.yMin, false);
@@ -69,9 +72,10 @@ function write(writer, ttf) {
         var b = transform.b;
         var c = transform.c;
         var d = transform.d;
-        /** 优化225: 优先无 points 路径（大多数复合 glyph），减少分支 */
-        var e = g.points ? g.points[0] : transform.e;
-        var f = g.points ? g.points[1] : transform.f;
+        /** 优化290: 缓存 g.points 避免双重属性查找 */
+        var pts = g.points;
+        var e = pts ? pts[0] : transform.e;
+        var f = pts ? pts[1] : transform.f;
         if (e < 0 || e > 0x7F || f < 0 || f > 0x7F) {
           flags |= ARG_1_AND_2_ARE_WORDS;
         }
@@ -91,21 +95,28 @@ function write(writer, ttf) {
           view.setUint8(pos, e); pos += 1;
           view.setUint8(pos, f); pos += 1;
         }
+        /** 优化293: 预计算 F2Dot14 值，避免在分支内重复乘法 */
+        var sa = a * 16384 + 0.5 | 0;
         if (WE_HAVE_A_SCALE & flags) {
-          view.setInt16(pos, a * 16384 + 0.5 | 0, false); pos += 2;
+          view.setInt16(pos, sa, false); pos += 2;
         } else if (WE_HAVE_AN_X_AND_Y_SCALE & flags) {
-          view.setInt16(pos, a * 16384 + 0.5 | 0, false); pos += 2;
-          view.setInt16(pos, d * 16384 + 0.5 | 0, false); pos += 2;
+          var sd = d * 16384 + 0.5 | 0;
+          view.setInt16(pos, sa, false); pos += 2;
+          view.setInt16(pos, sd, false); pos += 2;
         } else if (WE_HAVE_A_TWO_BY_TWO & flags) {
-          view.setInt16(pos, a * 16384 + 0.5 | 0, false); pos += 2;
-          view.setInt16(pos, b * 16384 + 0.5 | 0, false); pos += 2;
-          view.setInt16(pos, c * 16384 + 0.5 | 0, false); pos += 2;
-          view.setInt16(pos, d * 16384 + 0.5 | 0, false); pos += 2;
+          var sb = b * 16384 + 0.5 | 0;
+          var sc = c * 16384 + 0.5 | 0;
+          var sd = d * 16384 + 0.5 | 0;
+          view.setInt16(pos, sa, false); pos += 2;
+          view.setInt16(pos, sb, false); pos += 2;
+          view.setInt16(pos, sc, false); pos += 2;
+          view.setInt16(pos, sd, false); pos += 2;
         }
       }
     } else {
       /* 优化32+66+103: endPtsOfContours 直接 view 写入，支持 _pointsPerContour */
-      var contours = glyf.contours || [];
+      /** 优化284: 避免 || [] 创建临时空数组 */
+      var contours = glyf.contours;
       var endPts = -1;
       var ppc = glyf._pointsPerContour;
       if (ppc) {

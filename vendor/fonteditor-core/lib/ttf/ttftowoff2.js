@@ -21,8 +21,9 @@ function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { de
  * @return {ArrayBuffer} woff格式byte流
  */
 function ttftowoff2(ttfBuffer) {
+  /** 优化278: 直接返回 Uint8Array，避免 .buffer -> Buffer -> new Uint8Array 多余转换链 */
   var result = _index.default.encode(ttfBuffer);
-  return result.buffer || result;
+  return result;
 }
 
 /**

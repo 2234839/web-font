@@ -19,6 +19,8 @@ function _createClass(Constructor, protoProps, staticProps) { if (protoProps) _d
  * @author mengke01(kekee000@gmail.com)
  */
 var SUPPORT_TABLES = ['OS/2', 'cmap', 'glyf', 'head', 'hhea', 'hmtx', 'loca', 'maxp', 'name', 'post'];
+/** 优化291: 日期正则预编译为模块级常量 */
+var ALL_DIGITS = /^\d+$/;
 var TTFWriter = exports.default = /*#__PURE__*/function () {
   function TTFWriter() {
     var options = arguments.length > 0 && arguments[0] !== undefined ? arguments[0] : {};
@@ -45,7 +47,7 @@ var TTFWriter = exports.default = /*#__PURE__*/function () {
       ttf.head.checkSumAdjustment = 0;
       ttf.head.magickNumber = 0x5F0F3CF5;
       if (typeof ttf.head.created === 'string') {
-        ttf.head.created = /^\d+$/.test(ttf.head.created) ? +ttf.head.created : Date.parse(ttf.head.created);
+        ttf.head.created = ALL_DIGITS.test(ttf.head.created) ? +ttf.head.created : Date.parse(ttf.head.created);
       }
       if (typeof ttf.head.modified === 'string') {
         ttf.head.modified = /^\d+$/.test(ttf.head.modified) ? +ttf.head.modified : Date.parse(ttf.head.modified);
@@ -80,7 +82,8 @@ var TTFWriter = exports.default = /*#__PURE__*/function () {
   }, {
     key: "dump",
     value: function dump(ttf) {
-      ttf.support = Object.assign({}, this.options.support);
+      /** 优化286: support 为 undefined 时直接赋值空对象，避免 Object.assign 调用 */
+      ttf.support = this.options.support ? Object.assign({}, this.options.support) : {};
       var ttfSize = 12 + ttf.numTables * 16;
       var ttfHeadOffset = 0;
 
@@ -135,6 +138,8 @@ var TTFWriter = exports.default = /*#__PURE__*/function () {
       var buf = writer.getBuffer();
       var wholeCheckSum = 0;
       var fullView = new Uint8Array(buf);
+      /** 优化261: 预创建 DataView，复用于所有表的校验和计算，避免每次 checkSumArrayBuffer 创建新 DataView */
+      var fullDataView = new DataView(buf);
       for (var si = 0, sl = supportTableList.length; si < sl; si++) {
         var table = supportTableList[si];
         var tableStart = writer.offset;
@@ -148,7 +153,7 @@ var TTFWriter = exports.default = /*#__PURE__*/function () {
           fullView.fill(0, wView.byteOffset + writer.offset, wView.byteOffset + writer.offset + (4 - pad));
           writer.offset += 4 - pad;
         }
-        table.checkSum = _checkSumArrayBuffer(buf, tableStart, table.size, fullView);
+        table.checkSum = _checkSumArrayBuffer(buf, tableStart, table.size, fullView, fullDataView);
         wholeCheckSum = (wholeCheckSum + table.checkSum) >>> 0;
       }
 
@@ -162,8 +167,9 @@ var TTFWriter = exports.default = /*#__PURE__*/function () {
       /* 优化179: 用累加的各表校验和替代全局 checkSum，避免重遍历整个 buffer */
       var ttfCheckSum = (0xB1B0AFBA - wholeCheckSum) >>> 0;
       csView.setUint32(ttfHeadOffset + 8, ttfCheckSum, false);
-      delete ttf.writeOptions;
-      delete ttf.support;
+      /** 优化260: delete → null 赋值，避免 V8 隐藏类转换 */
+      ttf.writeOptions = null;
+      ttf.support = null;
       writer.dispose();
       return buf;
     }
@@ -180,22 +186,28 @@ var TTFWriter = exports.default = /*#__PURE__*/function () {
       /* 优化186: 使用 slice() 创建副本，防止 push 变异模块级数组导致后续调用表膨胀 */
       var tables = SUPPORT_TABLES;
       ttf.writeOptions = {};
-      /* 优化228: 合并 hinting 和 kerning 分支，消除重复 slice 检查 */
+      /* 优化228+291: 合并 hinting 和 kerning 分支，消除重复表名 */
       if (this.options.hinting || this.options.kerning) {
         tables = SUPPORT_TABLES.slice();
+        /** 优化291: 使用 Set 去重，防止 hinting+kerning 同时开启时 GPOS/kern/kerx 被重复 push */
+        var added = {};
         if (this.options.hinting) {
           var hintTables = ['cvt', 'fpgm', 'prep', 'gasp', 'GPOS', 'kern', 'kerx'];
           for (var i = 0; i < hintTables.length; i++) {
-            if (ttf[hintTables[i]]) {
-              tables.push(hintTables[i]);
+            var tn = hintTables[i];
+            if (ttf[tn] && !added[tn]) {
+              tables.push(tn);
+              added[tn] = true;
             }
           }
         }
         if (this.options.kerning) {
           var kernTables = ['GPOS', 'kern', 'kerx'];
           for (var j = 0; j < kernTables.length; j++) {
-            if (ttf[kernTables[j]]) {
-              tables.push(kernTables[j]);
+            var kn = kernTables[j];
+            if (ttf[kn] && !added[kn]) {
+              tables.push(kn);
+              added[kn] = true;
             }
           }
         }
@@ -217,7 +229,8 @@ var TTFWriter = exports.default = /*#__PURE__*/function () {
   }, {
     key: "dispose",
     value: function dispose() {
-      delete this.options;
+      /** 优化262: delete → null 赋值，避免 V8 隐藏类转换 */
+      this.options = null;
     }
   }]);
 }();

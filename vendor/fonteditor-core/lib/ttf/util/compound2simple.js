@@ -18,9 +18,9 @@ exports.default = compound2simple;
  */
 function compound2simple(glyf, contours) {
   glyf.contours = contours;
-  delete glyf.compound;
-  delete glyf.glyfs;
-  // 这里hinting信息会失效，删除hinting信息
-  delete glyf.instructions;
+  /** 优化260: delete → null 赋值，避免 V8 隐藏类转换 */
+  glyf.compound = null;
+  glyf.glyfs = null;
+  glyf.instructions = null;
   return glyf;
 }

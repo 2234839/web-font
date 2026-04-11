@@ -54,11 +54,12 @@ function parseSimpleGlyf(reader, glyf) {
   for (var xi = 0; xi < numberOfCoordinates; xi++) {
     var x = 0;
     var xflag = flags[xi];
-    if (xflag & XSHORT) {
+    /** 优化280: delta=0 是最常见情况，提前分支提高分支预测命中率 */
+    if (!(xflag & XSHORT) && (xflag & XSAME)) {
+      /* x = 0, 无需操作 */
+    } else if (xflag & XSHORT) {
       x = view.getUint8(vOffset++);
-      x = (xflag & XSAME) ? x : -x;
-    } else if (xflag & XSAME) {
-      x = 0;
+      if (!(xflag & XSAME)) x = -x;
     } else {
       x = view.getInt16(vOffset);
       vOffset += 2;
@@ -72,11 +73,12 @@ function parseSimpleGlyf(reader, glyf) {
   for (var yi = 0; yi < numberOfCoordinates; yi++) {
     var y = 0;
     var yflag = flags[yi];
-    if (yflag & YSHORT) {
+    /** 优化280: delta=0 是最常见情况，提前分支 */
+    if (!(yflag & YSHORT) && (yflag & YSAME)) {
+      /* y = 0 */
+    } else if (yflag & YSHORT) {
       y = view.getUint8(vOffset++);
-      y = (yflag & YSAME) ? y : -y;
-    } else if (yflag & YSAME) {
-      y = 0;
+      if (!(yflag & YSAME)) y = -y;
     } else {
       y = view.getInt16(vOffset);
       vOffset += 2;
@@ -98,23 +100,36 @@ function parseSimpleGlyf(reader, glyf) {
  * 读取复合字形
  * 优化257: 使用直接 DataView 访问替代 reader API，消除每次 read 的函数调用和参数检查
  */
+/** 优化290: 复合字形枚举常量提升到模块级别，消除每次调用的属性查找 */
+var _ARG_1_AND_2_ARE_WORDS = _componentFlag.default.ARG_1_AND_2_ARE_WORDS;
+var _WE_HAVE_A_SCALE = _componentFlag.default.WE_HAVE_A_SCALE;
+var _WE_HAVE_AN_X_AND_Y_SCALE = _componentFlag.default.WE_HAVE_AN_X_AND_Y_SCALE;
+var _WE_HAVE_A_TWO_BY_TWO = _componentFlag.default.WE_HAVE_A_TWO_BY_TWO;
+var _ARGS_ARE_XY_VALUES = _componentFlag.default.ARGS_ARE_XY_VALUES;
+var _USE_MY_METRICS = _componentFlag.default.USE_MY_METRICS;
+var _OVERLAP_COMPOUND = _componentFlag.default.OVERLAP_COMPOUND;
+var _MORE_COMPONENTS = _componentFlag.default.MORE_COMPONENTS;
+var _WE_HAVE_INSTRUCTIONS = _componentFlag.default.WE_HAVE_INSTRUCTIONS;
+
 function parseCompoundGlyf(reader, glyf) {
   glyf.compound = true;
   glyf.glyfs = [];
   var flags;
-  var ARG_1_AND_2_ARE_WORDS = _componentFlag.default.ARG_1_AND_2_ARE_WORDS;
-  var WE_HAVE_A_SCALE = _componentFlag.default.WE_HAVE_A_SCALE;
-  var WE_HAVE_AN_X_AND_Y_SCALE = _componentFlag.default.WE_HAVE_AN_X_AND_Y_SCALE;
-  var WE_HAVE_A_TWO_BY_TWO = _componentFlag.default.WE_HAVE_A_TWO_BY_TWO;
-  var ARGS_ARE_XY_VALUES = _componentFlag.default.ARGS_ARE_XY_VALUES;
-  var USE_MY_METRICS = _componentFlag.default.USE_MY_METRICS;
-  var OVERLAP_COMPOUND = _componentFlag.default.OVERLAP_COMPOUND;
-  var MORE_COMPONENTS = _componentFlag.default.MORE_COMPONENTS;
-  var WE_HAVE_INSTRUCTIONS = _componentFlag.default.WE_HAVE_INSTRUCTIONS;
+  var ARG_1_AND_2_ARE_WORDS = _ARG_1_AND_2_ARE_WORDS;
+  var WE_HAVE_A_SCALE = _WE_HAVE_A_SCALE;
+  var WE_HAVE_AN_X_AND_Y_SCALE = _WE_HAVE_AN_X_AND_Y_SCALE;
+  var WE_HAVE_A_TWO_BY_TWO = _WE_HAVE_A_TWO_BY_TWO;
+  var ARGS_ARE_XY_VALUES = _ARGS_ARE_XY_VALUES;
+  var USE_MY_METRICS = _USE_MY_METRICS;
+  var OVERLAP_COMPOUND = _OVERLAP_COMPOUND;
+  var MORE_COMPONENTS = _MORE_COMPONENTS;
+  var WE_HAVE_INSTRUCTIONS = _WE_HAVE_INSTRUCTIONS;
 
   var view = reader.view;
   var vOffset = view.byteOffset + reader.offset;
 
+  /** 优化293: F2DOT14_SCALE 提升到循环外 */
+  var F2DOT14_SCALE = 0.0001;
   do {
     flags = view.getUint16(vOffset, false); vOffset += 2;
     var glyphIndex = view.getUint16(vOffset, false); vOffset += 2;
@@ -143,21 +158,21 @@ function parseCompoundGlyf(reader, glyf) {
       scale10 = view.getInt16(vOffset, false); vOffset += 2;
       scaleY = view.getInt16(vOffset, false); vOffset += 2;
     }
-    /** F2Dot14 → 小数: 优化214+236: 合并对象创建，减少每次 push 的分配次数 */
+    /** 优化293: F2DOT14_SCALE 提升到循环外，避免每次迭代重新赋值 */
     if (ARGS_ARE_XY_VALUES & flags) {
       glyf.glyfs.push({
         flags: flags,
         glyphIndex: glyphIndex,
         useMyMetrics: !!(flags & USE_MY_METRICS),
         overlapCompound: !!(flags & OVERLAP_COMPOUND),
-        transform: { a: (scaleX * 0.6103515625 + 0.5 | 0) / 10000, b: (scale01 * 0.6103515625 + 0.5 | 0) / 10000, c: (scale10 * 0.6103515625 + 0.5 | 0) / 10000, d: (scaleY * 0.6103515625 + 0.5 | 0) / 10000, e: arg1, f: arg2 }
+        transform: { a: (scaleX * 0.6103515625 + 0.5 | 0) * F2DOT14_SCALE, b: (scale01 * 0.6103515625 + 0.5 | 0) * F2DOT14_SCALE, c: (scale10 * 0.6103515625 + 0.5 | 0) * F2DOT14_SCALE, d: (scaleY * 0.6103515625 + 0.5 | 0) * F2DOT14_SCALE, e: arg1, f: arg2 }
       });
     } else {
       glyf.glyfs.push({
         flags: flags,
         glyphIndex: glyphIndex,
         points: [arg1, arg2],
-        transform: { a: (scaleX * 0.6103515625 + 0.5 | 0) / 10000, b: (scale01 * 0.6103515625 + 0.5 | 0) / 10000, c: (scale10 * 0.6103515625 + 0.5 | 0) / 10000, d: (scaleY * 0.6103515625 + 0.5 | 0) / 10000, e: 0, f: 0 }
+        transform: { a: (scaleX * 0.6103515625 + 0.5 | 0) * F2DOT14_SCALE, b: (scale01 * 0.6103515625 + 0.5 | 0) * F2DOT14_SCALE, c: (scale10 * 0.6103515625 + 0.5 | 0) * F2DOT14_SCALE, d: (scaleY * 0.6103515625 + 0.5 | 0) * F2DOT14_SCALE, e: 0, f: 0 }
       });
     }
   } while (MORE_COMPONENTS & flags);
@@ -187,7 +202,9 @@ function parseGlyf(reader, ttf, offset) {
     reader.seek(offset);
   }
   var glyf = {};
-  var hinting = ttf.readOptions ? ttf.readOptions.hinting : false;
+  /** 优化290: 缓存 ttf.readOptions 到局部变量，消除重复属性链查找 */
+  var readOpts = ttf.readOptions || {};
+  var hinting = readOpts.hinting;
 
   /* 优化41: 直接 view 读取 header 的 10 字节 */
   var view = reader.view;

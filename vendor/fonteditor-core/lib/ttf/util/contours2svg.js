@@ -22,7 +22,10 @@ function contours2svg(contours, precision) {
   if (!contours.length) {
     return '';
   }
-  return contours.map(function (contour) {
-    return (0, _contour2svg.default)(contour, precision);
-  }).join('');
+  /** 优化293: map+join 替换为 for 循环字符串拼接，消除中间数组分配和闭包 */
+  var path = '';
+  for (var i = 0, l = contours.length; i < l; i++) {
+    path += (0, _contour2svg.default)(contours[i], precision);
+  }
+  return path;
 }

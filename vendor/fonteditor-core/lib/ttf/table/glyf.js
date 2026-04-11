@@ -33,15 +33,16 @@ var _default = exports.default = _table.default.create('glyf', [], {
       var cmap = ttf.cmap;
       /** 优化: 构建 unicode→gid 映射，供 resolveGlyf 直接遍历，避免全量 cmap 遍历 */
       var subsetUnicodeMap = {};
+      /** 优化291: 合并 subsetUnicodeMap 赋值的两个分支，减少一次条件判断 */
       for (var si = 0, sl = subset.length; si < sl; si++) {
         var u = subset[si];
         var gid = cmap[u];
-        if (gid !== undefined && !subsetMap[gid]) {
-          subsetMap[gid] = true;
-          subsetGids.push(gid);
+        if (gid !== undefined) {
           subsetUnicodeMap[u] = gid;
-        } else if (gid !== undefined) {
-          subsetUnicodeMap[u] = gid;
+          if (!subsetMap[gid]) {
+            subsetMap[gid] = true;
+            subsetGids.push(gid);
+          }
         }
       }
       ttf.subsetMap = subsetMap;

@@ -18,6 +18,9 @@ function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { de
 
 var Posthead = _table.default.create('posthead', [['format', _struct.default.Fixed], ['italicAngle', _struct.default.Fixed], ['underlinePosition', _struct.default.Int16], ['underlineThickness', _struct.default.Int16], ['isFixedPitch', _struct.default.Uint32], ['minMemType42', _struct.default.Uint32], ['maxMemType42', _struct.default.Uint32], ['minMemType1', _struct.default.Uint32], ['maxMemType1', _struct.default.Uint32]]);
 
+/** 优化287: 空名常量，避免每次 push [0] 普通数组导致 writeBytes 慢路径 */
+var EMPTY_PASCAL = new Uint8Array([0]);
+
 /**
  * 优化64+252: 从原始字节按需提取单个 pascal string，使用 fromCharCode.apply 替代数组+join
  */
@@ -96,10 +99,15 @@ var _default = exports.default = _table.default.create('post', [], {
         view.setUint16(pos, nameIndex[i], false); pos += 2;
       }
       writer.offset = pos;
+      /** 优化287: 创建一次 Uint8Array 视图，直接 set 替代 writer.writeBytes */
       var names = ttf.support.post.names;
+      var uv = new Uint8Array(writer.getBuffer());
       for (var j = 0, jl = names.length; j < jl; j++) {
-        writer.writeBytes(names[j]);
+        var nameBytes = names[j];
+        uv.set(nameBytes, pos);
+        pos += nameBytes.length;
       }
+      writer.offset = pos;
     } else {
       writer.offset = pos;
     }
@@ -134,7 +142,7 @@ var _default = exports.default = _table.default.create('post', [], {
           var name = glyf.name;
           if (!name || name.charCodeAt(0) < 32) {
             nameIndexArr[i] = 258 + nameIndex++;
-            glyphNames.push([0]);
+            glyphNames.push(EMPTY_PASCAL);
             size++;
           } else {
             nameIndexArr[i] = 258 + nameIndex++;
