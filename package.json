@@ -1,7 +1,7 @@
 {
   "name": "webfont",
   "private": true,
-  "version": "1.5.1",
+  "version": "1.5.2",
   "type": "module",
   "scripts": {
     "dev": "pnpx tsx scripts/dev-all.ts",
@@ -24,7 +24,6 @@
     "jsdom": "^29.0.2",
     "pngjs": "^7.0.0",
     "puppeteer": "^24.40.0",
-    "skia-canvas": "^3.0.8",
     "tsup": "^8.5.1",
     "typescript": "^6.0.2",
     "undici": "^8.0.2",

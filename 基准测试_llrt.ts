@@ -71,7 +71,7 @@ async function main() {
     JSON.stringify({ runtime: globalThis.process?.release?.name, fontPath: FONT_PATH, fontName: FONT_NAME, rounds: ROUNDS, results: summary }, null, 2),
   );
 
-  console.log("\n子集字体已保存，请运行: pnpm tsx 基准测试_verify.ts");
+  console.log("\n子集字体已保存");
 }
 
 main();
