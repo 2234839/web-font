@@ -20,7 +20,7 @@
   },
   "devDependencies": {
     "@types/node": "^25.5.2",
-    "@xmldom/xmldom": "^0.9.9",
+    "@xmldom/xmldom": "^0.9.10",
     "jsdom": "^29.0.2",
     "pngjs": "^7.0.0",
     "puppeteer": "^24.40.0",
