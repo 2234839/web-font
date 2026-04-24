@@ -63,7 +63,7 @@ async function ensureLlrt() {
 
   console.log(`Latest LLRT version: ${version}`);
 
-  const downloadUrl = `https://github.com/awslabs/llrt/releases/download/${version}/llrt-${llrtPlatform}-${llrtArch}.zip`;
+  const downloadUrl = `https://github.com/awslabs/llrt/releases/download/${version}/llrt-${llrtPlatform}-${llrtArch}-no-sdk.zip`;
   console.log(`Downloading from ${downloadUrl} ...`);
 
   const zipRes = await fetch(downloadUrl);
