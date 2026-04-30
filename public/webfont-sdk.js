@@ -149,7 +149,10 @@ var WebFont = (function () {
   function getText(el) {
     var tag = el.tagName;
     if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") {
-      return el.value || "";
+      /** 同时收集 value 和 placeholder，确保占位文本的字体也被加载 */
+      var val = el.value || "";
+      var ph = el.placeholder || "";
+      return val + ph;
     }
     return el.textContent || "";
   }
