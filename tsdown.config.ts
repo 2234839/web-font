@@ -1,7 +1,7 @@
 import { defineConfig } from "tsdown";
 
 export default defineConfig({
-  entry: ["backend/app.ts"],
+  entry: ["backend/app.ts", "基准测试_llrt.ts"],
   format: ["cjs"],
   clean: true,
   sourcemap: true,

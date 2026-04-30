@@ -204,11 +204,11 @@ async function refreshFonts() {
 
     <footer style="margin-top: 48px; padding-top: 16px; border-top: 1px solid #eee; font-size: 12px; color: #999; text-align: center">
       <p>感谢 <a href="https://www.ruanyifeng.com/blog/2020/03/weekly-issue-100.html" target="_blank" rel="noopener noreferrer" style="color: #999">阮一峰科技爱好者周刊（第 100 期）</a> 收录本项目</p>
-      <p style="margin-top: 8px">觉得好用？<a href="https://shenzilong.cn/%E5%85%B3%E4%BA%8E/%E8%B5%9E%E5%8A%A9.html#20241227142305-g5225eu" target="_blank" rel="noopener noreferrer" style="color: #e6a700; text-decoration: underline">请作者喝杯咖啡</a>，支持持续开发</p>
+      <p style="margin-top: 8px">觉得好用？<a href="https://shenzilong.cn/%E5%85%B3%E4%BA%8E/%E8%B5%9E%E5%8A%A9.html#" target="_blank" rel="noopener noreferrer" style="color: #e6a700; text-decoration: underline">请作者喝杯咖啡</a>，支持持续开发</p>
     </footer>
 
     <a
-      href="https://shenzilong.cn/%E5%85%B3%E4%BA%8E/%E8%B5%9E%E5%8A%A9.html#20241227142305-g5225eu"
+      href="https://shenzilong.cn/%E5%85%B3%E4%BA%8E/%E8%B5%9E%E5%8A%A9.html#"
       target="_blank"
       rel="noopener noreferrer"
       style="position: fixed; right: 0; top: 50%; transform: translateY(-50%); background: #e6a700; color: #fff; padding: 12px 6px; font-size: 12px; writing-mode: vertical-rl; text-decoration: none; border-radius: 6px 0 0 6px; box-shadow: -2px 0 8px rgba(0,0,0,0.1); z-index: 999; transition: padding 0.2s"
