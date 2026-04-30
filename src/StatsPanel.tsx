@@ -60,7 +60,7 @@ export default function StatsPanel() {
 
   return (
     <section style={{ "font-size": "12px", color: "#999", "line-height": "1.8", "margin-top": "24px" }}>
-      <div style={{ display: "flex", gap: "16px", flex-wrap: "wrap" }}>
+      <div style={{ display: "flex", gap: "16px", "flex-wrap": "wrap" }}>
         <span>运行 {formatUptime(s.uptime)}</span>
         <span>请求 {s.totalRequests} 次</span>
         <span>裁剪 {s.subsetRequests} 次</span>
