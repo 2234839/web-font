@@ -58,6 +58,7 @@ services:
       - TEMP_MAX_FILES=10              # 临时上传最大文件数（默认 10）
       - TEMP_MAX_TOTAL_SIZE=209715200  # 临时上传目录总体积上限，单位字节（默认 209715200，即 200MB）
       - ADMIN_API_KEY=你的管理员密钥    # 设置后开启管理员上传，不设置则不可用
+      - SUBSET_CACHE_MAX_SIZE=10485760  # 字体裁剪结果内存缓存容量上限，单位字节（默认 10MB）
     deploy:
       resources:
         limits:

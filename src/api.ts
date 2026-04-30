@@ -14,6 +14,16 @@ export interface UploadResult {
   error?: string;
 }
 
+export interface ServerStats {
+  uptime: number;
+  totalRequests: number;
+  subsetRequests: number;
+  subsetCacheHits: number;
+  totalChars: number;
+  subsetCacheEntries: number;
+  fontBufferCacheEntries: number;
+}
+
 export async function fetchFonts(): Promise<FontInfo[]> {
   const res = await fetch("/api/fonts");
   return res.json();
@@ -42,5 +52,10 @@ export async function uploadFont(
     body: formData,
     headers,
   });
+  return res.json();
+}
+
+export async function fetchStats(): Promise<ServerStats> {
+  const res = await fetch("/api/stats");
   return res.json();
 }

@@ -1,6 +1,7 @@
 import { createMemo, createSignal, createEffect, onMount, Show } from "solid-js";
 import { fetchFonts, fetchConfig, type FontInfo, type ServerConfig } from "./api";
 import UploadSection from "./UploadSection";
+import StatsPanel from "./StatsPanel";
 import { SelectorRow } from "./FontSelector";
 import FontDebugPreview from "./FontDebugPreview";
 
@@ -282,6 +283,8 @@ function App() {
       </Show>
 
       <UploadSection config={serverConfig()} onUploaded={refreshFonts} />
+
+      <StatsPanel />
 
       <section style={{ ...s.section, "font-size": "12px", color: "#aaa", "line-height": "1.8" }}>
         <p><b>原理：</b>服务端根据 text 参数裁剪字体，只返回所需字符的子集。相同 URL 的请求会被浏览器自动缓存。</p>
