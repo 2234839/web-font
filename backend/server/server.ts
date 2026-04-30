@@ -1,4 +1,5 @@
 import { cMiddleware, cRequest, cResponse, type cNext } from "./req_res";
+import { createTcpServer } from "./tcp_server";
 // 配置
 // 路由器类
 export class cRouter {
@@ -30,13 +31,11 @@ export class SimpleHttpServer {
     const release_name = globalThis?.process?.release?.name;
     console.log("[release.name]", release_name);
     if (release_name === "llrt" || release_name === "node") {
-      import("./tcp_server").then((m) => {
-        const server = m.createTcpServer((socket) => {
-          connectionHandle(socket, (req, res) => this.router.handle(req, res));
-        });
-        server.listen(options.port, options.hostname, () => {
-          console.log(`Server is listening on port ${options.port}`);
-        });
+      const server = createTcpServer((socket) => {
+        connectionHandle(socket, (req, res) => this.router.handle(req, res));
+      });
+      server.listen(options.port, options.hostname, () => {
+        console.log(`Server is listening on port ${options.port}`);
       });
     }
   }

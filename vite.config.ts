@@ -1,9 +1,9 @@
 import { defineConfig } from "vite";
-import solid from "vite-plugin-solid";
+import vue from "@vitejs/plugin-vue";
 import { pilot } from "vite-plugin-pilot";
 
 export default defineConfig({
-  plugins: [solid(), pilot({ locale: "zh" })],
+  plugins: [vue(), pilot({ locale: "zh" })],
   server: {
     host: "0.0.0.0",
     proxy: {

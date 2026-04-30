@@ -9,18 +9,9 @@ import { handleGetConfig } from "./routes/config";
 import { handleStats } from "./routes/stats";
 import { handleUpload } from "./routes/upload";
 import { handleFontSubset } from "./routes/subset";
+import "./server/node";
+import "./server/llrt";
 
-let release_name = globalThis?.process?.release?.name;
-
-let runtimeReady: Promise<void>;
-if (release_name === "node" || release_name === "llrt") {
-  runtimeReady = import("./server/node").then(() => {});
-} else {
-  runtimeReady = Promise.resolve();
-}
-if (release_name === "llrt") {
-  runtimeReady = runtimeReady.then(() => import("./server/llrt").then(() => {}));
-}
 const ROOT_DIR = "dist";
 
 /** 启动时确保必要目录存在 */
@@ -158,7 +149,6 @@ const uploadSizeMiddleware: cMiddleware = async (req, res, next) => {
 };
 
 async function main() {
-  await runtimeReady;
   await ensureDirectories();
 
   const server = new SimpleHttpServer({ port: 8087 });

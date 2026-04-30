@@ -94,10 +94,10 @@ async function ensureLlrt() {
   console.log(`LLRT ${version} installed successfully.`);
 }
 
-/** 运行 tsup 编译 */
-function runTsup() {
-  console.log("\n--- Running tsup build ---");
-  execSync("pnpm tsup", { stdio: "inherit", cwd: ROOT_DIR });
+/** 运行 tsdown 编译 */
+function runTsdown() {
+  console.log("\n--- Running tsdown build ---");
+  execSync("pnpm tsdown", { stdio: "inherit", cwd: ROOT_DIR });
 }
 
 /** woff2 已使用纯 JS 实现（vendor/fonteditor-core/woff2/index.js），无需复制 wasm */
@@ -119,7 +119,7 @@ function runLlrtCompile() {
 /** 主流程 */
 async function main() {
   await ensureLlrt();
-  runTsup();
+  runTsdown();
   runLlrtCompile();
 }
 

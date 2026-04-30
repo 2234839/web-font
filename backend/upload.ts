@@ -1,4 +1,4 @@
-import { writeFile, unlink, readdir, stat, path_join } from "./interface";
+import { writeFile, unlink, readdir, stat, mkdir, path_join } from "./interface";
 import { enableTempUpload, adminApiKey, tempMaxFiles, tempMaxTotalSize } from "./config";
 
 /** 允许的字体文件扩展名 */
@@ -22,7 +22,6 @@ function sanitizeFilename(filename: string) {
 
 /** 确保目录存在，不存在则创建 */
 async function ensureDir(dir: string) {
-  const { stat, mkdir } = await import("./interface");
   try {
     await stat(dir);
   } catch {
