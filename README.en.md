@@ -185,26 +185,6 @@ web-font/
 └── vendor/             # fonteditor-core
 ```
 
-## Roadmap
-
-### Current (MVP)
-- [x] Font subsetting API
-- [x] Runtime Font Delivery SDK (incremental loading, zero flicker)
-- [x] Docker deployment (LLRT, ~30MB image)
-- [x] Typography Presets
-- [x] AI Typography Skill Prompt
-
-### Next
-- [ ] MCP Tool integration
-- [ ] Vite Plugin for build-time font optimization
-- [ ] CLI tool for batch font operations
-
-### Future
-- [ ] AI Website Builder integration
-- [ ] Runtime Glyph Streaming
-- [ ] Edge Cache / CDN Strategy
-- [ ] Variable Font support
-
 ## Acknowledgments
 
 - [kekee000/fonteditor-core](https://github.com/kekee000/fonteditor-core) — Font parsing, subsetting, and format conversion

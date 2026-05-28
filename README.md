@@ -168,25 +168,6 @@ web-font/
 └── vendor/             # fonteditor-core
 ```
 
-## 路线图
-
-### 当前（MVP）
-- [x] 字体子集化 API
-- [x] Runtime Font Delivery SDK（增量加载，零闪烁）
-- [x] Docker 部署（LLRT，~30MB 镜像）
-- [x] AI Typography Skill Prompt
-
-### 下一阶段
-- [ ] MCP Tool 集成
-- [ ] Vite Plugin 构建时字体优化
-- [ ] CLI 批量字体操作工具
-
-### 未来
-- [ ] AI Website Builder 集成
-- [ ] Runtime Glyph Streaming
-- [ ] Edge Cache / CDN 策略
-- [ ] Variable Font 支持
-
 ## 鸣谢
 
 - [kekee000/fonteditor-core](https://github.com/kekee000/fonteditor-core) — 字体解析、子集化、格式转换
