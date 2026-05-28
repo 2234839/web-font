@@ -1,8 +1,19 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from "vue";
 import { fetchStats, type ServerStats } from "./api";
+import { t, locale } from "./i18n";
 
 function formatUptime(seconds: number): string {
+  if (locale.value === "en") {
+    if (seconds < 60) return `${seconds}s`;
+    if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = seconds % 60;
+    if (h < 24) return `${h}h ${m}m ${s}s`;
+    const d = Math.floor(h / 24);
+    return `${d}d ${h % 24}h`;
+  }
   if (seconds < 60) return `${seconds}秒`;
   if (seconds < 3600) return `${Math.floor(seconds / 60)}分${seconds % 60}秒`;
   const h = Math.floor(seconds / 3600);
@@ -55,13 +66,13 @@ onUnmounted(() => {
 
 <template>
   <section v-if="data" style="margin-top: 24px; margin-bottom: 28px; padding: 12px 16px; background: #f0f0f0; border-radius: 8px">
-    <div style="font-size: 13px; font-weight: 600; color: #333; margin-bottom: 4px">服务状态</div>
+    <div style="font-size: 13px; font-weight: 600; color: #333; margin-bottom: 4px">{{ t('serverStatus') }}</div>
     <div style="display: flex; gap: 20px; flex-wrap: wrap; font-size: 13px; color: #555; line-height: 2">
-      <span><b style="color: #333">运行</b> {{ formatUptime(data.uptime) }}</span>
-      <span><b style="color: #333">请求</b> {{ data.totalRequests }} 次</span>
-      <span><b style="color: #333">裁剪</b> {{ data.subsetRequests }} 次</span>
-      <span><b style="color: #333">文字</b> {{ data.totalChars }} 字</span>
-      <span><b style="color: #333">缓存命中</b> {{ data.subsetRequests > 0 ? ((data.subsetCacheHits / data.subsetRequests) * 100).toFixed(1) : '0.0' }}%</span>
+      <span><b style="color: #333">{{ t('uptime') }}</b> {{ formatUptime(data.uptime) }}</span>
+      <span><b style="color: #333">{{ t('requests') }}</b> {{ data.totalRequests }} {{ t('times') }}</span>
+      <span><b style="color: #333">{{ t('subset') }}</b> {{ data.subsetRequests }} {{ t('times') }}</span>
+      <span><b style="color: #333">{{ t('chars') }}</b> {{ data.totalChars }} {{ t('charUnit') }}</span>
+      <span><b style="color: #333">{{ t('cacheHit') }}</b> {{ data.subsetRequests > 0 ? ((data.subsetCacheHits / data.subsetRequests) * 100).toFixed(1) : '0.0' }}%</span>
     </div>
   </section>
 </template>

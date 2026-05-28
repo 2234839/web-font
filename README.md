@@ -1,99 +1,198 @@
-# web font 字体裁剪工具
+# WebFont — 中文字体按需裁剪 + AI 字体技能
 
-之前的版本请查看 master 分支，为了能使用 llrt ，我进行了重写，之后只维护此分支
+> 按需裁剪中文字体，6 个字 ≈ 6KB。让任何网页、海报、H5 都能用上高级中文字体。
 
-![](./doc/启动内存占用.png)
+[English](README.en.md)
 
-上面的内存占用是空载状态下，在执行字体裁剪时会将字体加载到内存中，所以会占用更多的内存，不过 llrt 也具有 gc 功能，在内存不够用时会自动释放。
-虽然 llrt 内存占用低，但它运行速度慢，不到node的1/2。有运行速度要求的建议使用node/bun运行
+**中文字体包太大**（思源黑体 16MB+），没法像英文字体那样直接 `@font-face` 引入。
 
-## 起因
+本项目在服务端按需子集化字体——传什么文字，就只返回那些字符的字体子集。一张海报用了 20 个字？返回的字体文件就是 20KB，而不是 16MB。
 
-ui 需要展现一些特定的字体，但直接引入字体包又过大，于是想到了裁剪字体，一开始想的使用「字蛛」但他是针对静态网站的，而且实际他会多出许多英文的，估计是直接将源码中存在的文字都算进去了。后来又找到阿里的「webfont」 但他的字体有限，项目又不开源，所以自己写了这个
+```html
+<!-- 一段 CSS 即可使用任意中文字体 -->
+<style>
+@font-face {
+  font-family: "MyFont";
+  src: url("https://webfont.shenzilong.cn/api?font=令东齐伋复刻体&text=静心茶舍&outType=woff2") format("woff2");
+}
+.title { font-family: "MyFont", serif; }
+</style>
+<h1 class="title">静心茶舍</h1>
+```
 
-## 在线尝试
+## 谁在用
 
-- [web font 在线站点](https://webfont.shenzilong.cn/)
+**任何需要中文 Web Font 的场景：**
 
-## 目的与功能
+- 海报 / H5 活动页 — 几个字裁剪后只有几 KB
+- 品牌官网 — 高级字体不再受限于体积
+- 小程序 / PWA — 流量敏感，按需加载
+- 静态博客 / CMS — 文字内容确定，CSS 直出即可
+- AI 生成网页 — 让 AI 也能输出有设计感的中文字体方案
 
-1.裁剪字体包使其仅包含选中的字体,其体积自然十分之小
-2.另外可以生成 css 直接复制可用，部署在公网便可永久访问
-3.支持字体文件上传（临时上传和管理员上传两种模式）
-4.支持下载裁剪后的字体文件
-5.字体名称支持模糊匹配（精确 > 前缀 > 包含）
+## 核心能力
 
+> [在线体验 Typography Skill Demo](https://webfont.shenzilong.cn/?demo) — 同一内容，字体不同，体验天壤之别
 
-## 安装与使用
+### Runtime Font Delivery
 
-### 使用 node / llrt 等运行时
+服务端按需子集化 + 客户端增量加载。
 
-拉取项目，并将字体文件放到项目内的 font 目录下，然后运行：
+```
+6 个字 → 服务端裁剪 → 返回约 6KB 子集字体（而非 16MB 完整字体）
+```
 
+JS SDK 三种加载模式：
+
+```html
+<script src="https://webfont.shenzilong.cn/webfont-sdk.js"></script>
+<script>
+  // 推荐：MutationObserver 事件驱动，DOM 变化自动加载新字符
+  WebFont.observeFont({ fontName: "令东齐伋复刻体.ttf", selector: ".content", family: "MySerif" });
+
+  // 轮询模式
+  WebFont.loadFont({ fontName: "令东齐伋复刻体.ttf", selector: ".title", family: "MySerif" });
+
+  // 手动传入文本
+  var loader = WebFont.loadText({ fontName: "令东齐伋复刻体.ttf", text: "你好世界", family: "MySerif" });
+  loader.update("追加文字");
+</script>
+```
+
+同一字体下所有模式共享字符集，零重复请求，零闪烁。
+
+### AI Typography Skill
+
+给 AI（Claude、Cursor、Copilot 等）注入中文排版智能。AI 读取 Skill Prompt 后可以：
+
+- 自动选择匹配场景的中文字体
+- 正确处理中英混排
+- 建立字体层级（Typography Hierarchy）
+- 生成 fallback 链和 Runtime 加载策略
+
+```
+Prompt: "生成一个东方禅意风格的茶品牌官网"
+
+无 Skill: font-family: sans-serif → 系统黑体 → 廉价感
+
+有 Skill: zen 风格 → 宋体标题 + 楷体正文 → 自动子集化 → 质感显著提升
+```
+
+## 快速开始
+
+### 直接调用 API
+
+无需 SDK，一段 CSS 即可。服务端只返回你需要的字符子集。
+
+```css
+@font-face {
+  font-family: "MyFont";
+  src: url("https://webfont.shenzilong.cn/api?font=令东齐伋复刻体&text=你的文字&outType=woff2") format("woff2");
+}
+```
+
+### 自部署
+
+```bash
+# Node.js / LLRT
 pnpm install && pnpm build && pnpm build_backend
-
 node ./dist_backend/app.cjs
-llrt ./dist_backend/app.cjs
+```
 
+Docker（~30MB 极简镜像）：
 
-### 使用 docker 安装
-
-此镜像使用 llrt 运行时
-
-https://hub.docker.com/repository/docker/llej0/web-font 很小的包体积 ![alt text](doc/image.png)
-
-docker compose.yml
-
-```yml
-version: '3'
+```yaml
 services:
-  app:
+  webfont:
     image: docker.io/llej0/web-font:latest
     ports:
       - "8087:8087"
     volumes:
-      - ./data:/home/font # 挂载本机字体目录
+      - ./fonts:/home/font
     environment:
-      - ENABLE_TEMP_UPLOAD=true        # 开启临时上传（默认 false）
-      - TEMP_MAX_FILES=10              # 临时上传最大文件数（默认 10）
-      - TEMP_MAX_TOTAL_SIZE=209715200  # 临时上传目录总体积上限，单位字节（默认 209715200，即 200MB）
-      - ADMIN_API_KEY=你的管理员密钥    # 设置后开启管理员上传，不设置则不可用
-      - SUBSET_CACHE_MAX_SIZE=10485760  # 字体裁剪结果内存缓存容量上限，单位字节（默认 10MB）
-    deploy:
-      resources:
-        limits:
-          memory: 900M       # 设置内存限制为900MB，根据实际需求来设置
-    restart: on-failure      # 设置重启策略为 on-failure
-
+      - ENABLE_TEMP_UPLOAD=true
+      - ADMIN_API_KEY=your-secret-key
+      - SUBSET_CACHE_MAX_SIZE=10485760
 ```
 
-其中 font 目录替换成你的字体文件存放目录
-
-## 提供的服务
-
-### API 接口
+## API
 
 | 接口 | 说明 |
 |------|------|
-| `GET /api?font=字体名&text=文字` | 裁剪字体，字体名支持模糊匹配 |
-| `GET /api/fonts` | 列出所有可用字体 |
-| `GET /api/config` | 获取公开配置（是否开启上传等） |
-| `POST /api/upload?mode=temp` | 临时上传字体文件（需开启 `ENABLE_TEMP_UPLOAD`） |
-| `POST /api/upload?mode=admin` | 管理员上传字体文件（需 `Authorization: Bearer <API_KEY>`） |
+| `GET /api?font={name}&text={chars}&outType={woff2\|ttf}` | 裁剪字体，只返回指定字符的子集 |
+| `GET /api/fonts` | 列出可用字体 |
+| `GET /api/config` | 获取服务配置 |
+| `POST /api/upload?mode=temp` | 临时上传（自动清理） |
+| `POST /api/upload?mode=admin` | 永久上传（需 API Key） |
 
-### 上传功能
+字体名支持模糊匹配：精确 > 前缀 > 包含。
 
-- **临时上传**：设置环境变量 `ENABLE_TEMP_UPLOAD=true` 启用，最多保留 10 个字体文件（`TEMP_MAX_FILES`），总大小限制 200MB（`TEMP_MAX_TOTAL_SIZE`），超出后自动删除最早上传的（FIFO）
-- **管理员上传**：设置环境变量 `ADMIN_API_KEY=你的密钥` 启用，上传的字体永久保存，需要通过 API Key 认证
-- 支持的字体格式：`.ttf` `.otf` `.woff` `.woff2`
+## 架构
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                        使用场景                              │
+│  海报/H5  ·  品牌官网  ·  博客  ·  小程序  ·  AI 生成页面    │
+└──────────────────────────┬───────────────────────────────────┘
+                           │
+              ┌────────────┴────────────┐
+              │  Typography Presets     │ ← 字体风格配置
+              │  + AI Skill Prompt     │ ← 中文排版智能
+              └────────────┬────────────┘
+                           │
+              ┌────────────┴────────────┐
+              │  Runtime Font Delivery  │ ← 按需子集化 + 增量加载
+              │  SDK + API              │
+              └────────────┬────────────┘
+                           │
+              ┌────────────┴────────────┐
+              │  Subset Engine          │ ← fonteditor-core
+              │  parse → subset →       │   字体解析、子集化、格式转换
+              │  optimize → serialize   │
+              └─────────────────────────┘
+```
+
+## 项目结构
+
+```
+web-font/
+├── backend/            # 服务端：HTTP API + 字体裁剪引擎
+│   ├── routes/         # API 路由
+│   ├── font_util/      # 字体裁剪核心
+│   └── server/         # HTTP 服务器（兼容 Node.js + LLRT）
+├── src/                # 前端：Vue 3 单页应用
+├── public/
+│   └── webfont-sdk.js  # Runtime Font Delivery SDK
+├── skills/             # AI Typography Skill Prompts
+├── examples/           # Before/After 对比演示
+└── vendor/             # fonteditor-core
+```
+
+## 路线图
+
+### 当前（MVP）
+- [x] 字体子集化 API
+- [x] Runtime Font Delivery SDK（增量加载，零闪烁）
+- [x] Docker 部署（LLRT，~30MB 镜像）
+- [x] AI Typography Skill Prompt
+
+### 下一阶段
+- [ ] MCP Tool 集成
+- [ ] Vite Plugin 构建时字体优化
+- [ ] CLI 批量字体操作工具
+
+### 未来
+- [ ] AI Website Builder 集成
+- [ ] Runtime Glyph Streaming
+- [ ] Edge Cache / CDN 策略
+- [ ] Variable Font 支持
 
 ## 鸣谢
 
-[kekee000/fonteditor-core](https://github.com/kekee000/fonteditor-core)
-
-[字体天下](http://www.fonts.net.cn/commercial-free-32767/fonts-zh-1.html)
-
+- [kekee000/fonteditor-core](https://github.com/kekee000/fonteditor-core) — 字体解析、子集化、格式转换
+- [字体天下](http://www.fonts.net.cn/commercial-free-32767/fonts-zh-1.html) — 免费商用中文字体
+- 入选[阮一峰科技爱好者周刊第 100 期](https://www.ruanyifeng.com/blog/2020/03/weekly-issue-100.html)
 
 ## License
 
-MIT © [崮生](https://shenzilong.cn/关于/mit.html)
+MIT © [崮生](https://shenzilong.cn)
