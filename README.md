@@ -32,7 +32,7 @@
 
 ## 核心能力
 
-> [在线体验 Typography Skill Demo](https://webfont.shenzilong.cn/?demo) — 同一内容，字体不同，体验天壤之别
+> [在线体验中文字体效果对比](https://webfont.shenzilong.cn/?demo) — 同一内容，字体不同，体验天壤之别
 
 ### Runtime Font Delivery
 
@@ -61,13 +61,13 @@ JS SDK 三种加载模式：
 
 同一字体下所有模式共享字符集，零重复请求，零闪烁。
 
-### AI Typography Skill
+### AI Chinese Font Skill
 
-给 AI（Claude、Cursor、Copilot 等）注入中文排版智能。AI 读取 Skill Prompt 后可以：
+给 AI（Claude、Cursor、Copilot 等）注入中文字体应用能力。AI 读取 Skill Prompt 后可以：
 
 - 自动选择匹配场景的中文字体
 - 正确处理中英混排
-- 建立字体层级（Typography Hierarchy）
+- 建立字体层级（Font Hierarchy）
 - 生成 fallback 链和 Runtime 加载策略
 
 ```
@@ -136,8 +136,8 @@ services:
 └──────────────────────────┬───────────────────────────────────┘
                            │
               ┌────────────┴────────────┐
-              │  Typography Presets     │ ← 字体风格配置
-              │  + AI Skill Prompt     │ ← 中文排版智能
+              │  AI Chinese Font Skill │ ← 中文字体应用能力
+              │  + Skill Prompt        │ ← 字体裁剪 + 加载策略
               └────────────┬────────────┘
                            │
               ┌────────────┴────────────┐
@@ -163,7 +163,7 @@ web-font/
 ├── src/                # 前端：Vue 3 单页应用
 ├── public/
 │   └── webfont-sdk.js  # Runtime Font Delivery SDK
-├── skills/             # AI Typography Skill Prompts
+├── skills/             # AI Chinese Font Skill
 ├── examples/           # Before/After 对比演示
 └── vendor/             # fonteditor-core
 ```

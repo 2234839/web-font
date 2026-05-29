@@ -218,7 +218,7 @@ async function refreshFonts() {
     <footer style="margin-top: 48px; padding-top: 16px; border-top: 1px solid #eee; font-size: 12px; color: #999; text-align: center">
       <p>{{ t('thanks') }}<a href="https://www.ruanyifeng.com/blog/2020/03/weekly-issue-100.html" target="_blank" rel="noopener noreferrer" style="color: #999">阮一峰科技爱好者周刊（第 100 期）</a> {{ t('thanksText') }}</p>
       <p style="margin-top: 8px">{{ t('buyCoffee') }}<a href="https://shenzilong.cn/%E5%85%B3%E4%BA%8E/%E8%B5%9E%E5%8A%A9.html#" target="_blank" rel="noopener noreferrer" style="color: #e6a700; text-decoration: underline">{{ t('buyCoffeeAction') }}</a>{{ t('buyCoffeeSuffix') }}</p>
-      <p style="margin-top: 12px"><a href="https://github.com/2234839/web-font/blob/new/skills/chinese-web-typography.md" target="_blank" style="color: #8b7355; text-decoration: underline">{{ t('viewSkill') }}</a></p>
+      <p style="margin-top: 12px"><a href="https://github.com/2234839/web-font/blob/new/skills/chinese-web-font.md" target="_blank" style="color: #8b7355; text-decoration: underline">{{ t('viewSkill') }}</a></p>
     </footer>
 
     <a

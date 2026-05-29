@@ -38,7 +38,7 @@ onMounted(() => {
       <button @click="props.onBack" style="padding: 6px 16px; border: 1px solid #ddd; border-radius: 6px; background: #fff; cursor: pointer; font-size: 14px">
         {{ t('back') }}
       </button>
-      <span style="font-size: 13px; color: #888">{{ t('demoSlogan') }} · <a href="https://github.com/2234839/web-font/blob/new/skills/chinese-web-typography.md" target="_blank" style="color: #8b7355; text-decoration: none">{{ t('viewSkillLink') }}</a></span>
+      <span style="font-size: 13px; color: #888">{{ t('demoSlogan') }} · <a href="https://github.com/2234839/web-font/blob/new/skills/chinese-web-font.md" target="_blank" style="color: #8b7355; text-decoration: none">{{ t('viewSkillLink') }}</a></span>
     </div>
 
     <div style="display: flex; min-height: calc(100vh - 49px)">

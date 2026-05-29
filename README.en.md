@@ -1,4 +1,4 @@
-# WebFont — Runtime Font Delivery + AI Typography Skill
+# WebFont — Runtime Font Delivery + AI Chinese Font Skill
 
 > Subset Chinese fonts on demand — 6 characters ≈ 6KB. Use premium Chinese fonts on any web page.
 
@@ -32,7 +32,7 @@ This project subsets fonts on the server side — pass in the text you need, get
 
 ## Features
 
-> [Live Typography Skill Demo](https://webfont.shenzilong.cn/) — same content, different fonts, completely different feel
+> [Live Font Demo](https://webfont.shenzilong.cn/) — same content, different fonts, completely different feel
 
 ### Runtime Font Delivery
 
@@ -61,30 +61,13 @@ JS SDK with three loading modes:
 
 All modes share the same character set per font — zero duplicate requests, zero flicker.
 
-### Typography Presets
+### AI Chinese Font Skill
 
-Pre-defined font style configs for common scenarios:
-
-| Preset | Style | Heading | Body | Use Cases |
-|--------|-------|---------|------|-----------|
-| zen | Oriental / Zen | Noto Serif CJK SC | LXGW WenKai | Tea, culture, meditation |
-| luxury | Luxury / High-end | Noto Serif CJK SC | Noto Serif CJK SC | Brand sites, fashion |
-| editorial | Editorial / Content | Noto Serif CJK SC | Noto Sans CJK SC | News, blogs, magazines |
-| modern-tech | Modern Tech | Alibaba PuHuiTi | Noto Sans CJK SC | SaaS, dev tools |
-| cyberpunk | Cyberpunk | ZCOOL KuaiLe | Noto Sans CJK SC | Games, street culture |
-| minimal | Minimal | Noto Sans CJK SC | Noto Sans CJK SC | Portfolios, design |
-| warm | Warm / Humanistic | LXGW WenKai | LXGW WenKai | Education, community |
-| startup | Startup Energy | Noto Sans CJK SC Bold | Noto Sans CJK SC | Startups, events |
-
-Each preset includes font pairing, type scale, line height, spacing, fallback chain, runtime strategy, and ready-to-use CSS.
-
-### AI Typography Skill
-
-Inject Chinese typography intelligence into AI (Claude, Cursor, Copilot, etc.). With the Skill Prompt, AI can:
+Inject Chinese font application capability into AI (Claude, Cursor, Copilot, etc.). With the Skill Prompt, AI can:
 
 - Auto-select fonts matching the scene
 - Handle Chinese-English mixed typesetting
-- Build proper typography hierarchy
+- Build proper font hierarchy
 - Generate fallback chains and runtime loading strategies
 
 ```
@@ -92,7 +75,7 @@ Prompt: "Build a zen-style tea brand website"
 
 Without Skill: font-family: sans-serif → system default → looks generic
 
-With Skill: zen preset → serif heading + kai body → auto subset → visual quality leap
+With Skill: zen style → serif heading + kai body → auto subset → visual quality leap
 ```
 
 ## Quick Start
@@ -153,8 +136,8 @@ Font name supports fuzzy matching: exact → prefix → contains.
 └──────────────────────────┬───────────────────────────────────┘
                            │
               ┌────────────┴────────────┐
-              │   Typography Presets    │ ← Font style configs
-              │   + AI Skill Prompt     │ ← Chinese typography intelligence
+              │   AI Chinese Font Skill │ ← Chinese font application
+              │   + AI Skill Prompt     │ ← Chinese font application
               └────────────┬────────────┘
                            │
               ┌────────────┴────────────┐
@@ -180,7 +163,7 @@ web-font/
 ├── src/                # Frontend: Vue 3 SPA
 ├── public/
 │   └── webfont-sdk.js  # Runtime Font Delivery SDK
-├── skills/             # AI Typography Skill Prompts
+├── skills/             # AI Chinese Font Skill
 ├── examples/           # Before/After demo pages
 └── vendor/             # fonteditor-core
 ```

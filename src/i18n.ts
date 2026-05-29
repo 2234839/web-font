@@ -45,7 +45,7 @@ const messages = {
     buyCoffee: "觉得好用？",
     buyCoffeeAction: "请作者喝杯咖啡",
     buyCoffeeSuffix: "，支持持续开发",
-    viewSkill: "查看 AI Typography Skill →",
+    viewSkill: "查看 AI Chinese Font Skill →",
     sponsor: "赞助支持",
     agentSkillDemo: "Agent Skill Demo",
 
@@ -113,7 +113,7 @@ const messages = {
     buyCoffee: "Find it useful? ",
     buyCoffeeAction: "Buy the author a coffee",
     buyCoffeeSuffix: " to support development",
-    viewSkill: "View AI Typography Skill →",
+    viewSkill: "View AI Chinese Font Skill →",
     sponsor: "Sponsor",
     agentSkillDemo: "Agent Skill Demo",
 

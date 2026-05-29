@@ -1,9 +1,9 @@
 ---
-name: chinese-web-typography
-description: 设计精美网页时，可利用此技能引入中文字体、中文排版规范、字体裁剪 API 等元素，提升中文页面的排版品质。
+name: chinese-web-font
+description: 中文字体按需裁剪与加载能力，可让 AI 在生成中文网页时引入特殊中文字体，按字符子集化加载，极大减少流量。
 ---
 
-# Chinese Web Typography Skill
+# Chinese Web Font Skill
 
 ## WebFont API
 
@@ -60,7 +60,7 @@ SDK 支持文字动态变化：当 DOM 内容改变时，`observeFont` 会自动
 - **字重**：中文 400/700 区分明显，中间字重（300/500）表现弱，不要依赖
 - **中英混排**：中文与英文/数字之间加空格
 - **字号级差**：标题间至少 4px 差距，否则层级模糊
-- **首行缩进**：`text-indent: 2em` 是中文正文排版的传统
+- **首行缩进**：`text-indent: 2em` 是中文正文的传统
 
 ## 可用字体
 
