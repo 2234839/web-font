@@ -1,4 +1,3 @@
-import { createRequire } from "node:module";
 import { fontSubset } from "../font_util/font";
 import type { FontEditor } from "../../vendor/fonteditor-core/lib/ttf/font.js";
 import { parseUrl, jsonResponse, stats, subsetCache, findFontPath, readFontBuffer } from "../shared";
@@ -7,13 +6,16 @@ import { parseUrl, jsonResponse, stats, subsetCache, findFontPath, readFontBuffe
  * 子集化版本指纹
  *
  * 纳入 subsetCache 的 key，让旧缓存条目在以下两种场景自动失效，无需手动清缓存：
- *  - 生产：发版 bump package.json 的 version，旧缓存自然过期（语义版本失效）
- *  - 开发：pnpm dev 重启进程时进程启动时间戳变化，内存缓存整体重置
+ *  - 生产：发版 bump package.json 的 version（构建期由 tsdown define 注入），旧缓存自然过期
+ *  - 开发：pnpm dev 重启进程时 process.uptime() 变化，内存缓存整体重置
  *
  * 杜绝「子集化代码已修但缓存返回旧错误结果」的陷阱。
+ *
+ * 注意：不用 createRequire(import.meta.url) 读 package.json —— 该写法经 tsdown 打包为 CJS 后
+ * 会引入 __filename，而 LLRT 运行时不提供 __filename，导致 ReferenceError。
  */
-const packageVersion: string = createRequire(import.meta.url)("../../package.json").version;
-const SUBSET_CACHE_KEY = `${packageVersion}:${process.uptime()}`;
+declare const PACKAGE_VERSION: string;
+const SUBSET_CACHE_KEY = `${PACKAGE_VERSION}:${process.uptime()}`;
 
 /** GET /api?font=...&text=... — 字体裁剪 */
 export async function handleFontSubset(req: Request, res: Response) {
