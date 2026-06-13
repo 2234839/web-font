@@ -29,6 +29,8 @@ function parseCFFCharstring(code, font, index) {
   /** 优化211: 解构 font 热路径属性，消除重复属性查找 */
   var subrs = font.subrs;
   var subrsBias = font.subrsBias;
+  /** 优化296: 惰性 local subrs 解码器（CID 字体单 FD 可能含数万 subrs） */
+  var resolveSubr = font._resolveSubr;
   var gsubrs = font.gsubrs;
   var gsubrsBias = font.gsubrsBias;
   var nominalWidthX = font.nominalWidthX;
@@ -190,7 +192,8 @@ function parseCFFCharstring(code, font, index) {
         case 10:
           // callsubr
           codeIndex = stack[--sp] + subrsBias;
-          subrCode = subrs[codeIndex];
+          /** 优化296: 优先用惰性解码器，未设置时回退直接索引 */
+          subrCode = resolveSubr ? resolveSubr(codeIndex) : subrs[codeIndex];
           if (subrCode) {
             parse(subrCode);
           }

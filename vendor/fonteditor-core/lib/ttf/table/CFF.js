@@ -141,6 +141,112 @@ function parseCFFIndexOffsets(reader, offset) {
 }
 
 /**
+ * 优化303: 子集模式下的 CFF 索引按需预读
+ * 大 CID 字体（如思源）的 charstring index 含数万字形，parseCFFIndexOffsets 全量读取
+ * offset 表（思源 65535×3≈196KB，1.97ms）对 subset 是纯浪费——仅需其中极少数字形。
+ *
+ * 本函数只读取被引用字形及其后一个 offset（用于界定字节范围），并按需读最后一个
+ * offset 计算 totalSize 供 prepareCFFIndexView 建立全量大视图。
+ * 返回的 indexInfo 兼容 readCFFIndexObject：subsetGids 命中的槽位有真实 offset，
+ * 其余为 undefined（按需 seek 读取）。
+ *
+ * @param {Reader} reader    读取器
+ * @param {number} offset    索引偏移
+ * @param {Array<number>} neededGids 需要名字/数据的 GID 升序列表（0-based，不含越界）
+ * @return {Object}          { offsets, count, dataStart, endOffset }
+ */
+function parseCFFIndexOffsetsSubset(reader, offset, neededGids) {
+  reader.seek(offset);
+  var count = reader.readUint16();
+  var offsetSize = reader.readUint8();
+  /** offset 数组起始（紧跟 count+offsetSize 之后） */
+  var offsetArrayBase = reader.offset;
+  /**
+   * 优化307: 直接用 DataView 读取 offset，绕过 reader 的原型方法调用 + seek 边界检查。
+   * reader.view 是覆盖整个 buffer 的 DataView，offset 坐标系与 reader.offset 一致。
+   * 实测 reader.seek + readUint8 链对 15 次读取达 0.5ms（ES5 class 方法开销），
+   * 直连 DataView 后降至可忽略。
+   */
+  var view = reader.view;
+  function readOffAt(pos) {
+    var off = offsetArrayBase + pos * offsetSize;
+    if (offsetSize === 1) return view.getUint8(off);
+    if (offsetSize === 2) return view.getUint16(off, false);
+    if (offsetSize === 4) return view.getUint32(off, false);
+    /** offsetSize === 3 */
+    return view.getUint8(off) << 16 | view.getUint8(off + 1) << 8 | view.getUint8(off + 2);
+  }
+  /**
+   * 优化308: subset 模式 offsets 用普通对象而非 new Array(count+1)。
+   * 思源 charstring index count=65535，new Array(65536) 单次分配 0.32ms，
+   * 而 subset 仅命中个位数槽位。对象按需添加属性，零分配开销。
+   * readCFFIndexObject 的 off[idx] 索引对对象同样有效。
+   */
+  var offsets = {};
+  /** 读取每个所需 GID 及其后一个 offset（界定数据范围） */
+  for (var gi = 0; gi < neededGids.length; gi++) {
+    var gid = neededGids[gi];
+    if (gid < 0 || gid > count) continue;
+    if (offsets[gid] === undefined) offsets[gid] = readOffAt(gid);
+    if (gid + 1 <= count && offsets[gid + 1] === undefined) offsets[gid + 1] = readOffAt(gid + 1);
+  }
+  /** 读最后一个 offset 计算 totalSize，供 prepareCFFIndexView 建全量大视图 */
+  var lastOffset = readOffAt(count);
+  var dataStart = offsetArrayBase + (count + 1) * offsetSize;
+  /** 同步 reader.offset 到 dataStart，保持后续 reader 读取的坐标连续性 */
+  reader.offset = dataStart;
+  return {
+    offsets: offsets,
+    count: count,
+    dataStart: dataStart,
+    /** 标记子集模式并提供按需读取所需信息 */
+    _subsetMode: true,
+    _offsetArrayBase: offsetArrayBase,
+    _offsetSize: offsetSize,
+    _totalSize: lastOffset - 1
+  };
+}
+
+/**
+ * 优化304: 完全惰性的 CFF 索引预读（用于 local subrs）
+ * local subrs 的引用 idx 在 charstring 解析时动态决定，无法预知，故不能像
+ * parseCFFIndexOffsetsSubset 那样只读所需 offset。但大 subrs 表（思源单 FD 含 26550 subrs）
+ * 全量读取 offset 表（26550×3≈80KB，~10万次 readUint8）对 subset 仍是纯浪费——
+ * 实际被引用的 subr 通常是个位数。
+ *
+ * 本函数只读 count + offsetSize + 最后一个 offset（算 totalSize 建 view），
+ * offsets 数组保持稀疏，readCFFIndexObject 按需 seek 填充命中的 idx。
+ *
+ * @param {Reader} reader  读取器
+ * @param {number} offset  索引偏移
+ * @return {Object}        { offsets, count, dataStart, _subsetMode, ... }
+ */
+function parseCFFIndexOffsetsLazy(reader, offset) {
+  reader.seek(offset);
+  var count = reader.readUint16();
+  var offsetSize = reader.readUint8();
+  var offsetArrayBase = reader.offset;
+  /** 优化307: 直接用 DataView 读末尾 offset，绕过 reader.seek + 原型方法 */
+  var view = reader.view;
+  var lastOffPos = offsetArrayBase + count * offsetSize;
+  var lastOffset;
+  if (offsetSize === 1) lastOffset = view.getUint8(lastOffPos);else if (offsetSize === 2) lastOffset = view.getUint16(lastOffPos, false);else if (offsetSize === 4) lastOffset = view.getUint32(lastOffPos, false);else lastOffset = view.getUint8(lastOffPos) << 16 | view.getUint8(lastOffPos + 1) << 8 | view.getUint8(lastOffPos + 2);
+  var dataStart = offsetArrayBase + (count + 1) * offsetSize;
+  /** 同步 reader.offset 到 dataStart，保持后续 reader 读取坐标连续 */
+  reader.offset = dataStart;
+  return {
+    /** 优化308: 用普通对象替代 new Array(count+1)，避免大 subrs 表（26550）的数组分配 */
+    offsets: {},
+    count: count,
+    dataStart: dataStart,
+    _subsetMode: true,
+    _offsetArrayBase: offsetArrayBase,
+    _offsetSize: offsetSize,
+    _totalSize: lastOffset - 1
+  };
+}
+
+/**
  * 根据 parseCFFIndexOffsets 的结果，按需读取第 idx 个 object
  *
  * @param  {Reader} reader       读取器
@@ -155,6 +261,30 @@ function parseCFFIndexOffsets(reader, offset) {
 function readCFFIndexObject(reader, indexInfo, idx) {
   var off = indexInfo.offsets;
   var view = indexInfo._view;
+  /**
+   * 优化303+307: 子集模式下 off[idx]/off[idx+1] 可能为 undefined（未预读），
+   * 直接用 DataView 读取（绕过 reader 原型方法 + seek 边界检查）。命中槽位直接复用。
+   */
+  if (off && off[idx] === undefined) {
+    var base = indexInfo._offsetArrayBase;
+    var os = indexInfo._offsetSize;
+    var dv = reader.view;
+    var o1 = base + idx * os;
+    var o2 = base + (idx + 1) * os;
+    if (os === 1) {
+      off[idx] = dv.getUint8(o1);
+      off[idx + 1] = dv.getUint8(o2);
+    } else if (os === 2) {
+      off[idx] = dv.getUint16(o1, false);
+      off[idx + 1] = dv.getUint16(o2, false);
+    } else if (os === 4) {
+      off[idx] = dv.getUint32(o1, false);
+      off[idx + 1] = dv.getUint32(o2, false);
+    } else {
+      off[idx] = dv.getUint8(o1) << 16 | dv.getUint8(o1 + 1) << 8 | dv.getUint8(o1 + 2);
+      off[idx + 1] = dv.getUint8(o2) << 16 | dv.getUint8(o2 + 1) << 8 | dv.getUint8(o2 + 2);
+    }
+  }
   if (view) {
     /** 使用预创建的大视图 + subarray，baseOffset 已含 -1 修正 */
     return view.subarray(off[idx] - 1, off[idx + 1] - 1);
@@ -170,8 +300,9 @@ function readCFFIndexObject(reader, indexInfo, idx) {
  */
 function prepareCFFIndexView(reader, indexInfo) {
   var off = indexInfo.offsets;
-  if (!off || off.length < 2) return;
-  var totalSize = off[off.length - 1] - 1;
+  /** 优化303: 子集模式下 off[last] 未读，totalSize 由 parseCFFIndexOffsetsSubset 预先算好 */
+  var totalSize = indexInfo._subsetMode ? indexInfo._totalSize : off && off.length >= 2 ? off[off.length - 1] - 1 : 0;
+  if (totalSize <= 0) return;
   /** baseOffset 对齐原始 readCFFIndexObject 中的 byteOffset + dataStart + off[idx] - 1 */
   var baseOffset = reader.view.byteOffset + indexInfo.dataStart;
   indexInfo._view = new Uint8Array(reader.view.buffer, baseOffset, totalSize);
@@ -241,12 +372,15 @@ function parseFDSelect(reader, offset) {
   var format = reader.readUint8();
 
   if (format === 0) {
-    /** format 0：每个 glyph 一个 uint8，存储为扁平数组 */
+    /** format 0：每个 glyph 一个 uint8 */
     var count = reader.readUint16();
-    var flatData = new Uint8Array(count);
-    for (var i = 0; i < count; i++) {
-      flatData[i] = reader.readUint8();
-    }
+    /**
+     * 优化297: 直接以 buffer 视图引用整段 FDSelect0 数据，替代 count 次 readUint8 循环
+     * 思源等大 CID 字体 count 可达 6 万+，逐字节读取占可观耗时
+     */
+    var dataStart = reader.view.byteOffset + reader.offset;
+    var flatData = new Uint8Array(reader.view.buffer, dataStart, count);
+    reader.offset += count;
     return { format: 0, ranges: null, flatData: flatData };
   }
 
@@ -320,9 +454,33 @@ function parseFDPrivate(reader, cffOffset, fdDictData, strings) {
       /** 修复：subrs 偏移量可能为 0（CFF 规范允许），
        *  原代码用 if (privDict.subrs) 检查，0 是 falsy 导致跳过 subrs 读取 */
       if (privDict.subrs != null && privDict.subrs > 0) {
-        var subrIndex = parseCFFIndex(reader, privOffset + privDict.subrs);
-        result.subrs = subrIndex.objects;
-        result.subrsBias = calcCFFSubroutineBias(result.subrs);
+        /**
+         * 优化296+304: 完全惰性解析 local subrs
+         * 思源等 CID 字体的单个 FD 可能含数万 subrs（实测 26550），全量读取 offset 表
+         * （~10万次 readUint8）对 subset 是纯浪费——实际被引用的 subr 通常是个位数。
+         * 改用 parseCFFIndexOffsetsLazy 只读 count + 末尾 offset（建大视图），
+         * offsets 数组保持稀疏，readCFFIndexObject 按需 seek 填充命中的 subr。
+         */
+        var subrIndexInfo = parseCFFIndexOffsetsLazy(reader, privOffset + privDict.subrs);
+        prepareCFFIndexView(reader, subrIndexInfo);
+        var subrCount = subrIndexInfo.count;
+        /**
+         * 优化311: lazySubrs 用普通对象替代 new Array(subrCount)。
+         * 思源单 FD subrs 可达 26550，new Array(26550) 分配 0.15ms；subset 仅引用个位数。
+         * _resolveSubr 的按需填充对对象同样有效，bias 用 subrCount 单独计算。
+         */
+        var lazySubrs = {};
+        result.subrs = lazySubrs;
+        result.subrsBias = calcCFFSubroutineBias({ length: subrCount });
+        /** 暴露按需解码器，parseCFFGlyph 访问 subrs[idx] 时调用 */
+        result._resolveSubr = function (idx) {
+          var s = lazySubrs[idx];
+          if (s === undefined) {
+            s = readCFFIndexObject(reader, subrIndexInfo, idx);
+            lazySubrs[idx] = s;
+          }
+          return s;
+        };
       }
     }
   }
@@ -349,33 +507,75 @@ var _default = exports.default = _table.default.create('cff', [], {
 
     // 顶级字典数据
     var topDictData = topDictIndex.objects[0];
+    /** 优化302: 复用 parseTopDict 内部的 parseCFFDict 结果，避免重复解析一遍 Top DICT */
     var dictReader = new _reader.default(new Uint8Array(topDictData).buffer);
-    var rawTopDict = _parseCFFDict.default.parseCFFDict(dictReader, 0, dictReader.length);
-    /** 复用同一个 Reader 和解析结果构建 topDict，避免创建第二个 Reader */
-    dictReader.seek(0);
     var topDict = _parseCFFDict.default.parseTopDict(dictReader, 0, dictReader.length, stringIndex.objects);
     cff.topDict = topDict;
 
-    /** 从已解析的原始 Top DICT 获取 CID-keyed 字段 (FDArray/FDSelect) */
-    var fdArrayOffset = rawTopDict[1236]; // 12 36
-    var fdSelectOffset = rawTopDict[1237]; // 12 37
+    /** 从 parseTopDict 保留的原始 dict 获取 CID-keyed 字段 (FDArray=12 36 / FDSelect=12 37) */
+    var rawTopDict = topDict._raw;
+    var fdArrayOffset = rawTopDict[1236];
+    var fdSelectOffset = rawTopDict[1237];
     var isCID = !!(fdArrayOffset && fdSelectOffset);
+
+    /**
+     * 优化303: subset 模式下提前构建 subsetGids（unicode→gid 映射，含 0=.notdef，升序）。
+     * 后续 charstring index 与 charset 均复用此列表，避免各处重复构建。
+     * 大 CID 字体（思源 65535 字形）的 charstring index 全量预读 offset 表需 ~2ms，
+     * subset 仅引用极少字形，改用 parseCFFIndexOffsetsSubset 按需 seek 读取。
+     */
+    var subset = font.readOptions.subset;
+    var subsetGids = null;
+    if (subset && subset.length > 0) {
+      var _codes = font.cmap;
+      var _subsetMap = { 0: true };
+      var _subsetGids = [0];
+      for (var sci = 0, scl = subset.length; sci < scl; sci++) {
+        var sGid = _codes[subset[sci]];
+        if (sGid !== undefined && !_subsetMap[sGid]) {
+          _subsetMap[sGid] = true;
+          _subsetGids.push(sGid);
+        }
+      }
+      subsetGids = _subsetGids.length > 1 ? _subsetGids.sort(function (a, b) {
+        return a - b;
+      }) : null;
+    }
 
     /** 解析 FDSelect 和 FDArray（CID-keyed 字体） */
     var fdSelect = null;
     var fdPrivates = null;
     if (isCID) {
-      /** 优化：只读取偏移表，不读取全部 charstring 数据 */
-      var charStringsInfo = parseCFFIndexOffsets(reader, offset + topDict.charStrings);
+      /** 优化303: CID 字体的 charstring index 在 subset 模式按需预读，避免全量 offset 表扫描 */
+      var charStringsInfo = subsetGids ? parseCFFIndexOffsetsSubset(reader, offset + topDict.charStrings, subsetGids) : parseCFFIndexOffsets(reader, offset + topDict.charStrings);
       var nGlyphs = charStringsInfo.count;
 
       fdSelect = parseFDSelect(reader, offset + fdSelectOffset);
 
-      /** 解析 FDArray */
+      /**
+       * 优化306: subset 模式下只解析被引用字形所属 FD 的 Private DICT + local subrs。
+       * 思源等大 CID 字体含十余个 FD，subset 仅命中其中少数（常见 1-2 个），
+       * 全量解析所有 FD 的 Private + 惰性 subrs index 是纯浪费。
+       * 非 subset 模式仍全量解析（glyf 全量遍历会引用任意 FD）。
+       */
       var fdArrayIndex = parseCFFIndex(reader, offset + fdArrayOffset);
-      fdPrivates = [];
-      for (var fi = 0; fi < fdArrayIndex.objects.length; fi++) {
-        fdPrivates.push(parseFDPrivate(reader, offset, fdArrayIndex.objects[fi], stringIndex.objects));
+      fdPrivates = new Array(fdArrayIndex.objects.length);
+      if (subsetGids) {
+        /** 收集 subsetGids 涉及的 FD index（含 0，.notdef 通常属 FD 0） */
+        var neededFds = {};
+        neededFds[0] = true;
+        for (var fgi = 1; fgi < subsetGids.length; fgi++) {
+          neededFds[lookupFD(fdSelect, subsetGids[fgi])] = true;
+        }
+        for (var fi = 0; fi < fdArrayIndex.objects.length; fi++) {
+          if (neededFds[fi]) {
+            fdPrivates[fi] = parseFDPrivate(reader, offset, fdArrayIndex.objects[fi], stringIndex.objects);
+          }
+        }
+      } else {
+        for (var fi = 0; fi < fdArrayIndex.objects.length; fi++) {
+          fdPrivates.push(parseFDPrivate(reader, offset, fdArrayIndex.objects[fi], stringIndex.objects));
+        }
       }
     }
 
@@ -396,9 +596,22 @@ var _default = exports.default = _table.default.create('cff', [], {
     // 私有子glyf数据（非 CID 字体使用）
     if (privateDict.subrs != null && privateDict.subrs > 0) {
       var subrOffset = privateDictOffset + privateDict.subrs;
-      var subrIndex = parseCFFIndex(reader, subrOffset);
-      cff.subrs = subrIndex.objects;
-      cff.subrsBias = calcCFFSubroutineBias(cff.subrs);
+      /** 优化296+304: 完全惰性解析 local subrs，offset 表按需 seek 读取 */
+      var subrIndexInfo = parseCFFIndexOffsetsLazy(reader, subrOffset);
+      prepareCFFIndexView(reader, subrIndexInfo);
+      var nonCidSubrCount = subrIndexInfo.count;
+      /** 优化311: 同 CID 路径，用对象替代 new Array 避免大 subrs 表的数组分配 */
+      var nonCidLazySubrs = {};
+      cff.subrs = nonCidLazySubrs;
+      cff.subrsBias = calcCFFSubroutineBias({ length: nonCidSubrCount });
+      cff._resolveSubr = function (idx) {
+        var s = nonCidLazySubrs[idx];
+        if (s === undefined) {
+          s = readCFFIndexObject(reader, subrIndexInfo, idx);
+          nonCidLazySubrs[idx] = s;
+        }
+        return s;
+      };
     } else {
       cff.subrs = [];
       cff.subrsBias = 0;
@@ -407,7 +620,8 @@ var _default = exports.default = _table.default.create('cff', [], {
 
     // 解析glyf数据和名字（统一使用延迟读取，避免大字体一次性读取全部 charstring）
     if (!isCID) {
-      var charStringsInfo = parseCFFIndexOffsets(reader, offset + topDict.charStrings);
+      /** 优化303: 非 CID 字体同样在 subset 模式按需预读 charstring index */
+      var charStringsInfo = subsetGids ? parseCFFIndexOffsetsSubset(reader, offset + topDict.charStrings, subsetGids) : parseCFFIndexOffsets(reader, offset + topDict.charStrings);
     }
     /** 优化244: 预创建全量 charstring 大视图，后续 readCFFIndexObject 用 subarray 替代 new Uint8Array */
     prepareCFFIndexView(reader, charStringsInfo);
@@ -416,7 +630,11 @@ var _default = exports.default = _table.default.create('cff', [], {
     if (topDict.charset < 3) {
       cff.charset = _cffStandardStrings.default;
     } else {
-      cff.charset = (0, _parseCFFCharset.default)(reader, offset + topDict.charset, nGlyphs, stringIndex.objects);
+      /**
+       * 优化299+303: subset 模式下复用已构建的 subsetGids 传给 parseCFFCharset，
+       * 使其只填充被引用 GID 的名字槽位，跳过数万无关 SID 的展开
+       */
+      cff.charset = (0, _parseCFFCharset.default)(reader, offset + topDict.charset, nGlyphs, stringIndex.objects, subsetGids);
     }
 
     // Standard encoding
@@ -440,9 +658,12 @@ var _default = exports.default = _table.default.create('cff', [], {
       fdGlyphFonts = new Array(fdPrivates.length);
       for (var fi = 0; fi < fdPrivates.length; fi++) {
         var fd = fdPrivates[fi];
+        if (!fd) continue;
         fdGlyphFonts[fi] = {
           subrs: fd.subrs,
           subrsBias: fd.subrsBias,
+          /** 优化296: 透传惰性 subrs 解码器 */
+          _resolveSubr: fd._resolveSubr,
           defaultWidthX: fd.defaultWidthX,
           nominalWidthX: fd.nominalWidthX,
           gsubrs: cff.gsubrs,
@@ -452,7 +673,30 @@ var _default = exports.default = _table.default.create('cff', [], {
     }
     function getGlyphFont(glyphIndex) {
       if (fdGlyphFonts) {
-        return fdGlyphFonts[lookupFD(fdSelect, glyphIndex)];
+        var fdIdx = lookupFD(fdSelect, glyphIndex);
+        var gfont = fdGlyphFonts[fdIdx];
+        /**
+         * 优化306: subset 模式下未预先解析的 FD 按需惰性解析。
+         * 正常 subset 流程中所需 FD 已预先解析，此分支仅作 .notdef 等边界情况兜底。
+         */
+        if (!gfont && fdArrayIndex) {
+          var fdData = fdArrayIndex.objects[fdIdx];
+          if (fdData) {
+            var lazyFd = parseFDPrivate(reader, offset, fdData, stringIndex.objects);
+            fdPrivates[fdIdx] = lazyFd;
+            gfont = {
+              subrs: lazyFd.subrs,
+              subrsBias: lazyFd.subrsBias,
+              _resolveSubr: lazyFd._resolveSubr,
+              defaultWidthX: lazyFd.defaultWidthX,
+              nominalWidthX: lazyFd.nominalWidthX,
+              gsubrs: cff.gsubrs,
+              gsubrsBias: cff.gsubrsBias
+            };
+            fdGlyphFonts[fdIdx] = gfont;
+          }
+        }
+        return gfont || cff;
       }
       return cff;
     }
@@ -460,43 +704,35 @@ var _default = exports.default = _table.default.create('cff', [], {
     // only parse subset glyphs
     var subset = font.readOptions.subset;
     if (subset && subset.length > 0) {
-      // subset map
-      var subsetMap = {
-        0: true // 设置.notdef
-      };
-      /** 优化251: 构建 subsetMap 时同步收集 subsetGids，避免全量 nGlyphs 遍历 */
-      var subsetGids = [0];
-      var codes = font.cmap;
-
-      // unicode to index
-      for (var si = 0, sl = subset.length; si < sl; si++) {
-        var code = subset[si];
-        var ci = codes[code];
-        if (ci !== undefined && !subsetMap[ci]) {
-          subsetMap[ci] = true;
-          subsetGids.push(ci);
-        }
+      /**
+       * 优化303: 复用外层已构建的 subsetGids 与 subsetMap，避免重复扫描 cmap。
+       * subsetGids 为 null 表示仅有 .notdef（subset 未命中任何字形），退化为 [0]。
+       */
+      var finalSubsetGids = subsetGids || [0];
+      var subsetMap = { 0: true };
+      for (var smi = 1; smi < finalSubsetGids.length; smi++) {
+        subsetMap[finalSubsetGids[smi]] = true;
       }
       font.subsetMap = subsetMap;
       /* 优化258: CID/non-CID 分支到循环外，消除每 glyph 的三元分支 */
       if (fdGlyphFonts) {
-        for (var si = 0, sl = subsetGids.length; si < sl; si++) {
-          var i = subsetGids[si];
+        for (var si = 0, sl = finalSubsetGids.length; si < sl; si++) {
+          var i = finalSubsetGids[si];
           var charstring = readCFFIndexObject(reader, charStringsInfo, i);
           var glyf = (0, _parseCFFGlyph.default)(charstring, getGlyphFont(i), i);
           glyf.name = cff.charset[i];
           cff.glyf[i] = glyf;
         }
       } else {
-        for (var si = 0, sl = subsetGids.length; si < sl; si++) {
-          var i = subsetGids[si];
+        for (var si = 0, sl = finalSubsetGids.length; si < sl; si++) {
+          var i = finalSubsetGids[si];
           var charstring = readCFFIndexObject(reader, charStringsInfo, i);
           var glyf = (0, _parseCFFGlyph.default)(charstring, cff, i);
           glyf.name = cff.charset[i];
           cff.glyf[i] = glyf;
         }
       }
-      font.subsetGids = subsetGids;
+      font.subsetGids = finalSubsetGids;
     }
     // parse all
     else {

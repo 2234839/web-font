@@ -13,20 +13,42 @@ exports.default = readWindowsAllCodes;
 
 /**
  * 优化65+88: format12 二分查找，支持扁平数组格式
+ * 优化300: 支持 _lazyGroups 延迟模式，直接从 view 二分查找（每 group 12 字节、已升序）
  */
-function lookupFormat12(groups, unicode) {
-  var lo = 0, hi = (groups.length / 3) - 1;
-  while (lo <= hi) {
-    var mid = (lo + hi) >> 1;
-    var gi = mid * 3;
-    var gStart = groups[gi];
-    var gEnd = groups[gi + 1];
-    if (unicode < gStart) {
-      hi = mid - 1;
-    } else if (unicode > gEnd) {
-      lo = mid + 1;
+function lookupFormat12(format12, unicode) {
+  /** 延迟模式：直接从 view 读取，避免展开数万 group */
+  if (format12._lazyGroups) {
+    var view = format12._cmapView;
+    var base = format12._groupsOffset;
+    var lo = 0, hi = format12.nGroups - 1;
+    while (lo <= hi) {
+      var mid = (lo + hi) >> 1;
+      var gOff = base + mid * 12;
+      var gStart = view.getUint32(gOff, false);
+      var gEnd = view.getUint32(gOff + 4, false);
+      if (unicode < gStart) {
+        hi = mid - 1;
+      } else if (unicode > gEnd) {
+        lo = mid + 1;
+      } else {
+        return view.getUint32(gOff + 8, false) + (unicode - gStart);
+      }
+    }
+    return -1;
+  }
+  var groups = format12.groups;
+  var lo2 = 0, hi2 = (groups.length / 3) - 1;
+  while (lo2 <= hi2) {
+    var mid2 = (lo2 + hi2) >> 1;
+    var gi = mid2 * 3;
+    var gStart2 = groups[gi];
+    var gEnd2 = groups[gi + 1];
+    if (unicode < gStart2) {
+      hi2 = mid2 - 1;
+    } else if (unicode > gEnd2) {
+      lo2 = mid2 + 1;
     } else {
-      return groups[gi + 2] + (unicode - gStart);
+      return groups[gi + 2] + (unicode - gStart2);
     }
   }
   return -1;
@@ -107,7 +129,7 @@ function readWindowsAllCodes(tables, ttf) {
           var gid = lookupFormat4(format4, u, f4GIAO);
           if (gid >= 0) { codes[u] = gid; continue; }
         }
-        var gid12 = lookupFormat12(format12.groups, u);
+        var gid12 = lookupFormat12(format12, u);
         if (gid12 >= 0) { codes[u] = gid12; }
       }
     } else if (format4) {

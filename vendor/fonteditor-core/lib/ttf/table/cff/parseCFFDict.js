@@ -278,7 +278,10 @@ function parseCFFDict(reader, offset, length) {
  */
 function parseTopDict(reader, start, length, strings) {
   var dict = parseCFFDict(reader, start || 0, length || reader.length);
-  return interpretDict(dict, TOP_DICT_META, strings);
+  var topDict = interpretDict(dict, TOP_DICT_META, strings);
+  /** 优化302: 保留原始 dict 供调用方取 CID 字段(FDArray=1236/FDSelect=1237)，避免重复解析 parseCFFDict */
+  topDict._raw = dict;
+  return topDict;
 }
 
 /**

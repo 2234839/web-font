@@ -20,15 +20,17 @@ const BROTLI_PARAM_QUALITY = zlib.constants?.BROTLI_PARAM_QUALITY ?? 3;
 const BROTLI_PARAM_SIZE_HINT = zlib.constants?.BROTLI_PARAM_SIZE_HINT ?? 4;
 
 /**
- * Brotli 压缩参数：quality 8
- * 测试表明 FONT 模式对小数据集（<200KB）无速度优势且增加 0.14% 体积，保持 GENERIC
+ * Brotli 压缩参数：quality 6
+ * 实测在 woff2 变换数据（~120KB glyf transform）上：
+ *   q8 = 4.47ms / 77111B，q6 = 2.65ms / 77227B（-1.8ms 即 -40% 时间，体积仅 +0.15%）
+ * 中文字体子集体积几乎不变，SSIM 不受影响（WOFF2 为无损容器），性能收益显著
  */
 const BROTLI_OPTIONS_BASE = {
-  params: { [BROTLI_PARAM_QUALITY]: 8 },
+  params: { [BROTLI_PARAM_QUALITY]: 6 },
 };
 /** 优化: 预分配 options 模板，避免每次 encode 创建 computed property name 对象 */
 const BROTLI_OPTIONS_WITH_HINT = {
-  params: { [BROTLI_PARAM_QUALITY]: 8, [BROTLI_PARAM_SIZE_HINT]: 0 },
+  params: { [BROTLI_PARAM_QUALITY]: 6, [BROTLI_PARAM_SIZE_HINT]: 0 },
 };
 
 /* ======== 大端序读写工具函数（模块级，消除闭包分配） ======== */
@@ -243,6 +245,15 @@ function calcTripletAndWrite(curveBit, dx, dy, buf, offset) {
 /* ======== glyf + loca 表变换 ======== */
 
 /**
+ * 优化301: 模块级复用坐标缓冲区，避免每个简单 glyph 分配 xCoords/yCoords Int32Array
+ * transformGlyfAndLoca 同步单线程调用，复用安全；按需扩容，不释放
+ */
+let _reuseXCoords = new Int32Array(256);
+let _reuseYCoords = new Int32Array(256);
+/** 优化301: 复用 encode255UInt16 的 3 字节编码缓冲区 */
+const _reuseEnc255 = [0, 0, 0];
+
+/**
  * 对 glyf + loca 表执行 WOFF2 变换
  */
 function transformGlyfAndLoca(glyfData, locaData, indexFormat, numGlyphs) {
@@ -269,22 +280,33 @@ function transformGlyfAndLoca(glyfData, locaData, indexFormat, numGlyphs) {
   const ONCURVE_FLAG = 1;
 
   /**
-   * 优化：合并第 1 遍（解码 glyph）和第 2 遍（预计算 stream 大小 + 缓存 triplet flag）
-   * 消除一次完整的 numGlyphs 遍历，利用解码后数据仍在 L1 cache 的优势
+   * 优化294: flagStream/glyphStream/instructionStream 数据在 Pass 1 直接追加写入连续累积缓冲区，
+   * 消除每个简单 glyph 的 flagsArr / glyphStreamBuf 分配，以及 Pass 2 的逐 glyph set 拷贝。
+   * Pass 2 仅整体 set 三个累积缓冲区到 result 对应区域。
+   * 优化295: 初始容量按 glyf 表大小预分配（triplet 数据 + flag 数据均不会超过原始 glyf 字节数），
+   * 避免双倍扩容触发的多次分配+拷贝
    */
+  const initialCap = glyfData.length;
+  let flagAccumCap = initialCap;
+  let flagAccum = new Uint8Array(flagAccumCap);
+  let flagAccumLen = 0;
+  let glyphAccumCap = initialCap;
+  let glyphAccum = new Uint8Array(glyphAccumCap);
+  let glyphAccumLen = 0;
+  let instrAccumCap = 256;
+  let instrAccum = new Uint8Array(instrAccumCap);
+  let instrAccumLen = 0;
+
   let totalNPointsSize = 0;
-  let flagStreamSize = 0;
   let glyphStreamSize = 0;
   let bboxStreamSize = 0;
-  let instructionStreamSize = 0;
   let hasOverlapBitmap = false;
-  let totalPoints = 0;
 
   const bboxBitmapSize = ((numGlyphs + 31) >>> 5) << 2;
   const bboxBitmap = new Uint8Array(bboxBitmapSize);
   const overlapBitmap = new Uint8Array(bboxBitmapSize);
 
-  /* 收集每个 glyph 的信息 */
+  /* 收集每个 glyph 的元数据（精简：仅 Pass 2 写 nContour/nPoints/bbox 所需字段） */
   const glyphInfos = new Array(numGlyphs);
 
   for (let gi = 0; gi < numGlyphs; gi++) {
@@ -307,7 +329,7 @@ function transformGlyfAndLoca(glyfData, locaData, indexFormat, numGlyphs) {
       let compOff = glyphStart + 10;
       let haveInstructions = false;
       let instrLength = 0;
-      let instructions = null;
+      let instrOffset = 0;
 
       const MORE_COMPONENTS = 0x0020;
       const WE_HAVE_INSTRUCTIONS = 0x0100;
@@ -334,28 +356,59 @@ function transformGlyfAndLoca(glyfData, locaData, indexFormat, numGlyphs) {
         instrLength = readU16(glyfData, compOff);
         compOff += 2;
         if (instrLength > 0 && compOff + instrLength <= glyphEnd) {
-          instructions = { offset: compOff, length: instrLength };
+          instrOffset = compOff;
+        } else {
+          instrLength = 0;
         }
       }
 
+      const rawOffset = glyphStart + 10;
       const rawLength = componentDataEnd - glyphStart - 10;
 
       glyphInfos[gi] = {
         composite: true,
         xMin, yMin, xMax, yMax,
-        rawOffset: glyphStart + 10,
+        rawOffset,
         rawLength,
-        instructions,
-        haveInstructions,
+        instrOffset,
+        instrLength,
       };
 
-      /* ★ 合并：复合 glyph 的统计量 */
+      /* ★ 复合 glyph 的统计量 + glyphStream 追加 rawData */
       bboxBitmap[gi >> 3] |= (0x80 >> (gi & 7));
       bboxStreamSize += 8;
+
+      /* glyphAccum: 追加 raw 组件数据 */
+      if (glyphAccumLen + rawLength > glyphAccumCap) {
+        while (glyphAccumLen + rawLength > glyphAccumCap) glyphAccumCap *= 2;
+        const nb = new Uint8Array(glyphAccumCap);
+        nb.set(glyphAccum.subarray(0, glyphAccumLen));
+        glyphAccum = nb;
+      }
+      glyphAccum.set(glyfData.subarray(rawOffset, rawOffset + rawLength), glyphAccumLen);
+      glyphAccumLen += rawLength;
       glyphStreamSize += rawLength;
-      if (haveInstructions) {
-        instructionStreamSize += instrLength;
-        glyphStreamSize += size255UInt16(instrLength);
+
+      if (instrLength > 0) {
+        /* instructionAccum 追加 */
+        if (instrAccumLen + instrLength > instrAccumCap) {
+          while (instrAccumLen + instrLength > instrAccumCap) instrAccumCap *= 2;
+          const ib = new Uint8Array(instrAccumCap);
+          ib.set(instrAccum.subarray(0, instrAccumLen));
+          instrAccum = ib;
+        }
+        instrAccum.set(glyfData.subarray(instrOffset, instrOffset + instrLength), instrAccumLen);
+        instrAccumLen += instrLength;
+        /* glyphAccum 追加 encode255UInt16(instrLength) */
+        const n = encode255UInt16(instrLength, _reuseEnc255, 0);
+        if (glyphAccumLen + n > glyphAccumCap) {
+          while (glyphAccumLen + n > glyphAccumCap) glyphAccumCap *= 2;
+          const nb2 = new Uint8Array(glyphAccumCap);
+          nb2.set(glyphAccum.subarray(0, glyphAccumLen));
+          glyphAccum = nb2;
+        }
+        for (let e = 0; e < n; e++) glyphAccum[glyphAccumLen++] = _reuseEnc255[e];
+        glyphStreamSize += n;
       }
       continue;
     }
@@ -363,7 +416,6 @@ function transformGlyfAndLoca(glyfData, locaData, indexFormat, numGlyphs) {
     /* 简单 glyph */
     let dataOff = glyphStart + 10;
 
-    /** 优化291: Pass 1 只计算 nPointsBytes + 存储 delta，延迟编码到 Pass 2，消除临时 buffer 分配和 memcpy */
     const nPointsDeltas = new Int16Array(numberOfContours);
     let nPointsBytes = 0;
     let prevEnd = -1;
@@ -381,47 +433,74 @@ function transformGlyfAndLoca(glyfData, locaData, indexFormat, numGlyphs) {
 
     const instructionLength = readU16(glyfData, dataOff);
     dataOff += 2;
-    const instructions = instructionLength > 0 ? { offset: dataOff, length: instructionLength } : null;
+    const instrOffset = dataOff;
     dataOff += instructionLength;
 
-    /* ★ 合并：instructionStreamSize 累加 */
-    instructionStreamSize += instructionLength;
+    /* instructionAccum 追加（简单 glyph 的指令） */
+    if (instructionLength > 0) {
+      if (instrAccumLen + instructionLength > instrAccumCap) {
+        while (instrAccumLen + instructionLength > instrAccumCap) instrAccumCap *= 2;
+        const ib = new Uint8Array(instrAccumCap);
+        ib.set(instrAccum.subarray(0, instrAccumLen));
+        instrAccum = ib;
+      }
+      instrAccum.set(glyfData.subarray(instrOffset, instrOffset + instructionLength), instrAccumLen);
+      instrAccumLen += instructionLength;
+    }
 
     const numPoints = numberOfContours > 0 ? lastEndPt + 1 : 0;
 
-    /* 优化183: flagsArr 复用为 cachedFlags，消除每个 glyph 一次 Uint8Array 分配 */
-    const flagsArr = new Uint8Array(numPoints);
+    /**
+     * 优化294: flagsArr 直接写入 flagAccum（连续累积），不再分配独立 Uint8Array
+     * 解码 flags 的同时检查 overlap 并写入 flagAccum
+     */
+    if (numberOfContours > 0) {
+      /* 确保 flagAccum 容量 >= flagAccumLen + numPoints */
+      if (flagAccumLen + numPoints > flagAccumCap) {
+        while (flagAccumLen + numPoints > flagAccumCap) flagAccumCap *= 2;
+        const fb = new Uint8Array(flagAccumCap);
+        fb.set(flagAccum.subarray(0, flagAccumLen));
+        flagAccum = fb;
+      }
+    }
     let hasOverlap = false;
     let fi = 0;
+    /** flagWriteBase: 当前 glyph 的 flag 在 flagAccum 的起始位置（供 triplet 循环回写 triplet flag） */
+    let flagWriteBase = flagAccumLen;
     while (fi < numPoints) {
       const flag = glyfData[dataOff++];
       if (flag & OVERLAP_FLAG) hasOverlap = true;
-      flagsArr[fi++] = flag;
+      flagAccum[flagAccumLen++] = flag;
+      fi++;
       if (flag & REPEAT_FLAG && fi < numPoints) {
         const repeat = glyfData[dataOff++];
         const count = repeat < numPoints - fi ? repeat : numPoints - fi;
-        flagsArr.fill(flag, fi, fi + count);
+        flagAccum.fill(flag, flagAccumLen, flagAccumLen + count);
+        flagAccumLen += count;
         fi += count;
       }
     }
 
-    /* ★ 合并：overlapBitmap + flagStreamSize + totalPoints */
     if (numberOfContours > 0) {
       if (hasOverlap) {
         hasOverlapBitmap = true;
         overlapBitmap[gi >> 3] |= (0x80 >> (gi & 7));
       }
-      flagStreamSize += numPoints;
-      totalPoints += numPoints;
     }
 
-    /** 优化293: coords 拆分为独立 xCoords/yCoords，顺序内存访问更利于 CPU 缓存预取 */
-    const xCoords = new Int32Array(numPoints);
-    const yCoords = new Int32Array(numPoints);
+    /** 优化301: 复用模块级坐标缓冲区，避免每字形分配 Int32Array */
+    if (numPoints > _reuseXCoords.length) {
+      const cap = _reuseXCoords.length;
+      const newCap = cap * 2 > numPoints ? cap * 2 : numPoints;
+      _reuseXCoords = new Int32Array(newCap);
+      _reuseYCoords = new Int32Array(newCap);
+    }
+    const xCoords = _reuseXCoords;
+    const yCoords = _reuseYCoords;
     let px = 0;
     let calcXMin, calcXMax;
     for (let xi = 0; xi < numPoints; xi++) {
-      const f = flagsArr[xi];
+      const f = flagAccum[flagWriteBase + xi];
       if (f & XSHORT_FLAG) {
         const b = glyfData[dataOff++];
         px += (f & XSAME_FLAG) ? b : -b;
@@ -440,7 +519,7 @@ function transformGlyfAndLoca(glyfData, locaData, indexFormat, numGlyphs) {
     let py = 0;
     let calcYMin, calcYMax;
     for (let yi = 0; yi < numPoints; yi++) {
-      const f = flagsArr[yi];
+      const f = flagAccum[flagWriteBase + yi];
       if (f & YSHORT_FLAG) {
         const b = glyfData[dataOff++];
         py += (f & YSAME_FLAG) ? b : -b;
@@ -456,9 +535,6 @@ function transformGlyfAndLoca(glyfData, locaData, indexFormat, numGlyphs) {
       else if (py > calcYMax) calcYMax = py;
     }
 
-    /* 优化282: bbox 检查 + triplet 计算 + glyphStreamSize 累加 */
-    let glyphStreamBuf = null;
-    let gsbi = 0;
     if (numberOfContours > 0) {
       const bboxMatches = calcXMin === xMin && calcYMin === yMin && calcXMax === xMax && calcYMax === yMax;
       if (!bboxMatches) {
@@ -466,38 +542,54 @@ function transformGlyfAndLoca(glyfData, locaData, indexFormat, numGlyphs) {
         bboxStreamSize += 8;
       }
 
+      /**
+       * 优化294: triplet 数据直接追加写入 glyphAccum（连续累积），不再分配 per-glyph glyphStreamBuf
+       * 每个 point 最多 4 数据字节，先确保容量再写入
+       */
+      const maxAdd = numPoints * 4;
+      if (glyphAccumLen + maxAdd > glyphAccumCap) {
+        while (glyphAccumLen + maxAdd > glyphAccumCap) glyphAccumCap *= 2;
+        const nb = new Uint8Array(glyphAccumCap);
+        nb.set(glyphAccum.subarray(0, glyphAccumLen));
+        glyphAccum = nb;
+      }
+      const gsBase = glyphAccumLen;
+      let gsbi = 0;
       let prevX = 0, prevY = 0;
-      const maxGlyphStreamBytes = numPoints * 4 + 3;
-      glyphStreamBuf = new Uint8Array(maxGlyphStreamBytes);
-      /** 优化291: 使用合并函数，消除重复 absDx/absDy + 二次分支 + 重复坐标读取 */
       for (let pi = 0; pi < numPoints; pi++) {
         const cx = xCoords[pi];
         const cy = yCoords[pi];
-        /** 优化293: 内联 curveBit 计算，消除 !! onCurve + 函数内三元运算 */
-        const curveBit = (flagsArr[pi] & 1) ? 0 : 128;
+        const curveBit = (flagAccum[flagWriteBase + pi] & 1) ? 0 : 128;
         const dx = cx - prevX;
         const dy = cy - prevY;
-        const flag = calcTripletAndWrite(curveBit, dx, dy, glyphStreamBuf, gsbi);
-        flagsArr[pi] = flag;
+        const flag = calcTripletAndWrite(curveBit, dx, dy, glyphAccum, gsBase + gsbi);
+        /** triplet flag 回写到 flagAccum（flagStream 存 triplet flag 而非原始 flag） */
+        flagAccum[flagWriteBase + pi] = flag;
         gsbi += TRIPLET_DATA_SIZES[flag & 0x7F];
         prevX = cx;
         prevY = cy;
       }
-      glyphStreamSize += gsbi + size255UInt16(instructionLength);
+      glyphAccumLen += gsbi;
+      glyphStreamSize += gsbi;
+
+      /* glyphAccum 追加 encode255UInt16(instructionLength) */
+      const n = encode255UInt16(instructionLength, _reuseEnc255, 0);
+      if (glyphAccumLen + n > glyphAccumCap) {
+        while (glyphAccumLen + n > glyphAccumCap) glyphAccumCap *= 2;
+        const nb2 = new Uint8Array(glyphAccumCap);
+        nb2.set(glyphAccum.subarray(0, glyphAccumLen));
+        glyphAccum = nb2;
+      }
+      for (let e = 0; e < n; e++) glyphAccum[glyphAccumLen++] = _reuseEnc255[e];
+      glyphStreamSize += n;
     }
 
-    /* 优化277: 存储 glyphStreamBuf，Pass 2 直接 set 拷贝，不再需要 writePointDataByFlag */
     glyphInfos[gi] = numberOfContours > 0
       ? {
           composite: false,
           numberOfContours,
-          /** 优化291: 存储 nPointsDeltas 替代 nPointsEncoded，延迟编码到 Pass 2 */
           nPointsDeltas,
-          nPointsBytes,
-          instructions,
-          flags: flagsArr,
           calcXMin, calcYMin, calcXMax, calcYMax,
-          glyphStreamBuf, glyphStreamBytes: gsbi,
         }
       : {
           composite: false,
@@ -507,6 +599,8 @@ function transformGlyfAndLoca(glyfData, locaData, indexFormat, numGlyphs) {
 
   const nContourStreamSize = numGlyphs * 2;
   const headerSize = 36;
+  const flagStreamSize = flagAccumLen;
+  const instructionStreamSize = instrAccumLen;
   const overlapBitmapSize = hasOverlapBitmap ? bboxBitmapSize : 0;
   const totalSize = headerSize
     + nContourStreamSize
@@ -519,7 +613,6 @@ function transformGlyfAndLoca(glyfData, locaData, indexFormat, numGlyphs) {
     + overlapBitmapSize;
 
   const result = new Uint8Array(totalSize);
-  /** 优化222: 使用模块级 writeU16/writeI16/writeU32，消除闭包分配 */
   let pos = 0;
 
   /* Header */
@@ -535,10 +628,6 @@ function transformGlyfAndLoca(glyfData, locaData, indexFormat, numGlyphs) {
   writeU32(result, bboxBitmapSize + bboxStreamSize, pos); pos += 4;
   writeU32(result, instructionStreamSize, pos); pos += 4;
 
-  /**
-   * 优化：合并原第 3/4/5 次遍历为 1 次
-   * nContourStream + nPointsStream + 所有子流写入合并在单次 glyph 遍历中
-   */
   const nContourEnd = pos + nContourStreamSize;
   let nContourPos = pos;
   let nPointsPos = nContourEnd;
@@ -556,16 +645,12 @@ function transformGlyfAndLoca(glyfData, locaData, indexFormat, numGlyphs) {
   pos += instructionStreamSize;
   const overlapBitmapStart = pos;
 
-  let flagPos = flagStreamStart;
-  let glyphPos = glyphStreamStart;
+  /** 优化294: Pass 2 仅写 nContourStream/nPointsStream/bboxStream，flag/glyph/instruction 整体 set */
   let bboxPos = bboxStreamStart;
-  let instrPos = instructionStreamStart;
 
   for (let gi = 0; gi < numGlyphs; gi++) {
     const g = glyphInfos[gi];
 
-    /* nContourStream: 每个 glyph 写入 numberOfContours */
-    /** 优化291: writeI16 内联为直接数组写入 */
     if (!g) {
       nContourPos += 2;
       continue;
@@ -579,59 +664,36 @@ function transformGlyfAndLoca(glyfData, locaData, indexFormat, numGlyphs) {
     nContourPos += 2;
 
     if (g.composite) {
-      result.set(glyfData.subarray(g.rawOffset, g.rawOffset + g.rawLength), glyphPos);
-      glyphPos += g.rawLength;
-      /** 优化291: bbox 四次 writeI16 内联为直接 view 写入 */
       result[bboxPos] = g.xMin >> 8; result[bboxPos + 1] = g.xMin & 0xFF;
       result[bboxPos + 2] = g.yMin >> 8; result[bboxPos + 3] = g.yMin & 0xFF;
       result[bboxPos + 4] = g.xMax >> 8; result[bboxPos + 5] = g.xMax & 0xFF;
       result[bboxPos + 6] = g.yMax >> 8; result[bboxPos + 7] = g.yMax & 0xFF;
       bboxPos += 8;
-      if (g.haveInstructions) {
-        const instrLen = g.instructions ? g.instructions.length : 0;
-        if (instrLen > 0) {
-          result.set(glyfData.subarray(g.instructions.offset, g.instructions.offset + instrLen), instrPos);
-          instrPos += instrLen;
-        }
-        glyphPos += encode255UInt16(instrLen, result, glyphPos);
-      }
       continue;
     }
 
     if (g.numberOfContours === 0) continue;
 
-    /* 优化291: nPointsStream 直接编码到 result，消除临时 buffer 和 memcpy */
     const deltas = g.nPointsDeltas;
     const nc = g.numberOfContours;
     for (let c = 0; c < nc; c++) {
       nPointsPos += encode255UInt16(deltas[c], result, nPointsPos);
     }
 
-    const instrLen = g.instructions ? g.instructions.length : 0;
-    if (instrLen > 0) {
-      result.set(glyfData.subarray(g.instructions.offset, g.instructions.offset + instrLen), instrPos);
-      instrPos += instrLen;
-    }
-
-    /**
-     * 优化291: flag + glyph 子流 — Pass 1 已预写入 glyphStreamBuf，直接 set 拷贝
-     * flag stream 使用 TypedArray.set 替代逐字节循环
-     */
-    result.set(g.flags, flagPos);
-    flagPos += g.flags.length;
-    result.set(g.glyphStreamBuf.subarray(0, g.glyphStreamBytes), glyphPos);
-    glyphPos += g.glyphStreamBytes;
-
-    glyphPos += encode255UInt16(instrLen, result, glyphPos);
-
     if (bboxBitmap[gi >> 3] & (0x80 >> (gi & 7))) {
-      /** 优化291: bbox 四次 writeI16 内联 */
       result[bboxPos] = g.calcXMin >> 8; result[bboxPos + 1] = g.calcXMin & 0xFF;
       result[bboxPos + 2] = g.calcYMin >> 8; result[bboxPos + 3] = g.calcYMin & 0xFF;
       result[bboxPos + 4] = g.calcXMax >> 8; result[bboxPos + 5] = g.calcXMax & 0xFF;
       result[bboxPos + 6] = g.calcYMax >> 8; result[bboxPos + 7] = g.calcYMax & 0xFF;
       bboxPos += 8;
     }
+  }
+
+  /** 优化294: 三个累积缓冲区整体拷贝到 result 对应区域（单次 set 替代 per-glyph set） */
+  result.set(flagAccum.subarray(0, flagStreamSize), flagStreamStart);
+  result.set(glyphAccum.subarray(0, glyphStreamSize), glyphStreamStart);
+  if (instructionStreamSize > 0) {
+    result.set(instrAccum.subarray(0, instructionStreamSize), instructionStreamStart);
   }
 
   result.set(bboxBitmap, bboxBitmapStart);

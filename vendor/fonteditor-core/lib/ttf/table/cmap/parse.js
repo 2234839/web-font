@@ -160,16 +160,28 @@ function readSubTable(reader, ttf, subTable, cmapOffset) {
     format12.language = view.getUint32(vOffset, false); vOffset += 4;
     format12.nGroups = view.getUint32(vOffset, false); vOffset += 4;
     var nGroups = format12.nGroups;
-    /* 优化88: 扁平数组存储 groups，减少对象创建 [start, end, startId, ...] */
-    var groups = new Array(nGroups * 3);
-    for (var h = 0, gi = 0; h < nGroups; h++, gi += 3) {
-      groups[gi] = view.getUint32(vOffset, false);
-      groups[gi + 1] = view.getUint32(vOffset + 4, false);
-      groups[gi + 2] = view.getUint32(vOffset + 8, false);
-      vOffset += 12;
+    /**
+     * 优化300: subset 模式下 format12 延迟解析，不展开 nGroups 个 group
+     * 思源等大 CID 字体 format12 有 1.5 万+ group，全量展开需 4.5 万次 getUint32。
+     * subset 仅查找少数 cp，lookupFormat12 直接从 view 二分查找（group 已升序、每项 12 字节）。
+     */
+    var isSubset12 = ttf.readOptions && ttf.readOptions.subset;
+    if (isSubset12) {
+      format12._cmapView = view;
+      format12._groupsOffset = vOffset;
+      format12._lazyGroups = true;
+    } else {
+      /* 优化88: 扁平数组存储 groups，减少对象创建 [start, end, startId, ...] */
+      var groups = new Array(nGroups * 3);
+      for (var h = 0, gi = 0; h < nGroups; h++, gi += 3) {
+        groups[gi] = view.getUint32(vOffset, false);
+        groups[gi + 1] = view.getUint32(vOffset + 4, false);
+        groups[gi + 2] = view.getUint32(vOffset + 8, false);
+        vOffset += 12;
+      }
+      format12.groups = groups;
+      format12._flatGroups = true;
     }
-    format12.groups = groups;
-    format12._flatGroups = true;
   }
   else if (subTable.format === 14) {
     /* 优化93: subset 模式下跳过 format14 完整解析 */

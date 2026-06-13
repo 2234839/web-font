@@ -41,6 +41,7 @@ var OTFReader = exports.default = /*#__PURE__*/function () {
   return _createClass(OTFReader, [{
     key: "readBuffer",
     value: function readBuffer(buffer) {
+      var __t0 = process.hrtime.bigint();
       var reader = new _reader.default(buffer, 0, buffer.byteLength, false);
       var font = {};
 
@@ -84,6 +85,8 @@ var OTFReader = exports.default = /*#__PURE__*/function () {
         _error.default.raise(10303);
       }
       reader.dispose();
+      var __t1 = process.hrtime.bigint();
+      console.error('OTFREADER.readBuffer: ' + Number(__t1 - __t0) / 1e6 + 'ms');
       return font;
     }
 
@@ -95,25 +98,42 @@ var OTFReader = exports.default = /*#__PURE__*/function () {
   }, {
     key: "resolveGlyf",
     value: function resolveGlyf(font) {
+      var __t0 = process.hrtime.bigint();
       var codes = font.cmap;
       var glyf = font.CFF.glyf;
       var subsetMap = font.readOptions.subset ? font.subsetMap : null;
-      /** 优化290: subsetMap 检查提到循环外，消除每次迭代的分支判断 */
-      var cmapKeys = Object.keys(codes);
-      if (subsetMap) {
-        for (var ki = 0, kl = cmapKeys.length; ki < kl; ki++) {
-          var c = cmapKeys[ki];
-          var i = codes[c];
-          if (!subsetMap[i]) continue;
-          if (!glyf[i].unicode) glyf[i].unicode = [];
-          glyf[i].unicode.push(+c);
+      /**
+       * 优化298: subset 模式下只遍历 subset unicode 列表（O(S)），避免全 cmap 遍历（O(U)）
+       * 思源等大 CID 字体 cmap 有数万映射，原 Object.keys + 全量循环开销显著
+       */
+      if (subsetMap && font.readOptions.subset && font.readOptions.subset.length > 0) {
+        var subsetList = font.readOptions.subset;
+        for (var si = 0, sl = subsetList.length; si < sl; si++) {
+          var cp = subsetList[si];
+          var gid = codes[cp];
+          if (gid === undefined) continue;
+          if (!subsetMap[gid]) continue;
+          if (!glyf[gid].unicode) glyf[gid].unicode = [];
+          glyf[gid].unicode.push(cp);
         }
       } else {
-        for (var ki = 0, kl = cmapKeys.length; ki < kl; ki++) {
-          var c = cmapKeys[ki];
-          var i = codes[c];
-          if (!glyf[i].unicode) glyf[i].unicode = [];
-          glyf[i].unicode.push(+c);
+        /** 优化290: subsetMap 检查提到循环外，消除每次迭代的分支判断 */
+        var cmapKeys = Object.keys(codes);
+        if (subsetMap) {
+          for (var ki = 0, kl = cmapKeys.length; ki < kl; ki++) {
+            var c = cmapKeys[ki];
+            var i = codes[c];
+            if (!subsetMap[i]) continue;
+            if (!glyf[i].unicode) glyf[i].unicode = [];
+            glyf[i].unicode.push(+c);
+          }
+        } else {
+          for (var ki2 = 0, kl2 = cmapKeys.length; ki2 < kl2; ki2++) {
+            var c2 = cmapKeys[ki2];
+            var i2 = codes[c2];
+            if (!glyf[i2].unicode) glyf[i2].unicode = [];
+            glyf[i2].unicode.push(+c2);
+          }
         }
       }
 
@@ -121,8 +141,25 @@ var OTFReader = exports.default = /*#__PURE__*/function () {
       var hmtxData = font.hmtx;
       var isFlat = hmtxData instanceof Int32Array;
       var hLen = isFlat ? hmtxData.length / 2 : hmtxData.length;
-      /** 优化290: subsetMap 检查提到循环外，消除每次迭代的分支判断 */
-      if (subsetMap) {
+      /**
+       * 优化298: subset 模式下遍历 subsetGids（O(S)），避免全 hmtx 遍历（O(U)）
+       */
+      if (subsetMap && font.subsetGids) {
+        var sGids = font.subsetGids;
+        if (isFlat) {
+          for (var gi = 0, gl = sGids.length; gi < gl; gi++) {
+            var gid2 = sGids[gi];
+            glyf[gid2].advanceWidth = hmtxData[gid2 * 2] || 0;
+            glyf[gid2].leftSideBearing = hmtxData[gid2 * 2 + 1];
+          }
+        } else {
+          for (var gi2 = 0, gl2 = sGids.length; gi2 < gl2; gi2++) {
+            var gid3 = sGids[gi2];
+            glyf[gid3].advanceWidth = hmtxData[gid3].advanceWidth || 0;
+            glyf[gid3].leftSideBearing = hmtxData[gid3].leftSideBearing;
+          }
+        }
+      } else if (subsetMap) {
         if (isFlat) {
           for (var hi = 0, j = 0; hi < hLen; hi++, j += 2) {
             if (!subsetMap[hi]) continue;
@@ -170,6 +207,8 @@ var OTFReader = exports.default = /*#__PURE__*/function () {
         glyf = subGlyf;
       }
       font.glyf = glyf;
+      var __t1 = process.hrtime.bigint();
+      console.error('OTFREADER.resolveGlyf: ' + Number(__t1 - __t0) / 1e6 + 'ms');
     }
 
     /**
