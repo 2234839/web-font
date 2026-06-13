@@ -106,7 +106,7 @@ async function renderTextViaBrowser(
   text: string,
   fontSize: number,
   fontFormat: string = "truetype",
-): Promise<{ pixels: Uint8Array; screenshot: Buffer; inkPixels: number }> {
+): Promise<{ pixels: Uint8Array; screenshot: Buffer; inkPixels: number; width: number; height: number }> {
   const charWidth = Math.ceil(fontSize * 1.5);
   const width = text.length * charWidth + 20;
   const height = Math.ceil(fontSize * 1.5);
@@ -139,17 +139,21 @@ async function renderTextViaBrowser(
     throw new Error(`字体渲染无墨水像素 (${fontFamily})，字体可能未正确加载`);
   }
 
-  return { pixels, screenshot: Buffer.from(screenshot), inkPixels };
+  return { pixels, screenshot: Buffer.from(screenshot), inkPixels, width, height };
 }
 
 /**
  * 计算两张图片的标准 SSIM (Wang et al. 2004)
  * 使用 11x11 均匀滑动窗口 + 积分图加速，返回 0~1
+ *
+ * 修复：原实现用 Math.sqrt(像素数) 推断 width，假设图片为正方形。
+ * 但渲染截图是宽长条（如 740×72），sqrt 会得到错误 width（230），
+ * 导致像素坐标错位、SSIM 系统性偏低（尤其 OTF 用例被放大偏差）。
+ * 改为由调用方传入真实 width/height。
  */
-function calculateSSIM(a: Uint8Array, b: Uint8Array): number {
+function calculateSSIM(a: Uint8Array, b: Uint8Array, width: number, height: number): number {
   if (a.length !== b.length) return 0;
-  const width = Math.sqrt(a.length / 4) | 0;
-  const height = (a.length / 4 / width) | 0;
+  if (width * height * 4 !== a.length) return 0;
   if (width === 0 || height === 0) return 0;
 
   /** 转灰度并提取到独立数组 */
@@ -238,9 +242,9 @@ const testCases = [
   { label: "拉丁+数字", fontPath: "font/令东齐伋复刻体.ttf", fontName: "令东齐伋复刻体", text: "Hello World 123", sourceType: "ttf" as const, outType: "woff2" as const, fullFormat: "truetype" },
   { label: "千字文前段", fontPath: "font/令东齐伋复刻体.ttf", fontName: "令东齐伋复刻体", text: "天地玄黄宇宙洪荒日月盈昃辰宿列张寒来暑往秋收冬藏闰余成岁律吕调阳云腾致雨露结为霜金生丽水玉出昆冈剑号巨阙珠称夜光果珍李柰菜重芥姜海咸河淡鳞潜羽翔", sourceType: "ttf" as const, outType: "ttf" as const, fullFormat: "truetype" },
   { label: "千字文前段", fontPath: "font/令东齐伋复刻体.ttf", fontName: "令东齐伋复刻体", text: "天地玄黄宇宙洪荒日月盈昃辰宿列张寒来暑往秋收冬藏闰余成岁律吕调阳云腾致雨露结为霜金生丽水玉出昆冈剑号巨阙珠称夜光果珍李柰菜重芥姜海咸河淡鳞潜羽翔", sourceType: "ttf" as const, outType: "woff2" as const, fullFormat: "truetype" },
-  /** OTF 字体 */
-  { label: "otf-五个汉字", fontPath: "font/temp/BaiHuOTFJiaoYuHanZi-2.otf", fontName: "白狐教育汉字", text: "天地黄宇宙", sourceType: "otf" as const, outType: "ttf" as const, fullFormat: "opentype" },
-  { label: "otf-思源黑体", fontPath: "font/temp/SourceHanSans-Regular.otf", fontName: "思源黑体", text: "天地玄黄宇宙", sourceType: "otf" as const, outType: "ttf" as const, fullFormat: "opentype" },
+  /** OTF 字体（含三点水等复杂笔画字，守护 OTF→TTF 转换正确性） */
+  { label: "otf-五个汉字", fontPath: "font/temp/BaiHuOTFJiaoYuHanZi-2.otf", fontName: "白狐教育汉字", text: "天地黄宇宙法海波", sourceType: "otf" as const, outType: "ttf" as const, fullFormat: "opentype" },
+  { label: "otf-思源黑体", fontPath: "font/temp/SourceHanSans-Regular.otf", fontName: "思源黑体", text: "天地玄黄宇宙洪法海波", sourceType: "otf" as const, outType: "ttf" as const, fullFormat: "opentype" },
 ];
 
 // ======== 主测试 ========
@@ -370,7 +374,7 @@ for (const tc of testCases) {
 
     fullInk = fullResult.inkPixels;
     subsetInk = subsetResult.inkPixels;
-    ssim = calculateSSIM(fullResult.pixels, subsetResult.pixels);
+    ssim = calculateSSIM(fullResult.pixels, subsetResult.pixels, fullResult.width, fullResult.height);
   }
 
   results.push({ label: tc.label, sourceType: tc.sourceType, outType: tc.outType, avg, min, max, outputSize: lastSize, ssim, fullInk, subsetInk });

@@ -41,7 +41,6 @@ var OTFReader = exports.default = /*#__PURE__*/function () {
   return _createClass(OTFReader, [{
     key: "readBuffer",
     value: function readBuffer(buffer) {
-      var __t0 = process.hrtime.bigint();
       var reader = new _reader.default(buffer, 0, buffer.byteLength, false);
       var font = {};
 
@@ -85,8 +84,6 @@ var OTFReader = exports.default = /*#__PURE__*/function () {
         _error.default.raise(10303);
       }
       reader.dispose();
-      var __t1 = process.hrtime.bigint();
-      console.error('OTFREADER.readBuffer: ' + Number(__t1 - __t0) / 1e6 + 'ms');
       return font;
     }
 
@@ -98,7 +95,6 @@ var OTFReader = exports.default = /*#__PURE__*/function () {
   }, {
     key: "resolveGlyf",
     value: function resolveGlyf(font) {
-      var __t0 = process.hrtime.bigint();
       var codes = font.cmap;
       var glyf = font.CFF.glyf;
       var subsetMap = font.readOptions.subset ? font.subsetMap : null;
@@ -207,8 +203,6 @@ var OTFReader = exports.default = /*#__PURE__*/function () {
         glyf = subGlyf;
       }
       font.glyf = glyf;
-      var __t1 = process.hrtime.bigint();
-      console.error('OTFREADER.resolveGlyf: ' + Number(__t1 - __t0) / 1e6 + 'ms');
     }
 
     /**

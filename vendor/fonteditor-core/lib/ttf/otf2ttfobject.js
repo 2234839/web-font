@@ -21,7 +21,6 @@ function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { de
  * @return {Object}          ttfObject对象
  */
 function otf2ttfobject(otfBuffer, options) {
-  var __t0 = process.hrtime.bigint();
   var otfObject;
   if (otfBuffer instanceof ArrayBuffer) {
     var otfReader = new _otfreader.default(options);
@@ -57,7 +56,5 @@ function otf2ttfobject(otfBuffer, options) {
   /** 优化245: delete → null 赋值，避免 V8 隐藏类转换 */
   otfObject.CFF = null;
   otfObject.VORG = null;
-  var __t1 = process.hrtime.bigint();
-  console.error('otf2ttfobject: ' + Number(__t1 - __t0) / 1e6 + 'ms');
   return otfObject;
 }

@@ -264,8 +264,10 @@ function readCFFIndexObject(reader, indexInfo, idx) {
   /**
    * 优化303+307: 子集模式下 off[idx]/off[idx+1] 可能为 undefined（未预读），
    * 直接用 DataView 读取（绕过 reader 原型方法 + seek 边界检查）。命中槽位直接复用。
+   * 注意：必须同时检查 off[idx+1]，因为 off[idx] 可能被上一次 idx-1 的顺带读取填充，
+   * 此时若仅判 off[idx] 会跳过 off[idx+1] 的读取，导致切片 end 为 undefined。
    */
-  if (off && off[idx] === undefined) {
+  if (off && (off[idx] === undefined || off[idx + 1] === undefined)) {
     var base = indexInfo._offsetArrayBase;
     var os = indexInfo._offsetSize;
     var dv = reader.view;

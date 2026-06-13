@@ -165,7 +165,7 @@ function readSubTable(reader, ttf, subTable, cmapOffset) {
      * 思源等大 CID 字体 format12 有 1.5 万+ group，全量展开需 4.5 万次 getUint32。
      * subset 仅查找少数 cp，lookupFormat12 直接从 view 二分查找（group 已升序、每项 12 字节）。
      */
-    var isSubset12 = ttf.readOptions && ttf.readOptions.subset;
+    var isSubset12 = ttf.readOptions && ttf.readOptions.subset && ttf.readOptions.subset.length > 0;
     if (isSubset12) {
       format12._cmapView = view;
       format12._groupsOffset = vOffset;
