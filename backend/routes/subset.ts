@@ -3,19 +3,25 @@ import type { FontEditor } from "../../vendor/fonteditor-core/lib/ttf/font.js";
 import { parseUrl, jsonResponse, stats, subsetCache, findFontPath, readFontBuffer } from "../shared";
 
 /**
+ * 进程启动时戳（模块加载时取一次，进程重启即变化）
+ *
+ * 用 Date.now() 而非 process.uptime()：后者在 LLRT 运行时不存在（typeof === "undefined"），
+ * 调用会抛 TypeError: not a function，导致容器启动即崩溃。
+ * Date.now() 在 Node 与 LLRT 中均可用，且模块只加载一次，取到的就是稳定的启动时戳。
+ */
+declare const PACKAGE_VERSION: string;
+/** 进程启动时刻，重启进程即变化 —— 用于开发态「重启即重置内存缓存」 */
+const PROCESS_START_TIME = Date.now();
+/**
  * 子集化版本指纹
  *
  * 纳入 subsetCache 的 key，让旧缓存条目在以下两种场景自动失效，无需手动清缓存：
  *  - 生产：发版 bump package.json 的 version（构建期由 tsdown define 注入），旧缓存自然过期
- *  - 开发：pnpm dev 重启进程时 process.uptime() 变化，内存缓存整体重置
+ *  - 开发：pnpm dev 重启进程时 PROCESS_START_TIME 变化，内存缓存整体重置
  *
  * 杜绝「子集化代码已修但缓存返回旧错误结果」的陷阱。
- *
- * 注意：不用 createRequire(import.meta.url) 读 package.json —— 该写法经 tsdown 打包为 CJS 后
- * 会引入 __filename，而 LLRT 运行时不提供 __filename，导致 ReferenceError。
  */
-declare const PACKAGE_VERSION: string;
-const SUBSET_CACHE_KEY = `${PACKAGE_VERSION}:${process.uptime()}`;
+const SUBSET_CACHE_KEY = `${PACKAGE_VERSION}:${PROCESS_START_TIME}`;
 
 /** GET /api?font=...&text=... — 字体裁剪 */
 export async function handleFontSubset(req: Request, res: Response) {
