@@ -116,11 +116,19 @@ export function collectReachableGsubTargets(
    *  type6 ChainedContext 规则：若其全部 input/backtrack/lookahead gid 都在子集内，
    *  则规则可触发——此时被引用 lookup 的 target 需保留（通过 chainRefs 在迭代中处理 type1/2/3/4 target）。
    *  type1/2/3/4 规则：coverage gid 在子集 → target 保留。
-   *  这模拟了 pyftsubset 的「实际触发路径」分析，避免保留无关 calt 规则的海量 context glyph。 */
-  const reachable = new Set<number>();
+   *  这模拟了 pyftsubset 的「实际触发路径」分析，避免保留无关 calt 规则的海量 context glyph。
+   *
+   *  优化（单 Set inSubset）：reachable 初始即含 seedGids，inSubset 只查 reachable 一个 Set
+   *  （原为 seedGids.has || reachable.has 两次 Set 查询，热路径每 subtable 多次调用）。
+   *  返回的 reachable 可能含 seed gid——调用方注入 extraSubsetGids 后 Font.create 会去重，无害。 */
+  const reachable = new Set<number>(seedGids);
   let changed = true;
-  /** 当前「在子集内」的 gid 集合 = seed ∪ reachable */
-  const inSubset = (gid: number) => seedGids.has(gid) || reachable.has(gid);
+  /** 当前「在子集内」= reachable（已含 seed） */
+  const inSubset = (gid: number) => reachable.has(gid);
+
+  /** 复用临时 Set，避免每个 type6 subtable 两次 new Set 的 GC 压力（初夏明朝 51 lookup 多轮迭代） */
+  const refsReuse: Set<number> = new Set<number>();
+  const ctxGidsReuse: Set<number> = new Set<number>();
 
   while (changed) {
     changed = false;
@@ -129,13 +137,13 @@ export function collectReachableGsubTargets(
       for (const subAbs of lk.subtableAbsOffs) {
         if (lk.effectiveType === LT_CHAIN) {
           /** type6：收集可触发规则引用的 lookup index 与所需 context gid */
-          const refs = new Set<number>();
-          const ctxGids = new Set<number>();
-          collectChainRefs(r, subAbs, refs, ctxGids, inSubset, covCache);
-          for (const g of ctxGids) {
+          refsReuse.clear();
+          ctxGidsReuse.clear();
+          collectChainRefs(r, subAbs, refsReuse, ctxGidsReuse, inSubset, covCache);
+          for (const g of ctxGidsReuse) {
             if (!reachable.has(g)) { reachable.add(g); changed = true; }
           }
-          for (const li of refs) {
+          for (const li of refsReuse) {
             const refLk = lookups[li];
             if (!refLk) continue;
             for (const refSub of refLk.subtableAbsOffs) {
