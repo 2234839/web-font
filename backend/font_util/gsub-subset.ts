@@ -917,6 +917,82 @@ function writeChainFormat3(
   }
 }
 
+/**
+ * 廉价预检：subtable 的主 coverage 是否完全落在子集外。
+ *
+ * FiraCode 等连字字体含大量 lookup（实测 403 个），但子集只命中少数字形，
+ * 多数 lookup 其主 coverage 引用的 gid 全部不在子集内 —— 这些 lookup 深度序列化后
+ * 必然得到空 entries、回退 writeEmptySubtable。预检在深度解析（读 delta/sequence/全部 rule）
+ * 之前，仅读主 coverage 一次（用 gidLookup 内联判定，不碰 covCache），命中即跳过。
+ *
+ * 仅对「主 coverage 决定规则是否触发」的类型预检（主 coverage 在 subOff+2 的 Offset16）：
+ *   - SingleSubst/Multiple/Alternate/Ligature：source 字形 coverage，全空则 entries 为空
+ *   - ChainContextSubst format1：input 第一分量 coverage，全空则所有 ruleSet 失效
+ * 不预检的类型（主 coverage 非充分条件，深度解析才能正确判定）：
+ *   - ChainContextSubst format2：规则由 InputClassDef 的 class 驱动，主 coverage 全空不代表无效
+ *     （FiraCode calt 的 format2 连字规则，主 coverage 字形不在子集，但深度解析经 class 仍保留规则，
+ *      误判全空会导致连字丢失、SSIM 暴跌 0.9923→0.9368）
+ *   - ChainContextSubst format3：无单一主 coverage（backtrack/input/lookahead 三个 coverage 数组）
+ *
+ * @returns true = 主 coverage 全空，可跳过深度序列化（输出空 subtable）；false = 需深度解析
+ */
+function isPrimaryCoverageOutOfSubset(
+  r: Reader,
+  off: number,
+  type: number,
+  gidLookup: GidLookup,
+): boolean {
+  /** ChainContext：format2（class 驱动）和 format3（多 coverage）不预检 */
+  if (type === LT_CHAIN) {
+    if (off + 2 > r.dv.byteLength) return false;
+    const fmt = r.dv.getUint16(off, false);
+    if (fmt === 2 || fmt === 3) return false;
+  }
+  /**
+   * 直接用 gidLookup 判定主 coverage 是否全子集外，不读写 covCache。
+   * covCache 被 readCoverageRemapped（存 newGids 到 entry.gids）与 readCoverageGids
+   * （format1 期望 entry.gids 为原始 gid）共享，二者对 gids 字段语义不一致 ——
+   * 若预检经 readCoverageRemapped 写入缓存，会污染后续 format1 深度解析读到的 gids
+   * （拿到 newGids 当原始 gid 二次重映射，连字规则错位，FiraCode SSIM 0.9923→0.9368）。
+   * 预检每个 subtable 的主 coverage 不同，无需跨 subtable 复用，内联判定即可。
+   */
+  const dv = r.dv;
+  const len = dv.byteLength;
+  if (off + 4 > len) return false;
+  const covOff = off + dv.getUint16(off + 2, false);
+  if (covOff + 4 > len) return false;
+  const format = dv.getUint16(covOff, false);
+  if (format === COV_LIST) {
+    const count = dv.getUint16(covOff + 2, false);
+    if (count === 0) return false; /** 原 coverage 本就空，不算 outOfSubset（与 readCoverageRemapped 一致） */
+    const base = covOff + 4;
+    if (base + count * 2 > len) return false;
+    for (let i = 0; i < count; i++) {
+      if (gidLookup[dv.getUint16(base + i * 2, false)] >= 0) return false; /** 命中子集，不跳过 */
+    }
+    return true; /** 全子集外 */
+  }
+  if (format === COV_RANGE) {
+    const rangeCount = dv.getUint16(covOff + 2, false);
+    let p = covOff + 4;
+    let origNonEmpty = false;
+    for (let i = 0; i < rangeCount; i++) {
+      if (p + 6 > len) break;
+      const start = dv.getUint16(p, false);
+      const end = dv.getUint16(p + 2, false);
+      if (end >= start && end - start < COVERAGE_MAX_EXPAND) {
+        for (let g = start; g <= end; g++) {
+          origNonEmpty = true;
+          if (gidLookup[g] >= 0) return false; /** 命中子集，不跳过 */
+        }
+      }
+      p += 6;
+    }
+    return origNonEmpty; /** 原非空且无命中 → 全子集外 */
+  }
+  return false;
+}
+
 /** 单个 subtable 序列化分发。返回 false 表示该 subtable 无法重映射（调用方决定降级） */
 function serializeSubtable(
   w: Writer,
@@ -928,6 +1004,10 @@ function serializeSubtable(
   gidLookup: GidLookup,
 ): boolean {
   r.clearError();
+  /** 预检：主 coverage 全子集外则直接判失败（输出空 subtable），跳过昂贵的深度解析。
+   *  FiraCode 403 lookup 中 253 个主 coverage 空的 lookup（type1-4 + type6-fmt1），
+   *  预检消除其 entries 构建 / rule 解析开销。format2/format3 不预检（主 coverage 非充分条件）。 */
+  if (isPrimaryCoverageOutOfSubset(r, off, type, gidLookup)) return false;
   let ok: boolean;
   switch (type) {
     case LT_SINGLE:
