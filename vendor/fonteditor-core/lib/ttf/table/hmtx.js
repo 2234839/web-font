@@ -22,6 +22,32 @@ var _default = exports.default = _table.default.create('hmtx', [], {
     var hMetrics = new Int32Array(numGlyphs * 2);
     var view = reader.view;
     var vOffset = view.byteOffset + offset;
+    /* 优化（subset 按需读）：subset 模式下 ttf.subsetGids 已由 glyf.read（表顺序在 hmtx 之前）构建，
+     *  resolveGlyf 也只访问 subsetGids 对应的 hmtx[gid*2]/[gid*2+1]。
+     *  原实现全量解析 numOfLongHorMetrics 项（思源 30888，占 Font.create ~10%），对 8 字子集是纯浪费。
+     *  改为只读 subsetGids 需要的项，其余位置保持 0（不会被访问）。 */
+    var subsetGids = ttf.readOptions && ttf.readOptions.subset && ttf.readOptions.subset.length > 0 ? ttf.subsetGids : null;
+    if (subsetGids) {
+      /* Last 段（gid >= numOfLongHorMetrics）的起始字节偏移；共享 advW = 最后一个 LongHorMetric 的 advW */
+      var lastSegOff = vOffset + numOfLongHorMetrics * 4;
+      var lastAdvWOff = vOffset + (numOfLongHorMetrics - 1) * 4;
+      for (var si = 0, sl = subsetGids.length; si < sl; si++) {
+        var gid = subsetGids[si];
+        var idx = gid * 2;
+        if (gid < numOfLongHorMetrics) {
+          /* LongHorMetric 段：advW + lsb 各 2 字节 */
+          var gOff = vOffset + gid * 4;
+          hMetrics[idx] = view.getUint16(gOff, false);
+          hMetrics[idx + 1] = view.getInt16(gOff + 2, false);
+        } else {
+          /* Last 段：advW 复用最后一个 LongHorMetric 的值，lsb 在 lastSegOff + (gid-num)*2 */
+          hMetrics[idx] = view.getUint16(lastAdvWOff, false);
+          hMetrics[idx + 1] = view.getInt16(lastSegOff + (gid - numOfLongHorMetrics) * 2, false);
+        }
+      }
+      reader.offset = offset + numOfLongHorMetrics * 4 + (numGlyphs - numOfLongHorMetrics) * 2;
+      return hMetrics;
+    }
     /* 优化（TypedArray 批量读+内联翻转）：hmtx 是大端，原 DataView.getUint16/getInt16 逐次调用
      *  有边界检查开销。LongHorMetric 段（每项 u16 advW + i16 lsb）用 Uint16Array view 共享 buffer
      *  读取后内联翻转，实测思源黑体（30888 项）快 2×（198→98μs）。offset 需 2 字节对齐，
