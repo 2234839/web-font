@@ -65,6 +65,11 @@ interface CoverageCacheEntry {
 }
 type CoverageCache = Map<number, CoverageCacheEntry>;
 
+/** readCoverageRemapped 占位用的空数组（gids 字段未由其填充的标记）。
+ *  readCoverageGids 见到 entry 但 gids 为此实例时，按 miss 处理重新计算。
+ *  用单例引用避免每次 set 分配新空数组。 */
+const EMPTY_GIDS: number[] = [];
+
 /**
  * 原gid → 新gid 的数组查找表（热路径专用）。
  * origToNew 是 Map<number,number>，每次 .get() 哈希查询开销大；coverage 解析对每个原 gid 都查一次，
@@ -81,13 +86,16 @@ type GidLookup = number[];
 function readCoverageGids(r: Reader, off: number, cache?: CoverageCache): number[] {
   if (cache) {
     const hit = cache.get(off);
-    if (hit !== undefined) return hit.gids;
+    /** hit.gids === EMPTY_GIDS 表示该 entry 由 readCoverageRemapped 填充（只写了 remapped/newGids，
+     *  gids 是占位空数组）。原始 gid 未被缓存，按 miss 处理重新计算并回填 gids 字段，
+     *  避免把 newGids 当原始 gid 返回（covCache 共享语义不一致 Bug）。 */
+    if (hit !== undefined && hit.gids !== EMPTY_GIDS) return hit.gids;
   }
   const dv = r.dv;
   const len = dv.byteLength;
   /** coverage 偏移合法性兜底：越界则按错误处理（返回空，调用方降级） */
   if (off < 0 || off + 4 > len) {
-    if (cache) cache.set(off, { gids: [], remapped: null, outOfSubset: false });
+    if (cache) mergeGidsEntry(cache, off, []);
     return [];
   }
   const format = dv.getUint16(off, false);
@@ -96,7 +104,7 @@ function readCoverageGids(r: Reader, off: number, cache?: CoverageCache): number
     const count = dv.getUint16(off + 2, false);
     const base = off + 4;
     if (base + count * 2 > len) {
-      if (cache) cache.set(off, { gids: [], remapped: null, outOfSubset: false });
+      if (cache) mergeGidsEntry(cache, off, []);
       return [];
     }
     /** 预分配 + 索引赋值，避免 push 动态扩容（format1 coverage 的高频热循环） */
@@ -120,8 +128,22 @@ function readCoverageGids(r: Reader, off: number, cache?: CoverageCache): number
       p += 6;
     }
   }
-  if (cache) cache.set(off, { gids, remapped: null, outOfSubset: false });
+  if (cache) mergeGidsEntry(cache, off, gids);
   return gids;
+}
+
+/**
+ * 把「原始 gid 列表」合并进 covCache 的 entry，保留 readCoverageRemapped 已写入的
+ * remapped/outOfSubset 字段（避免 readCoverageGids 回填时覆盖 fmt3 缓存的重映射结果）。
+ * entry 不存在则新建（remapped=null 表示尚未由 readCoverageRemapped 计算过）。
+ */
+function mergeGidsEntry(cache: CoverageCache, off: number, gids: number[]): void {
+  const existing = cache.get(off);
+  if (existing !== undefined) {
+    existing.gids = gids;
+  } else {
+    cache.set(off, { gids, remapped: null, outOfSubset: false });
+  }
 }
 
 /**
@@ -188,7 +210,13 @@ function readCoverageRemapped(
   }
   /** 原 coverage 非空但全部 gid 落子集外 → 失效（与原 coverage 本就空的合法空数组区分） */
   if (newGids.length === 0 && origNonEmpty) outOfSubset = true;
-  cache.set(off, { gids: newGids, remapped: newGids, outOfSubset });
+  /** 只写 remapped 字段，不碰 gids 字段。
+   *  covCache 被 readCoverageRemapped（fmt3 用，产 newGids）与 readCoverageGids
+   *  （fmt1 ChainContext 用，需原始 gid 按 index 与 ruleSet 配对）共享。
+   *  若此处把 newGids 写进 gids 字段，后续 fmt1 经 readCoverageGids 命中同一 off 时，
+   *  会拿到 newGids 当原始 gid 二次重映射，连字规则错位（FiraCode 字节不一致 Bug 的根因）。
+   *  gids 字段留空数组占位，readCoverageGids miss 时自行计算回填（见其实现）。 */
+  cache.set(off, { gids: EMPTY_GIDS, remapped: newGids, outOfSubset });
   return outOfSubset ? null : newGids;
 }
 
@@ -918,59 +946,94 @@ function writeChainFormat3(
 }
 
 /**
- * 廉价预检：subtable 的主 coverage 是否完全落在子集外。
+ * 廉价预检：subtable 是否可跳过深度序列化（输出空 subtable）。
  *
  * FiraCode 等连字字体含大量 lookup（实测 403 个），但子集只命中少数字形，
- * 多数 lookup 其主 coverage 引用的 gid 全部不在子集内 —— 这些 lookup 深度序列化后
- * 必然得到空 entries、回退 writeEmptySubtable。预检在深度解析（读 delta/sequence/全部 rule）
- * 之前，仅读主 coverage 一次（用 gidLookup 内联判定，不碰 covCache），命中即跳过。
+ * 多数 lookup 其规则涉及的 coverage gid 全部不在子集内 —— 深度序列化后必然得到空 entries、
+ * 回退 writeEmptySubtable。预检在深度解析前用 gidLookup 内联判定（不碰 covCache、不分配数组），
+ * 命中即跳过。
  *
- * 仅对「主 coverage 决定规则是否触发」的类型预检（主 coverage 在 subOff+2 的 Offset16）：
- *   - SingleSubst/Multiple/Alternate/Ligature：source 字形 coverage，全空则 entries 为空
- *   - ChainContextSubst format1：input 第一分量 coverage，全空则所有 ruleSet 失效
- * 不预检的类型（主 coverage 非充分条件，深度解析才能正确判定）：
- *   - ChainContextSubst format2：规则由 InputClassDef 的 class 驱动，主 coverage 全空不代表无效
- *     （FiraCode calt 的 format2 连字规则，主 coverage 字形不在子集，但深度解析经 class 仍保留规则，
- *      误判全空会导致连字丢失、SSIM 暴跌 0.9923→0.9368）
- *   - ChainContextSubst format3：无单一主 coverage（backtrack/input/lookahead 三个 coverage 数组）
+ * 预检规则（覆盖主 coverage 决定触发的类型）：
+ *   - SingleSubst/Multiple/Alternate/Ligature：主 coverage（subOff+2）全子集外 → entries 为空
+ *   - ChainContextSubst format1：主 coverage（input 第一分量）全子集外 → 所有 ruleSet 失效
+ *   - ChainContextSubst format3：backtrack/input/lookahead 任一 coverage 组「原非空且全子集外」→ 规则失效
  *
- * @returns true = 主 coverage 全空，可跳过深度序列化（输出空 subtable）；false = 需深度解析
+ * 不预检 ChainContextSubst format2：规则由 InputClassDef 的 class 驱动，主 coverage 全空不代表无效
+ * （FiraCode calt 的 format2 连字规则，主 coverage 字形不在子集，但深度解析经 class 仍保留规则，
+ *  误判全空会导致连字丢失、SSIM 暴跌 0.9923→0.9368）。
+ *
+ * @returns true = 可跳过深度序列化（输出空 subtable）；false = 需深度解析
  */
-function isPrimaryCoverageOutOfSubset(
+function isSubtableSkipableByCoverage(
   r: Reader,
   off: number,
   type: number,
   gidLookup: GidLookup,
 ): boolean {
-  /** ChainContext：format2（class 驱动）和 format3（多 coverage）不预检 */
-  if (type === LT_CHAIN) {
-    if (off + 2 > r.dv.byteLength) return false;
-    const fmt = r.dv.getUint16(off, false);
-    if (fmt === 2 || fmt === 3) return false;
-  }
-  /**
-   * 直接用 gidLookup 判定主 coverage 是否全子集外，不读写 covCache。
-   * covCache 被 readCoverageRemapped（存 newGids 到 entry.gids）与 readCoverageGids
-   * （format1 期望 entry.gids 为原始 gid）共享，二者对 gids 字段语义不一致 ——
-   * 若预检经 readCoverageRemapped 写入缓存，会污染后续 format1 深度解析读到的 gids
-   * （拿到 newGids 当原始 gid 二次重映射，连字规则错位，FiraCode SSIM 0.9923→0.9368）。
-   * 预检每个 subtable 的主 coverage 不同，无需跨 subtable 复用，内联判定即可。
-   */
   const dv = r.dv;
   const len = dv.byteLength;
+
+  /** ChainContext format3：遍历 back/input/look 三个 coverage 组，任一组原非空且全子集外则失效 */
+  if (type === LT_CHAIN) {
+    if (off + 2 > len) return false;
+    const chainFmt = dv.getUint16(off, false);
+    if (chainFmt === 2) return false; /** format2 class 驱动，不预检 */
+    if (chainFmt === 3) {
+      let p = off + 2;
+      for (let grp = 0; grp < 3; grp++) {
+        if (p + 2 > len) return false;
+        const cnt = dv.getUint16(p, false);
+        p += 2;
+        let grpOrigNonEmpty = false;
+        let grpHasInSubset = false;
+        for (let k = 0; k < cnt; k++) {
+          if (p + 2 > len) return false;
+          const covOff = off + dv.getUint16(p + k * 2, false);
+          const st = coverageAllOutOfSubset(dv, covOff, len, gidLookup);
+          if (st === false) grpHasInSubset = true;
+          else if (st === true) grpOrigNonEmpty = true;
+          if (grpHasInSubset) break;
+        }
+        p += cnt * 2;
+        if (grpOrigNonEmpty && !grpHasInSubset) return true;
+      }
+      return false;
+    }
+  }
+
+  /** 主 coverage 在 subOff+2（Offset16）的类型：Single/Multiple/Alternate/Ligature/Chain-format1 */
   if (off + 4 > len) return false;
   const covOff = off + dv.getUint16(off + 2, false);
+  return coverageAllOutOfSubset(dv, covOff, len, gidLookup) === true;
+}
+
+/**
+ * 用 gidLookup 判定单个 coverage 是否「原非空且全部 gid 落子集外」。
+ * 内联遍历 coverage 字节（format1 列表 / format2 区间），不分配数组、不读写 covCache。
+ * 预检在每个 subtable 入口被调用（FiraCode 403 lookup × 多 subtable，密度极高），
+ * 短路判定（首命中子集内 gid 即返回）比 readCoverageRemapped + 数组过滤快得多，
+ * 且无需触碰缓存、不产生 GC 压力。
+ *
+ * @returns true=原非空且全子集外（可据此跳过）；false=含子集内 gid 或原 coverage 本就空或越界；
+ *          「原空」与「越界」都返回 false（保守不跳过，交深度解析）
+ */
+function coverageAllOutOfSubset(
+  dv: DataView,
+  covOff: number,
+  len: number,
+  gidLookup: GidLookup,
+): boolean {
   if (covOff + 4 > len) return false;
   const format = dv.getUint16(covOff, false);
   if (format === COV_LIST) {
     const count = dv.getUint16(covOff + 2, false);
-    if (count === 0) return false; /** 原 coverage 本就空，不算 outOfSubset（与 readCoverageRemapped 一致） */
+    if (count === 0) return false; /** 原 coverage 本就空，不算 outOfSubset */
     const base = covOff + 4;
     if (base + count * 2 > len) return false;
     for (let i = 0; i < count; i++) {
-      if (gidLookup[dv.getUint16(base + i * 2, false)] >= 0) return false; /** 命中子集，不跳过 */
+      if (gidLookup[dv.getUint16(base + i * 2, false)] >= 0) return false;
     }
-    return true; /** 全子集外 */
+    return true;
   }
   if (format === COV_RANGE) {
     const rangeCount = dv.getUint16(covOff + 2, false);
@@ -983,12 +1046,12 @@ function isPrimaryCoverageOutOfSubset(
       if (end >= start && end - start < COVERAGE_MAX_EXPAND) {
         for (let g = start; g <= end; g++) {
           origNonEmpty = true;
-          if (gidLookup[g] >= 0) return false; /** 命中子集，不跳过 */
+          if (gidLookup[g] >= 0) return false;
         }
       }
       p += 6;
     }
-    return origNonEmpty; /** 原非空且无命中 → 全子集外 */
+    return origNonEmpty;
   }
   return false;
 }
@@ -1004,10 +1067,10 @@ function serializeSubtable(
   gidLookup: GidLookup,
 ): boolean {
   r.clearError();
-  /** 预检：主 coverage 全子集外则直接判失败（输出空 subtable），跳过昂贵的深度解析。
-   *  FiraCode 403 lookup 中 253 个主 coverage 空的 lookup（type1-4 + type6-fmt1），
-   *  预检消除其 entries 构建 / rule 解析开销。format2/format3 不预检（主 coverage 非充分条件）。 */
-  if (isPrimaryCoverageOutOfSubset(r, off, type, gidLookup)) return false;
+  /** 预检：主 coverage（或 fmt3 的三组 coverage）全子集外则直接判失败（输出空 subtable），
+   *  跳过昂贵的深度解析。FiraCode 403 lookup 中 ~330 个可预检跳过（type1-4 + fmt1 + fmt3 失效），
+   *  format2 不预检（class 驱动，主 coverage 非充分条件）。 */
+  if (isSubtableSkipableByCoverage(r, off, type, gidLookup)) return false;
   let ok: boolean;
   switch (type) {
     case LT_SINGLE:
