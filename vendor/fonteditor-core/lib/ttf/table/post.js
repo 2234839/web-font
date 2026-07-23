@@ -41,23 +41,22 @@ var _default = exports.default = _table.default.create('post', [], {
 
     if (format === 2) {
       var numberOfGlyphs = reader.readUint16();
-      /* 优化60: 直接 view 批量读取 glyphNameIndex */
-      var view = reader.view;
-      var vOffset = view.byteOffset + reader.offset;
-      var pascalStringOffset = reader.offset + numberOfGlyphs * 2;
-      var pascalStringLength = ttf.tables.post.length - (pascalStringOffset - this.offset);
-      var pascalStringBytes = reader.readBytes(pascalStringOffset, pascalStringLength);
-
-      /* 优化87: subset 模式下只读取子集字形的 nameIndex，跳过其余 */
+      /* 优化（post name 跳过）：subset 模式下 glyph name 对 web 字体渲染无用（浏览器靠
+       *  cmap→gid→glyf 渲染，不依赖 post glyph name；glyph name 仅用于 PDF 嵌入/编辑器）。
+       *  强制降级 format 3（无 nameIndex/names），跳过 nameIndex 解析、pascalString 区
+       *  readBytes（思源 278KB）、resolveGlyf 的按需 name 读取（实测占 Font.create 69%）。
+       *  resolveGlyf 第 148 行 `2 === format` 不成立整段跳过；write/size 走 format 3（32B）。 */
       if (ttf.readOptions && ttf.readOptions.subset) {
-        tbl._pascalStringBytes = pascalStringBytes;
-        tbl._pascalStringOffsets = null;
+        tbl.format = 3;
         tbl.nameIndex = null;
         tbl.names = null;
-        /* 保存 view 引用和偏移量，供后续按需读取 nameIndex */
-        tbl._nameIndexViewOffset = vOffset;
-        tbl._nameIndexView = view;
       } else {
+        /* 优化60: 直接 view 批量读取 glyphNameIndex */
+        var view = reader.view;
+        var vOffset = view.byteOffset + reader.offset;
+        var pascalStringOffset = reader.offset + numberOfGlyphs * 2;
+        var pascalStringLength = ttf.tables.post.length - (pascalStringOffset - this.offset);
+        var pascalStringBytes = reader.readBytes(pascalStringOffset, pascalStringLength);
         var glyphNameIndex = new Array(numberOfGlyphs);
         for (var i = 0; i < numberOfGlyphs; i++) {
           glyphNameIndex[i] = view.getUint16(vOffset, false);
