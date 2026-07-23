@@ -183,9 +183,25 @@ function readCoverageRemapped(
         /** 预分配最大容量 count，索引写入后截断长度，避免 push 动态扩容（format1 是 coverage 热路径） */
         const buf = new Array(count);
         let w = 0;
-        for (let i = 0; i < count; i++) {
-          const m = gidLookup[dv.getUint16(base + i * 2, false)];
-          if (m >= 0) buf[w++] = m;
+        /** 批量读优化：coverage format1 的 gid 列表是连续 count 个大端 u16。
+         *  DataView.getUint16 每次有边界检查 + 大端组装开销；gid 数组若 2 字节对齐，
+         *  用 Uint16Array view 共享 buffer 读取 + 内联翻转更快（与 hmtx/loca 同思路）。
+         *  readCoverageRemapped 是 FiraCode subsetGSUB 第一大热点（75.5%），miss 路径
+         *  sum 遍历 ~26000 gid，批量读省每次的 DataView 调度。 */
+        const gidArrByteOff = dv.byteOffset + base;
+        if ((gidArrByteOff & 1) === 0) {
+          const src16 = new Uint16Array(dv.buffer, gidArrByteOff, count);
+          for (let i = 0; i < count; i++) {
+            const raw = src16[i];
+            /** 内联大端翻转（与 hmtx/loca 一致）：((raw & 0xff) << 8) | (raw >> 8) */
+            const m = gidLookup[((raw & 0xff) << 8) | (raw >> 8)];
+            if (m >= 0) buf[w++] = m;
+          }
+        } else {
+          for (let i = 0; i < count; i++) {
+            const m = gidLookup[dv.getUint16(base + i * 2, false)];
+            if (m >= 0) buf[w++] = m;
+          }
         }
         buf.length = w;
         newGids = buf;
