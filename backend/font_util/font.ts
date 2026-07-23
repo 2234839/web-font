@@ -3,6 +3,7 @@ import type { FontEditor } from "../../vendor/fonteditor-core/lib/ttf/font.js";
 import { subsetGPOS } from "./gpos-subset.js";
 import { subsetGSUB } from "./gsub-subset.js";
 import { collectReachableGsubTargets } from "./gsub-reachable.js";
+import { probeGsubAndCmap } from "./gsub-probe.js";
 
 /** 优化291: TextEncoder 模块级单例 */
 const textEncoder = new TextEncoder();
@@ -128,30 +129,49 @@ export const fontSubset = (
 ): Uint8Array => {
   const codePoints = textToCodePoints(subString);
 
-  /** GSUB 连字 target glyph 保留：原始字体含 GSUB 时，先做一次 subset 解析，找出子集 codepoint 经
+  /** GSUB 连字 target glyph 保留：原始字体含 GSUB 时，先做一次 probe，找出子集 codepoint 经
    *  GSUB 替换链可达的 target glyph（多为无 unicode 的纯连字字形，如 FiraCode 的 greater_equal.liga），
    *  注入 extraSubsetGids 使其被子集保留，否则连字规则 target 失效、连字不渲染。
-   *  probe 采用 subset 模式（与正式子集相同的稳定路径），cmap 仅展开子集 codepoint 映射，
-   *  GSUB 为原始字节透传。无 GSUB 的字体 reachable 为空，extraSubsetGids 保持 undefined。 */
+   *
+   *  优化（轻量 probe）：直接从字体字节解析表目录提取 GSUB 字节 + cmap 的 codepoint→gid 查找，
+   *  跳过 Font.create 的 glyf 轮廓解析（probe 只需 GSUB/cmap，不需要轮廓）。CJK 字体两次 Font.create
+   *  原占总耗时 36%~63%，省掉 probe 那次显著加速。无 GSUB 的 ttf / 所有 otf（fonteditor probe 本就
+   *  origGSUB=undefined）直接判无 reachable，连 probe Font.create 也跳过。仅当字体有 GSUB 但 cmap 无
+   *  format4/12 subtable（极罕见）时回退到 Font.create probe。 */
   let extraSubsetGids: number[] | undefined;
-  const probeFont = Font.create(fontBuffer, {
-    type: option.sourceType,
-    subset: codePoints,
-    kerning: true,
-  });
-  const probeTtf = (probeFont as any).get();
-  const origGSUB = probeTtf.GSUB;
-  const origCmap = probeTtf.cmap;
-  if (origGSUB && origCmap) {
-    const gsubBytes = origGSUB instanceof Uint8Array ? origGSUB : new Uint8Array(origGSUB);
-    /** seed = 子集 codepoint 经 cmap 映射的原始 gid */
-    const seedGids = new Set<number>();
-    seedGids.add(0); /** .notdef */
+  const probe = probeGsubAndCmap(fontBuffer, codePoints, option.sourceType);
+  let probedSeedGids: Set<number> | undefined;
+  let probedGsubBytes: Uint8Array | undefined;
+  if (probe.ok) {
+    probedGsubBytes = probe.gsubBytes;
+    probedSeedGids = new Set<number>();
+    probedSeedGids.add(0); /** .notdef */
     for (const cp of codePoints) {
-      const gid = origCmap[cp];
-      if (gid !== undefined) seedGids.add(gid);
+      const gid = probe.lookup.get(cp);
+      if (gid !== undefined) probedSeedGids.add(gid);
     }
-    const reachable = collectReachableGsubTargets(gsubBytes, seedGids);
+  } else if (probe.needsFallback) {
+    /** 有 GSUB 但 cmap 无 format4/12，回退 Font.create probe（与原路径一致） */
+    const probeFont = Font.create(fontBuffer, {
+      type: option.sourceType,
+      subset: codePoints,
+      kerning: true,
+    });
+    const probeTtf = (probeFont as any).get();
+    const origGSUB = probeTtf.GSUB;
+    const origCmap = probeTtf.cmap;
+    if (origGSUB && origCmap) {
+      probedGsubBytes = origGSUB instanceof Uint8Array ? origGSUB : new Uint8Array(origGSUB);
+      probedSeedGids = new Set<number>();
+      probedSeedGids.add(0);
+      for (const cp of codePoints) {
+        const gid = origCmap[cp];
+        if (gid !== undefined) probedSeedGids.add(gid);
+      }
+    }
+  }
+  if (probedGsubBytes && probedSeedGids) {
+    const reachable = collectReachableGsubTargets(probedGsubBytes, probedSeedGids);
     if (reachable.size > 0) extraSubsetGids = [...reachable];
   }
 
