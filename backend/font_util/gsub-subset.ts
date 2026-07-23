@@ -269,7 +269,7 @@ function serializeSingleSubst(
   w: Writer,
   r: Reader,
   off: number,
-  origToNew: Map<number, number>,
+  gidLookup: GidLookup,
 ): boolean {
   const format = r.u16(off);
   const covOff = off + r.u16(off + 2);
@@ -280,16 +280,16 @@ function serializeSingleSubst(
   if (format === 1) {
     const delta = r.i16(off + 4);
     for (const g of covGids) {
-      const fromNew = remapGid(origToNew, g);
-      const toNew = remapGid(origToNew, (g + delta) & 0xffff);
-      if (fromNew !== null && toNew !== null) entries.push({ from: fromNew, to: toNew });
+      const fromNew = gidLookup[g];
+      const toNew = gidLookup[(g + delta) & 0xffff];
+      if (fromNew >= 0 && toNew >= 0) entries.push({ from: fromNew, to: toNew });
     }
   } else if (format === 2) {
     const count = r.u16(off + 4);
     for (let i = 0; i < covGids.length && i < count; i++) {
-      const fromNew = remapGid(origToNew, covGids[i]);
-      const toNew = remapGid(origToNew, r.u16(off + 6 + i * 2));
-      if (fromNew !== null && toNew !== null) entries.push({ from: fromNew, to: toNew });
+      const fromNew = gidLookup[covGids[i]];
+      const toNew = gidLookup[r.u16(off + 6 + i * 2)];
+      if (fromNew >= 0 && toNew >= 0) entries.push({ from: fromNew, to: toNew });
     }
   } else {
     return false;
@@ -362,7 +362,7 @@ function serializeMultipleSubst(
   w: Writer,
   r: Reader,
   off: number,
-  origToNew: Map<number, number>,
+  gidLookup: GidLookup,
 ): boolean {
   const covOff = off + r.u16(off + 2);
   const seqCount = r.u16(off + 4);
@@ -371,14 +371,14 @@ function serializeMultipleSubst(
   /** 逐 coverage 字形读取其 sequence，重映射后保留有效项 */
   const entries: Array<{ from: number; seq: number[] }> = [];
   for (let i = 0; i < covGids.length && i < seqCount; i++) {
-    const fromNew = remapGid(origToNew, covGids[i]);
-    if (fromNew === null) continue;
+    const fromNew = gidLookup[covGids[i]];
+    if (fromNew < 0) continue;
     const seqOff = off + r.u16(off + 6 + i * 2);
     const glyphCount = r.u16(seqOff);
     const newSeq: number[] = [];
     for (let k = 0; k < glyphCount; k++) {
-      const g = remapGid(origToNew, r.u16(seqOff + 2 + k * 2));
-      if (g !== null) newSeq.push(g);
+      const g = gidLookup[r.u16(seqOff + 2 + k * 2)];
+      if (g >= 0) newSeq.push(g);
     }
     /** 序列至少 1 个目标 gid 才有意义 */
     if (newSeq.length > 0) entries.push({ from: fromNew, seq: newSeq });
@@ -412,7 +412,7 @@ function serializeAlternateSubst(
   w: Writer,
   r: Reader,
   off: number,
-  origToNew: Map<number, number>,
+  gidLookup: GidLookup,
 ): boolean {
   const covOff = off + r.u16(off + 2);
   const altCount = r.u16(off + 4);
@@ -420,14 +420,14 @@ function serializeAlternateSubst(
 
   const entries: Array<{ from: number; alts: number[] }> = [];
   for (let i = 0; i < covGids.length && i < altCount; i++) {
-    const fromNew = remapGid(origToNew, covGids[i]);
-    if (fromNew === null) continue;
+    const fromNew = gidLookup[covGids[i]];
+    if (fromNew < 0) continue;
     const altOff = off + r.u16(off + 6 + i * 2);
     const cnt = r.u16(altOff);
     const newAlts: number[] = [];
     for (let k = 0; k < cnt; k++) {
-      const g = remapGid(origToNew, r.u16(altOff + 2 + k * 2));
-      if (g !== null) newAlts.push(g);
+      const g = gidLookup[r.u16(altOff + 2 + k * 2)];
+      if (g >= 0) newAlts.push(g);
     }
     if (newAlts.length > 0) entries.push({ from: fromNew, alts: newAlts });
   }
@@ -461,7 +461,7 @@ function serializeLigatureSubst(
   w: Writer,
   r: Reader,
   off: number,
-  origToNew: Map<number, number>,
+  gidLookup: GidLookup,
 ): boolean {
   const covOff = off + r.u16(off + 2);
   const setCount = r.u16(off + 4);
@@ -470,22 +470,24 @@ function serializeLigatureSubst(
   /** 每个 coverage 字形收集有效 ligature 列表 */
   const entries: Array<{ from: number; ligs: Array<{ comp: number[]; lig: number }> }> = [];
   for (let i = 0; i < covGids.length && i < setCount; i++) {
-    const fromNew = remapGid(origToNew, covGids[i]);
-    if (fromNew === null) continue;
+    /** gidLookup[origGid] = 新gid 或 -1（不在子集）。数组索引比 Map.get 快 ~2×，
+     *  serializeLigatureSubst 对每条 ligature 的全部分量密集 remapGid，是 CJK ligature 子集热点。 */
+    const fromNew = gidLookup[covGids[i]];
+    if (fromNew < 0) continue;
     const setOff = off + r.u16(off + 6 + i * 2);
     const ligCount = r.u16(setOff);
     const newLigs: Array<{ comp: number[]; lig: number }> = [];
     for (let j = 0; j < ligCount; j++) {
       const ligOff = setOff + r.u16(setOff + 2 + j * 2);
       const compCount = r.u16(ligOff);
-      const ligNew = remapGid(origToNew, r.u16(ligOff + 2));
-      if (ligNew === null) continue;
+      const ligNew = gidLookup[r.u16(ligOff + 2)];
+      if (ligNew < 0) continue;
       /** components 从第 2 字形开始（第 1 字形即 coverage 字形），compCount 含第 1 字形 */
       const compNew: number[] = [fromNew];
       let ok = true;
       for (let k = 0; k < compCount - 1; k++) {
-        const c = remapGid(origToNew, r.u16(ligOff + 4 + k * 2));
-        if (c === null) {
+        const c = gidLookup[r.u16(ligOff + 4 + k * 2)];
+        if (c < 0) {
           ok = false;
           break;
         }
@@ -1079,16 +1081,16 @@ function serializeSubtable(
   let ok: boolean;
   switch (type) {
     case LT_SINGLE:
-      ok = serializeSingleSubst(w, r, off, origToNew);
+      ok = serializeSingleSubst(w, r, off, gidLookup);
       break;
     case LT_MULTIPLE:
-      ok = serializeMultipleSubst(w, r, off, origToNew);
+      ok = serializeMultipleSubst(w, r, off, gidLookup);
       break;
     case LT_ALTERNATE:
-      ok = serializeAlternateSubst(w, r, off, origToNew);
+      ok = serializeAlternateSubst(w, r, off, gidLookup);
       break;
     case LT_LIGATURE:
-      ok = serializeLigatureSubst(w, r, off, origToNew);
+      ok = serializeLigatureSubst(w, r, off, gidLookup);
       break;
     case LT_CHAIN:
       ok = serializeChainedContextSubst(w, r, off, origToNew, covCache, gidLookup);
