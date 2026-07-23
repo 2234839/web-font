@@ -234,17 +234,66 @@ function calculateSSIM(a: Uint8Array, b: Uint8Array, width: number, height: numb
 
 // ======== 测试配置 ========
 
+/**
+ * 千字文中段（接续前段，用于更长文本压力测试）
+ */
+const QIANZIWEN_MID = "墨悲丝染诗赞羔羊景行维贤克念作圣德建名立形端表正空谷传声虚堂习听祸因恶积福缘善庆尺璧非宝寸阴是竞资父事君曰严与敬孝当竭力忠则尽命临深履薄夙兴温凊似兰斯馨如松之盛川流不息渊澄取映";
+
 const testCases = [
-  /** TTF 字体 */
+  /** ===== 令东齐伋复刻体（TTF，楷书复古字体，主基准） ===== */
   { label: "8个汉字", fontPath: "font/令东齐伋复刻体.ttf", fontName: "令东齐伋复刻体", text: "天地玄黄宇宙洪荒", sourceType: "ttf" as const, outType: "ttf" as const, fullFormat: "truetype" },
   { label: "8个汉字", fontPath: "font/令东齐伋复刻体.ttf", fontName: "令东齐伋复刻体", text: "天地玄黄宇宙洪荒", sourceType: "ttf" as const, outType: "woff2" as const, fullFormat: "truetype" },
   { label: "拉丁+数字", fontPath: "font/令东齐伋复刻体.ttf", fontName: "令东齐伋复刻体", text: "Hello World 123", sourceType: "ttf" as const, outType: "ttf" as const, fullFormat: "truetype" },
   { label: "拉丁+数字", fontPath: "font/令东齐伋复刻体.ttf", fontName: "令东齐伋复刻体", text: "Hello World 123", sourceType: "ttf" as const, outType: "woff2" as const, fullFormat: "truetype" },
   { label: "千字文前段", fontPath: "font/令东齐伋复刻体.ttf", fontName: "令东齐伋复刻体", text: "天地玄黄宇宙洪荒日月盈昃辰宿列张寒来暑往秋收冬藏闰余成岁律吕调阳云腾致雨露结为霜金生丽水玉出昆冈剑号巨阙珠称夜光果珍李柰菜重芥姜海咸河淡鳞潜羽翔", sourceType: "ttf" as const, outType: "ttf" as const, fullFormat: "truetype" },
   { label: "千字文前段", fontPath: "font/令东齐伋复刻体.ttf", fontName: "令东齐伋复刻体", text: "天地玄黄宇宙洪荒日月盈昃辰宿列张寒来暑往秋收冬藏闰余成岁律吕调阳云腾致雨露结为霜金生丽水玉出昆冈剑号巨阙珠称夜光果珍李柰菜重芥姜海咸河淡鳞潜羽翔", sourceType: "ttf" as const, outType: "woff2" as const, fullFormat: "truetype" },
-  /** OTF 字体（含三点水等复杂笔画字，守护 OTF→TTF 转换正确性） */
+  /** 重复字符：守护 codePoints 去重逻辑，相同字形不应重复输出 */
+  { label: "重复字符", fontPath: "font/令东齐伋复刻体.ttf", fontName: "令东齐伋复刻体", text: "天天天天地地地地", sourceType: "ttf" as const, outType: "woff2" as const, fullFormat: "truetype" },
+
+  /** ===== 思源黑体（TTF，无衬线黑体，字形简洁） ===== */
+  { label: "思源黑体-8字", fontPath: "font/思源黑体.ttf", fontName: "思源黑体", text: "天地玄黄宇宙洪荒", sourceType: "ttf" as const, outType: "ttf" as const, fullFormat: "truetype" },
+  { label: "思源黑体-8字", fontPath: "font/思源黑体.ttf", fontName: "思源黑体", text: "天地玄黄宇宙洪荒", sourceType: "ttf" as const, outType: "woff2" as const, fullFormat: "truetype" },
+  /** 纯标点：非汉字字形 + 组合标记的渲染守护 */
+  { label: "思源黑体-标点", fontPath: "font/思源黑体.ttf", fontName: "思源黑体", text: "，。！？、；：“”‘’", sourceType: "ttf" as const, outType: "woff2" as const, fullFormat: "truetype" },
+  /** CJK 扩展 B 罕见字（代理对）：守护 textToCodePoints 的代理对跳过逻辑 */
+  { label: "思源黑体-扩展B", fontPath: "font/思源黑体.ttf", fontName: "思源黑体", text: "𠮷𡧑𢀖𤍤𥝹", sourceType: "ttf" as const, outType: "woff2" as const, fullFormat: "truetype" },
+  /** 千字文中段：超长文本压力测试（>100 字） */
+  { label: "思源黑体-千字文中段", fontPath: "font/思源黑体.ttf", fontName: "思源黑体", text: QIANZIWEN_MID, sourceType: "ttf" as const, outType: "woff2" as const, fullFormat: "truetype" },
+
+  /** ===== Yi山碑篆体（TTF，笔画极其复杂的篆书，字形数据量大） ===== */
+  { label: "篆体-8字", fontPath: "font/temp/YiShanBeiZhuanTi.ttf", fontName: "Yi山碑篆体", text: "天地玄黄宇宙洪荒", sourceType: "ttf" as const, outType: "ttf" as const, fullFormat: "truetype" },
+  { label: "篆体-8字", fontPath: "font/temp/YiShanBeiZhuanTi.ttf", fontName: "Yi山碑篆体", text: "天地玄黄宇宙洪荒", sourceType: "ttf" as const, outType: "woff2" as const, fullFormat: "truetype" },
+
+  /** ===== OTF 字体（含三点水等复杂笔画字，守护 OTF→TTF 转换正确性） ===== */
   { label: "otf-五个汉字", fontPath: "font/temp/BaiHuOTFJiaoYuHanZi-2.otf", fontName: "白狐教育汉字", text: "天地黄宇宙法海波", sourceType: "otf" as const, outType: "ttf" as const, fullFormat: "opentype" },
+  /** OTF→woff2 输出路径守护（之前仅测 ttf 输出） */
+  { label: "otf-五个汉字", fontPath: "font/temp/BaiHuOTFJiaoYuHanZi-2.otf", fontName: "白狐教育汉字", text: "天地黄宇宙法海波", sourceType: "otf" as const, outType: "woff2" as const, fullFormat: "opentype" },
   { label: "otf-思源黑体", fontPath: "font/temp/SourceHanSans-Regular.otf", fontName: "思源黑体", text: "天地玄黄宇宙洪法海波", sourceType: "otf" as const, outType: "ttf" as const, fullFormat: "opentype" },
+  { label: "otf-思源黑体", fontPath: "font/temp/SourceHanSans-Regular.otf", fontName: "思源黑体", text: "天地玄黄宇宙洪法海波", sourceType: "otf" as const, outType: "woff2" as const, fullFormat: "opentype" },
+
+  /** ===== 小字号渲染（size=24，守护 SSIM 在小字号下不退化） ===== */
+  { label: "小字号-8字", fontPath: "font/令东齐伋复刻体.ttf", fontName: "令东齐伋复刻体", text: "天地玄黄宇宙洪荒", sourceType: "ttf" as const, outType: "woff2" as const, fullFormat: "truetype", fontSize: 24 },
+  { label: "小字号-篆体", fontPath: "font/temp/YiShanBeiZhuanTi.ttf", fontName: "Yi山碑篆体", text: "天地玄黄宇宙洪荒", sourceType: "ttf" as const, outType: "woff2" as const, fullFormat: "truetype", fontSize: 24 },
+
+  /**
+   * ===== D:\字体资源 多字体扩展覆盖 =====
+   * 用「汉字+标点」混合文本，最能暴露 GPOS 标点压缩丢失问题。
+   * 覆盖不同 GPOS lookup 类型：得意黑仅 PairPos(完全支持)，霞鹜文楷含 ChainedContextPos(type8，降级)，
+   * 思源宋体(OTF)含 MarkBasePos(type4，降级)。降级时保留原始 GPOS 字节，验证不劣于子集化前。
+   */
+  { label: "得意黑-汉字标点", fontPath: "/mnt/d/字体资源/得意黑/SmileySans-Oblique.ttf", fontName: "得意黑", text: "你好，世界！今天天气不错。", sourceType: "ttf" as const, outType: "woff2" as const, fullFormat: "truetype" },
+  { label: "霞鹜文楷-汉字标点", fontPath: "/mnt/d/字体资源/霞鹜文楷/LXGWWenKai-Regular.ttf", fontName: "霞鹜文楷", text: "你好，世界！今天天气不错。", sourceType: "ttf" as const, outType: "woff2" as const, fullFormat: "truetype" },
+  /** 初夏明朝（TTF，宋体/明朝风格衬线字，含标点压缩） */
+  { label: "初夏明朝-汉字标点", fontPath: "/mnt/d/字体资源/初夏明朝/初夏明朝-Regular.ttf", fontName: "初夏明朝", text: "你好，世界！今天天气不错。", sourceType: "ttf" as const, outType: "woff2" as const, fullFormat: "truetype" },
+  { label: "霞鹜文楷-纯标点", fontPath: "/mnt/d/字体资源/霞鹜文楷/LXGWWenKai-Regular.ttf", fontName: "霞鹜文楷", text: "，。！？、；：“”‘’", sourceType: "ttf" as const, outType: "woff2" as const, fullFormat: "truetype" },
+  { label: "初夏明朝-纯标点", fontPath: "/mnt/d/字体资源/初夏明朝/初夏明朝-Regular.ttf", fontName: "初夏明朝", text: "，。！？、；：“”‘’", sourceType: "ttf" as const, outType: "woff2" as const, fullFormat: "truetype" },
+  { label: "得意黑-纯标点", fontPath: "/mnt/d/字体资源/得意黑/SmileySans-Oblique.ttf", fontName: "得意黑", text: "，。！？、；：“”‘’", sourceType: "ttf" as const, outType: "woff2" as const, fullFormat: "truetype" },
+  /** 鸿蒙黑体（TTF，现代无衬线，GPOS 仅 SinglePos/PairPos） */
+  { label: "鸿蒙黑体-汉字标点", fontPath: "/mnt/d/字体资源/鸿蒙字体/HarmonyOS_Sans_SC_Black.ttf", fontName: "鸿蒙黑体", text: "你好，世界！今天天气不错。", sourceType: "ttf" as const, outType: "woff2" as const, fullFormat: "truetype" },
+  /** 优设标题黑（TTF，艺术黑体） */
+  { label: "优设标题黑-汉字标点", fontPath: "/mnt/d/字体资源/优设标题黑/优设标题黑.ttf", fontName: "优设标题黑", text: "你好，世界！今天天气不错。", sourceType: "ttf" as const, outType: "woff2" as const, fullFormat: "truetype" },
+  /** FiraCode（拉丁等宽，GPOS 做 ligature，非 CJK 标点，验证降级路径不破坏拉丁字体） */
+  { label: "FiraCode-代码", fontPath: "/mnt/d/字体资源/FiraCode/FiraCode-Medium.ttf", fontName: "FiraCode", text: "=> !== >= <= ===", sourceType: "ttf" as const, outType: "woff2" as const, fullFormat: "truetype" },
 ];
 
 // ======== 主测试 ========
@@ -363,11 +412,18 @@ for (const tc of testCases) {
       ? `full_otf_${tc.label}.otf`
       : `full_ttf_${tc.label}.ttf`;
 
-    /** 渲染完整字体 */
-    const fullResult = await renderTextViaBrowser(page, baseUrl, fullKey, tc.text, 48, tc.fullFormat);
+    /** 渲染完整字体（fontSize 可选，默认 48；小字号用例用于守护 SSIM 在低分辨率下不退化） */
+    const renderSize = tc.fontSize ?? 48;
+    const fullResult = await renderTextViaBrowser(page, baseUrl, fullKey, tc.text, renderSize, tc.fullFormat);
 
-    /** 渲染子集字体 */
-    const subsetResult = await renderTextViaBrowser(page, baseUrl, subsetKey, tc.text, 48, "truetype");
+    /**
+     * 渲染子集字体：format 必须与 outType 匹配。
+     * woff2 字节若用 format("truetype") 声明，Chrome 嗅探解码时序下可能未及时应用 GPOS
+     * （CJK 全角标点的标点压缩依赖 GPOS lookup），导致连续标点宽度变大、与原始字体人眼不一致。
+     * 改为按实际 outType 声明 format，确保 GPOS 等 layout 表被正确加载。
+     */
+    const subsetFormat = tc.outType === "woff2" ? "woff2" : "truetype";
+    const subsetResult = await renderTextViaBrowser(page, baseUrl, subsetKey, tc.text, renderSize, subsetFormat);
 
     await writeFile(`${BENCHMARK_DIR}/screenshots/${safeLabel}_full.png`, fullResult.screenshot);
     await writeFile(`${BENCHMARK_DIR}/screenshots/${safeLabel}_subset.png`, subsetResult.screenshot);

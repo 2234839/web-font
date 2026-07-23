@@ -48,6 +48,18 @@ var _default = exports.default = _table.default.create('glyf', [], {
       ttf.subsetMap = subsetMap;
       ttf.subsetGids = subsetGids;
       ttf._subsetUnicodeMap = subsetUnicodeMap;
+      /* 注入额外保留的 gid（如 GSUB 连字 target glyph，多数无 unicode，无法通过 codepoint 子集保留）。
+       *  这些 glyph 仍参与 compound 引用解析与 glyf 构建，origToNew 通过 subsetGids 顺序直接映射。 */
+      var extraSubsetGids = ttf.readOptions.extraSubsetGids;
+      if (extraSubsetGids && extraSubsetGids.length > 0) {
+        for (var ei = 0, el = extraSubsetGids.length; ei < el; ei++) {
+          var eg = extraSubsetGids[ei];
+          if (!subsetMap[eg]) {
+            subsetMap[eg] = true;
+            subsetGids.push(eg);
+          }
+        }
+      }
       var parsedGlyfMap = {};
 
       /* 优化：迭代式广度优先遍历替代递归，消除 isEmptyObject 调用 */

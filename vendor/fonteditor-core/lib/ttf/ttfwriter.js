@@ -202,7 +202,7 @@ var TTFWriter = exports.default = /*#__PURE__*/function () {
           }
         }
         if (this.options.kerning) {
-          var kernTables = ['GPOS', 'kern', 'kerx'];
+          var kernTables = ['GPOS', 'GSUB', 'kern', 'kerx'];
           for (var j = 0; j < kernTables.length; j++) {
             var kn = kernTables[j];
             if (ttf[kn] && !added[kn]) {

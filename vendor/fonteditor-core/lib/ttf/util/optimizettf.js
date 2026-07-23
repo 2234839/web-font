@@ -394,25 +394,16 @@ function optimizettf(ttf) {
     glyfNotEmpty: m_glyfNotEmpty
   };
 
-  /* 优化99+103: hasCompound 已在主循环中追踪，过滤使用 _numContours 或 contours.length */
+  /* 原逻辑会删除「无轮廓字形」（_numContours === 0），但这会误删两类必须保留的字形：
+   *  (1) space（U+0020）等空白字符——无轮廓但 cmap 引用，删除后该码点渲染为 .notdef；
+   *  (2) GSUB 连字的 spacer/seq target（如 FiraCode 的 equal.spacer）——无轮廓的占位字形，
+   *      是 GSUB ChainedContext 替换的目标，删除后连字规则 target gid 失效，连字不渲染。
+   *  无轮廓字形在 OpenType 中合法（.notdef 即常见无轮廓字形），保留它们仅增加极小体积，
+   *  因此这里不再按轮廓数过滤，保留全部字形，glyf 顺序与 subsetGids 保持一一对应，
+   *  使调用方（rewriteLayoutTablesForSubset）的 原gid→新gid 映射稳定可靠。 */
   if (!hasCompound) {
-    /* 优化284: 预分配 filtered + 索引赋值替代 push，indexMap 保持稀疏数组 */
-    var filtered = new Array(gl);
-    var indexMap = [];
-    var fLen = 0;
-    filtered[fLen++] = glyfs[0];
-    indexMap[0] = 0;
-    for (var gi = 1; gi < gl; gi++) {
-      var g = glyfs[gi];
-      if (g._numContours != null ? g._numContours > 0 : (g.contours && g.contours.length)) {
-        indexMap[gi] = fLen;
-        filtered[fLen++] = g;
-      }
-    }
-    filtered.length = fLen;
-    ttf.glyf = filtered;
     if (ttf.support && ttf.support.maxp) {
-      ttf.support.maxp.numGlyphs = filtered.length;
+      ttf.support.maxp.numGlyphs = glyfs.length;
     }
   }
   if (!repeatList.length) {

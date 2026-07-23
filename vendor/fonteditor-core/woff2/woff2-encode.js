@@ -801,6 +801,20 @@ function encodeTTFToWOFF2(ttfBuffer) {
   let dirIdx = 0;
   let totalDirSize = 0;
 
+  /**
+   * 计算单个 Table Directory entry 的序列化字节数
+   * WOFF2 规范: flags(1) + (tagIndex===63 时追加 4 字节原始 tag) + origLength(Base128) + (hasTransform 时 transformLength(Base128))
+   *
+   * 修复: tagIndex===63（表名不在已知 63 个表内，如 GPOS/gasp/GDEF）时必须额外写 4 字节 tag。
+   *      原实现漏算这 4 字节，导致含此类表的字体（如开启 kerning 保留 GPOS 后）woff2 buffer 预分配不足，
+   *      woff2.set(compressedData, dirPos) 越界。
+   */
+  const entrySize = (tagIndex, origLength, hasTransform, transformLength) =>
+    1
+    + (tagIndex === 63 ? 4 : 0)
+    + sizeUIntBase128(origLength)
+    + (hasTransform ? sizeUIntBase128(transformLength) : 0);
+
   for (var fi2 = 0, fl2 = filtered.length; fi2 < fl2; fi2++) {
     var t = filtered[fi2];
     if (t.tagU32 === TAG_loca) {
@@ -814,7 +828,7 @@ function encodeTTFToWOFF2(ttfBuffer) {
         data: EMPTY_UINT8,
         hasTransform: true,
       };
-      totalDirSize += 1 + sizeUIntBase128(origLength) + sizeUIntBase128(0);
+      totalDirSize += entrySize(t.tagIndex, origLength, true, 0);
       continue;
     }
 
@@ -827,7 +841,7 @@ function encodeTTFToWOFF2(ttfBuffer) {
         data: glyfTransformed.transformedGlyf,
         hasTransform: true,
       };
-      totalDirSize += 1 + sizeUIntBase128(t.length) + sizeUIntBase128(glyfTransformed.transformedGlyf.length);
+      totalDirSize += entrySize(t.tagIndex, t.length, true, glyfTransformed.transformedGlyf.length);
       continue;
     }
 
@@ -841,7 +855,7 @@ function encodeTTFToWOFF2(ttfBuffer) {
       data: tableData,
       isHead: t.tagU32 === TAG_head,
     };
-    totalDirSize += 1 + sizeUIntBase128(t.length);
+    totalDirSize += entrySize(t.tagIndex, t.length, false, t.length);
   }
   dirEntries.length = dirIdx;
 

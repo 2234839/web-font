@@ -19,6 +19,7 @@ var _cvt = _interopRequireDefault(require("./cvt"));
 var _prep = _interopRequireDefault(require("./prep"));
 var _gasp = _interopRequireDefault(require("./gasp"));
 var _GPOS = _interopRequireDefault(require("./GPOS"));
+var _GSUB = _interopRequireDefault(require("./GSUB"));
 var _kern = _interopRequireDefault(require("./kern"));
 var _kerx = _interopRequireDefault(require("./kerx"));
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
@@ -42,6 +43,7 @@ var _default = exports.default = {
   prep: _prep.default,
   gasp: _gasp.default,
   GPOS: _GPOS.default,
+  GSUB: _GSUB.default,
   kern: _kern.default,
   kerx: _kerx.default
 };

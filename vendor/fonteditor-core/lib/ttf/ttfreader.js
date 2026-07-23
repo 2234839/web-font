@@ -14,7 +14,7 @@ var _post = require("./table/post");
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
 
 /** 优化291: 表名列表提升为模块级常量，避免每次 readBuffer 创建新数组 */
-var TTF_TABLE_NAMES = ['head', 'maxp', 'loca', 'cmap', 'glyf', 'name', 'hhea', 'hmtx', 'post', 'OS/2', 'fpgm', 'cvt', 'prep', 'gasp', 'GPOS', 'kern', 'kerx'];
+var TTF_TABLE_NAMES = ['head', 'maxp', 'loca', 'cmap', 'glyf', 'name', 'hhea', 'hmtx', 'post', 'OS/2', 'fpgm', 'cvt', 'prep', 'gasp', 'GPOS', 'GSUB', 'kern', 'kerx'];
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
 function _defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } }
 function _createClass(Constructor, protoProps, staticProps) { if (protoProps) _defineProperties(Constructor.prototype, protoProps); if (staticProps) _defineProperties(Constructor, staticProps); Object.defineProperty(Constructor, "prototype", { writable: false }); return Constructor; }
@@ -73,8 +73,8 @@ var TTFReader = exports.default = /*#__PURE__*/function () {
           if (!hinting && (tableName === 'fpgm' || tableName === 'cvt' || tableName === 'prep' || tableName === 'gasp')) {
             continue;
           }
-          /* 优化8: hinting=false && kerning=false 时跳过 GPOS/kern/kerx */
-          if (!hinting && !kerning && (tableName === 'GPOS' || tableName === 'kern' || tableName === 'kerx')) {
+          /* 优化8: hinting=false && kerning=false 时跳过 GPOS/GSUB/kern/kerx */
+          if (!hinting && !kerning && (tableName === 'GPOS' || tableName === 'GSUB' || tableName === 'kern' || tableName === 'kerx')) {
             continue;
           }
           var offset = ttf.tables[tableName].offset;
@@ -234,6 +234,7 @@ var TTFReader = exports.default = /*#__PURE__*/function () {
       }
       if (!this.options.hinting && !this.options.kerning) {
         ttf.GPOS = null;
+        ttf.GSUB = null;
         ttf.kern = null;
         ttf.kerx = null;
       }

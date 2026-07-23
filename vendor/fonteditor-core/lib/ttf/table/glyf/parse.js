@@ -128,8 +128,8 @@ function parseCompoundGlyf(reader, glyf) {
   var view = reader.view;
   var vOffset = view.byteOffset + reader.offset;
 
-  /** 优化293: F2DOT14_SCALE 提升到循环外 */
-  var F2DOT14_SCALE = 0.0001;
+  /** 优化293: F2DOT14 逆比例常量提升到循环外（raw * (1/16384) 浮点解码） */
+  var F2DOT14_INV = 0.00006103515625;
   do {
     flags = view.getUint16(vOffset, false); vOffset += 2;
     var glyphIndex = view.getUint16(vOffset, false); vOffset += 2;
@@ -158,21 +158,27 @@ function parseCompoundGlyf(reader, glyf) {
       scale10 = view.getInt16(vOffset, false); vOffset += 2;
       scaleY = view.getInt16(vOffset, false); vOffset += 2;
     }
-    /** 优化293: F2DOT14_SCALE 提升到循环外，避免每次迭代重新赋值 */
+    /**
+     * F2DOT14 解码：raw / 16384。
+     * 原实现 (raw * 0.6103515625 + 0.5 | 0) * 0.0001 对负数有 bug——
+     * `+0.5 | 0` 对负数是向零截断而非四舍五入，导致 -16384(=-1.0) 被解码成 -0.9999，
+     * 复合字形水平镜像（如 FiraCode less_equal.liga 引用 greater_equal.liga）产生坐标漂移。
+     * 直接 raw * (1/16384) 浮点解码，无量化、无符号偏差。
+     */
     if (ARGS_ARE_XY_VALUES & flags) {
       glyf.glyfs.push({
         flags: flags,
         glyphIndex: glyphIndex,
         useMyMetrics: !!(flags & USE_MY_METRICS),
         overlapCompound: !!(flags & OVERLAP_COMPOUND),
-        transform: { a: (scaleX * 0.6103515625 + 0.5 | 0) * F2DOT14_SCALE, b: (scale01 * 0.6103515625 + 0.5 | 0) * F2DOT14_SCALE, c: (scale10 * 0.6103515625 + 0.5 | 0) * F2DOT14_SCALE, d: (scaleY * 0.6103515625 + 0.5 | 0) * F2DOT14_SCALE, e: arg1, f: arg2 }
+        transform: { a: scaleX * F2DOT14_INV, b: scale01 * F2DOT14_INV, c: scale10 * F2DOT14_INV, d: scaleY * F2DOT14_INV, e: arg1, f: arg2 }
       });
     } else {
       glyf.glyfs.push({
         flags: flags,
         glyphIndex: glyphIndex,
         points: [arg1, arg2],
-        transform: { a: (scaleX * 0.6103515625 + 0.5 | 0) * F2DOT14_SCALE, b: (scale01 * 0.6103515625 + 0.5 | 0) * F2DOT14_SCALE, c: (scale10 * 0.6103515625 + 0.5 | 0) * F2DOT14_SCALE, d: (scaleY * 0.6103515625 + 0.5 | 0) * F2DOT14_SCALE, e: 0, f: 0 }
+        transform: { a: scaleX * F2DOT14_INV, b: scale01 * F2DOT14_INV, c: scale10 * F2DOT14_INV, d: scaleY * F2DOT14_INV, e: 0, f: 0 }
       });
     }
   } while (MORE_COMPONENTS & flags);

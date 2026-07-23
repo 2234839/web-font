@@ -161,7 +161,7 @@ function readWindowsAllCodes(tables, ttf) {
   }
 
   /* 非subset模式 - 全量展开（原始逻辑） */
-  if (format0) {
+  if (format0 && format0.glyphIdArray) {
     for (var i2 = 0, l2 = format0.glyphIdArray.length; i2 < l2; i2++) {
       if (format0.glyphIdArray[i2]) {
         codes[i2] = format0.glyphIdArray[i2];
