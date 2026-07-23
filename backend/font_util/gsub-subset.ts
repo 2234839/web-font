@@ -183,8 +183,7 @@ function readCoverageRemapped(
        *  原代码会循环 count 次（全部 gidLookup[g] 越界返回 undefined 被 >=0 跳过），浪费 107852 次
        *  迭代（占 readCoverageRemapped 总工作量的 95%）。
        *  跳过循环但保持原语义：count > 0 仍令 origNonEmpty=true → newGids 空 → outOfSubset=true → 返回 null，
-       *  与原代码循环全空的结果完全等价（调用方据此判该 coverage/subtable 失效）。
-       *  readCoverageRemapped 是 FiraCode subsetGSUB 第一大热点（70.5% self time）。 */
+       *  与原代码循环全空的结果完全等价（调用方据此判该 coverage/subtable 失效）。 */
       const numGlyphs = gidLookup.length;
       const base = off + 4;
       if (base + count * 2 > len) {
@@ -221,16 +220,31 @@ function readCoverageRemapped(
       }
     } else if (format === COV_RANGE) {
       const rangeCount = dv.getUint16(off + 2, false);
+      /** range end 上限 = glyph 总数 - 1。gidLookup[g] 对 g >= numGlyphs 必然越界（不在子集），
+       *  故将每个 range 的 end clamp 到 numGlyphs-1、start >= numGlyphs 的 range 直接跳过，
+       *  与原代码逐 gid 遍历全越界跳过的结果完全等价。
+       *  FiraCode 实测 11 次 format2 miss 含 439 个 end >= numGlyphs 的越界 range，逐 gid 展开浪费
+       *  ~320 万次 gidLookup 索引（占 readCoverageRemapped 总工作量绝大头）。 */
+      const numGlyphs = gidLookup.length;
       let p = off + 4;
       for (let i = 0; i < rangeCount; i++) {
         if (p + 6 > len) break;
         const start = dv.getUint16(p, false);
         const end = dv.getUint16(p + 2, false);
         if (end >= start && end - start < COVERAGE_MAX_EXPAND && newGids.length + (end - start + 1) <= COVERAGE_MAX_EXPAND) {
-          for (let g = start; g <= end; g++) {
+          if (start >= numGlyphs) {
+            /** 整个 range 越界：原代码逐 gid 遍历全跳过 push 但会设 origNonEmpty=true，此处保持等价语义
+             *  （→ newGids 空、origNonEmpty=true → outOfSubset → 返回 null） */
             origNonEmpty = true;
-            const m = gidLookup[g];
-            if (m >= 0) newGids.push(m);
+          } else {
+            /** clamp end 到合法 gid 范围；start..numGlyphs-1 段与原代码逐 gid 处理完全相同，
+             *  numGlyphs..end 段原代码全越界跳过，clamp 后省去该段空循环 */
+            const e = end < numGlyphs ? end : numGlyphs - 1;
+            for (let g = start; g <= e; g++) {
+              origNonEmpty = true;
+              const m = gidLookup[g];
+              if (m >= 0) newGids.push(m);
+            }
           }
         }
         p += 6;
