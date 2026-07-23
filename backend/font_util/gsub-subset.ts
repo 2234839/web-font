@@ -177,17 +177,30 @@ function readCoverageRemapped(
     const format = dv.getUint16(off, false);
     if (format === COV_LIST) {
       const count = dv.getUint16(off + 2, false);
+      /** 损坏/错位 coverage 兜底：coverage 的 gid 是 glyph index，count 不可能超过字体 glyph 总数
+       *  （= gidLookup.length）。FiraCode 实测 77 次 format1 miss 中有 8 次 count 高达 15460（远超
+       *  glyph 总数 1652）——这些是 ChainContextSubst format3 中指向错误偏移读到的垃圾 count，
+       *  原代码会循环 count 次（全部 gidLookup[g] 越界返回 undefined 被 >=0 跳过），浪费 107852 次
+       *  迭代（占 readCoverageRemapped 总工作量的 95%）。
+       *  跳过循环但保持原语义：count > 0 仍令 origNonEmpty=true → newGids 空 → outOfSubset=true → 返回 null，
+       *  与原代码循环全空的结果完全等价（调用方据此判该 coverage/subtable 失效）。
+       *  readCoverageRemapped 是 FiraCode subsetGSUB 第一大热点（70.5% self time）。 */
+      const numGlyphs = gidLookup.length;
       const base = off + 4;
-      if (base + count * 2 <= len) {
+      if (base + count * 2 > len) {
+        /** 数据范围越界：原代码不进入循环，origNonEmpty 保持 false，返回空数组 */
+      } else if (count > numGlyphs) {
+        /** 损坏 coverage（count 超过 glyph 总数，gidLookup 全部越界）：跳过必然全空的循环，
+         *  仅保留 origNonEmpty=count>0 语义 → newGids 空 → outOfSubset=true → 返回 null，与原代码循环全空完全等价 */
+        origNonEmpty = count > 0;
+      } else {
         origNonEmpty = count > 0;
         /** 预分配最大容量 count，索引写入后截断长度，避免 push 动态扩容（format1 是 coverage 热路径） */
         const buf = new Array(count);
         let w = 0;
         /** 批量读优化：coverage format1 的 gid 列表是连续 count 个大端 u16。
          *  DataView.getUint16 每次有边界检查 + 大端组装开销；gid 数组若 2 字节对齐，
-         *  用 Uint16Array view 共享 buffer 读取 + 内联翻转更快（与 hmtx/loca 同思路）。
-         *  readCoverageRemapped 是 FiraCode subsetGSUB 第一大热点（75.5%），miss 路径
-         *  sum 遍历 ~26000 gid，批量读省每次的 DataView 调度。 */
+         *  用 Uint16Array view 共享 buffer 读取 + 内联翻转更快（与 hmtx/loca 同思路）。 */
         const gidArrByteOff = dv.byteOffset + base;
         if ((gidArrByteOff & 1) === 0) {
           const src16 = new Uint16Array(dv.buffer, gidArrByteOff, count);
