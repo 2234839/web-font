@@ -302,29 +302,36 @@ function collectChainRefs(
     }
   } else if (format === 3) {
     /** format3: 显式 coverage 数组 + SubstLookupRecords。
-     *  三个 coverage 数组（backtrack/input/lookahead）的 gid 须全在子集才触发。 */
+     *  三个 coverage 数组（backtrack/input/lookahead）的 gid 须全在子集才触发。
+     *  优化：triggerable 一旦为 false 即短路（无需继续遍历后续 coverage，原代码无短路会读完全部）；
+     *  去掉原 readCovGids 闭包 + allGids 中间数组（collectChainRefs 在固定点迭代中高频调用，
+     *  初夏纯标点 840 次/call），triggerable 时 gid 直接 add 进 contextGids，省 allGids 中转。 */
     let p = off + 2;
-    const allGids: number[] = [];
     let triggerable = true;
-    const readCovGids = (cnt: number): boolean => {
+    const readCovGidsChecked = (cnt: number): void => {
       for (let k = 0; k < cnt; k++) {
         const covGids = readCoverageGids(r, off + r.u16(p + k * 2), covCache);
         for (const g of covGids) {
-          allGids.push(g);
-          if (!inSubset(g)) triggerable = false;
+          if (!inSubset(g)) {
+            triggerable = false;
+            return;
+          }
+          contextGids.add(g);
         }
       }
       p += cnt * 2;
-      return true;
     };
     const backtrackCount = r.u16(p); p += 2;
-    readCovGids(backtrackCount);
-    const inputCount = r.u16(p); p += 2;
-    readCovGids(inputCount);
-    const lookaheadCount = r.u16(p); p += 2;
-    readCovGids(lookaheadCount);
+    readCovGidsChecked(backtrackCount);
     if (triggerable) {
-      for (const g of allGids) contextGids.add(g);
+      const inputCount = r.u16(p); p += 2;
+      readCovGidsChecked(inputCount);
+    }
+    if (triggerable) {
+      const lookaheadCount = r.u16(p); p += 2;
+      readCovGidsChecked(lookaheadCount);
+    }
+    if (triggerable) {
       const substCount = r.u16(p);
       for (let k = 0; k < substCount; k++) refs.add(r.u16(p + 2 + k * 4 + 2));
     }
