@@ -29,10 +29,13 @@ export class OTWriter {
     return this.bytes.length;
   }
 
-  /** 回退到指定字节位置，丢弃之后写入的字节与对应的偏移量槽（用于 subtable 重映射失败的保守降级） */
+  /** 回退到指定字节位置，丢弃之后写入的字节与对应的偏移量槽（用于 subtable 重映射失败的保守降级）。
+   *  patches 按 pos 单调递增追加，故从尾部 pop 掉 pos >= 阈值的项即可，无需全量 filter
+   *  （subsetGSUB 每个失败的 subtable 都 rollback，FiraCode 实测 392 次/call，filter 改 pop 后此热点消失）。 */
   rollback(pos: number): void {
     this.bytes.length = pos;
-    this.patches = this.patches.filter((p) => p.pos < pos);
+    const patches = this.patches;
+    while (patches.length > 0 && patches[patches.length - 1].pos >= pos) patches.pop();
   }
 
   writeUint8(v: number): void {
@@ -83,7 +86,11 @@ export class OTWriter {
  */
 export class OTReader {
   errorFlag = false;
-  constructor(private dv: DataView) {}
+  /** 原始 DataView，热路径（如 coverage 解析）可直接用 getUint16 绕过 u16 的逐次边界检查 */
+  readonly dv: DataView;
+  constructor(dv: DataView) {
+    this.dv = dv;
+  }
 
   u16(off: number): number {
     if (off < 0 || off + 2 > this.dv.byteLength) {

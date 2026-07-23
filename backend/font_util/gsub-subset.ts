@@ -47,19 +47,68 @@ function remapGid(origToNew: Map<number, number>, gid: number): number | null {
 /** Coverage 表单个 range 展开为 gid 的上限保护：超出视为偏移错位读到垃圾数据。 */
 const COVERAGE_MAX_EXPAND = 0x10000;
 
-/** 读取 Coverage 表，返回覆盖的原 gid 列表（保持顺序）。 */
-function readCoverageGids(r: Reader, off: number): number[] {
-  const format = r.u16(off);
-  const gids: number[] = [];
+/**
+ * Coverage 解析缓存（off → 解析条目）。
+ * FiraCode 等 calt 字体的 ChainContextSubst format3 中，同一个 coverage 被大量 subtable
+ * 重复引用（实测 604 次引用 / 83 个独立 coverage，最热 coverage 被引 126 次）。
+ * 缓存「原 gid 解析」与「重映射后新 gid」两层结果，消除 ~86% 的重复 u16 读取、
+ * map/filter 与数组分配（subsetGSUB 第一大 CPU+GC 热点）。
+ * 生命周期与单次 subsetGSUB 调用绑定，origToNew 不变故结果稳定可复用。
+ */
+interface CoverageCacheEntry {
+  /** 原 gid 列表（type1/2/3/4 按 index 配对用） */
+  gids: number[];
+  /** 重映射后新 gid 列表（format3 coverage 数组直接用），懒计算；null 表示尚未计算 */
+  remapped: number[] | null;
+  /** 原 coverage 非空但全部 gid 落子集外 → true，调用方据此判该 coverage 失效（区别于原本就空的合法 coverage） */
+  outOfSubset: boolean;
+}
+type CoverageCache = Map<number, CoverageCacheEntry>;
+
+/**
+ * 原gid → 新gid 的数组查找表（热路径专用）。
+ * origToNew 是 Map<number,number>，每次 .get() 哈希查询开销大；coverage 解析对每个原 gid 都查一次，
+ * 密度极高。构建 Int32Array 索引表（下标=原gid，值=新gid，-1 表示不在子集）后，查询退化为数组索引，
+ * 比 Map.get 快数倍（subsetGSUB readCoverageRemapped 的主热点）。gid 上限 65536，表最大 256KB。
+ */
+type GidLookup = Int32Array;
+
+/** 读取 Coverage 表，返回覆盖的原 gid 列表（保持顺序）。
+ *  传入 cache 时按 coverage 绝对偏移缓存解析结果（同一 off 复用同一数组实例）。
+ *  热路径：coverage 偏移来自已验证的 subtable 结构（合法范围），直接用 dv.getUint16 绕过
+ *  u16 的逐次边界检查 + errorFlag 判定（subsetGSUB 第一大 CPU 热点，调用密度极高）。 */
+function readCoverageGids(r: Reader, off: number, cache?: CoverageCache): number[] {
+  if (cache) {
+    const hit = cache.get(off);
+    if (hit !== undefined) return hit.gids;
+  }
+  const dv = r.dv;
+  const len = dv.byteLength;
+  /** coverage 偏移合法性兜底：越界则按错误处理（返回空，调用方降级） */
+  if (off < 0 || off + 4 > len) {
+    if (cache) cache.set(off, { gids: [], remapped: null, outOfSubset: false });
+    return [];
+  }
+  const format = dv.getUint16(off, false);
+  let gids: number[] = [];
   if (format === COV_LIST) {
-    const count = r.u16(off + 2);
-    for (let i = 0; i < count; i++) gids.push(r.u16(off + 4 + i * 2));
+    const count = dv.getUint16(off + 2, false);
+    const base = off + 4;
+    if (base + count * 2 > len) {
+      if (cache) cache.set(off, { gids: [], remapped: null, outOfSubset: false });
+      return [];
+    }
+    /** 预分配 + 索引赋值，避免 push 动态扩容（format1 coverage 的高频热循环） */
+    gids = new Array(count);
+    for (let i = 0; i < count; i++) gids[i] = dv.getUint16(base + i * 2, false);
   } else if (format === COV_RANGE) {
-    const rangeCount = r.u16(off + 2);
+    const rangeCount = dv.getUint16(off + 2, false);
     let p = off + 4;
     for (let i = 0; i < rangeCount; i++) {
-      const start = r.u16(p);
-      const end = r.u16(p + 2);
+      /** range 记录 6 字节，越界说明偏移错位读到垃圾 rangeCount，停止解析（返回已收集部分） */
+      if (p + 6 > len) break;
+      const start = dv.getUint16(p, false);
+      const end = dv.getUint16(p + 2, false);
       /** 偏移错位会读到 end < start 或区间异常大的垃圾 range。
        *  Coverage 的 gid 总数不可能超过字体 glyph 总数（< 0x10000），
        *  累计展开超出上限视为损坏数据，停止展开（返回已收集的部分，调用方按子集过滤，多余 gid 自然被丢弃）。 */
@@ -70,7 +119,71 @@ function readCoverageGids(r: Reader, off: number): number[] {
       p += 6;
     }
   }
+  if (cache) cache.set(off, { gids, remapped: null, outOfSubset: false });
   return gids;
+}
+
+/**
+ * 读取 coverage 并返回重映射后的新 gid 列表（带缓存）。
+ * format3 的 coverage 不需要 index 配对（只需"子集内新 gid 集合"），故边解析边过滤，
+ * 直接产出新 gid 数组、不分配中间的原 gid 数组（format3 是 subsetGSUB 最大热点，省一次完整数组分配）。
+ * 解析+重映射结果按 off 缓存：同一 coverage 被多个 subtable 引用时只算一次。
+ * @returns 重映射后新 gid 数组（保持顺序）；原 coverage 非空但全部 gid 落子集外时返回 null，
+ *          调用方据此判该 coverage 失效。
+ */
+function readCoverageRemapped(
+  r: Reader,
+  off: number,
+  gidLookup: GidLookup,
+  cache: CoverageCache,
+): number[] | null {
+  let entry = cache.get(off);
+  if (entry !== undefined) {
+    /** 已缓存：失效返回 null，否则返回重映射数组（remapped 已在首次计算时填好） */
+    return entry.outOfSubset ? null : (entry.remapped as number[]);
+  }
+  const dv = r.dv;
+  const len = dv.byteLength;
+  /** 失效/空结果占位（首次计算后回填 cache） */
+  let newGids: number[] = [];
+  let origNonEmpty = false;
+  let outOfSubset = false;
+  if (off < 0 || off + 4 > len) {
+    /** 越界，按空 coverage 处理 */
+  } else {
+    const format = dv.getUint16(off, false);
+    if (format === COV_LIST) {
+      const count = dv.getUint16(off + 2, false);
+      const base = off + 4;
+      if (base + count * 2 <= len) {
+        origNonEmpty = count > 0;
+        for (let i = 0; i < count; i++) {
+          const m = gidLookup[dv.getUint16(base + i * 2, false)];
+          if (m >= 0) newGids.push(m);
+        }
+      }
+    } else if (format === COV_RANGE) {
+      const rangeCount = dv.getUint16(off + 2, false);
+      let p = off + 4;
+      for (let i = 0; i < rangeCount; i++) {
+        if (p + 6 > len) break;
+        const start = dv.getUint16(p, false);
+        const end = dv.getUint16(p + 2, false);
+        if (end >= start && end - start < COVERAGE_MAX_EXPAND && newGids.length + (end - start + 1) <= COVERAGE_MAX_EXPAND) {
+          for (let g = start; g <= end; g++) {
+            origNonEmpty = true;
+            const m = gidLookup[g];
+            if (m >= 0) newGids.push(m);
+          }
+        }
+        p += 6;
+      }
+    }
+  }
+  /** 原 coverage 非空但全部 gid 落子集外 → 失效（与原 coverage 本就空的合法空数组区分） */
+  if (newGids.length === 0 && origNonEmpty) outOfSubset = true;
+  cache.set(off, { gids: newGids, remapped: newGids, outOfSubset });
+  return outOfSubset ? null : newGids;
 }
 
 /**
@@ -447,12 +560,14 @@ function serializeChainedContextSubst(
   r: Reader,
   off: number,
   origToNew: Map<number, number>,
+  covCache: CoverageCache,
+  gidLookup: GidLookup,
 ): boolean {
   const format = r.u16(off);
   if (format === 1) {
     /** coverage(gid) + 子规则数组，每规则含 backtrack/input/lookahead gid 序列 + SubstLookupRecord */
     const covOff = off + r.u16(off + 2);
-    const covGids = readCoverageGids(r, covOff);
+    const covGids = readCoverageGids(r, covOff, covCache);
     const ruleSetCount = r.u16(off + 4);
     if (ruleSetCount > 0x7fff) return false;
     /** 按 coverage 字形收集有效规则 */
@@ -529,13 +644,13 @@ function serializeChainedContextSubst(
       }
     }
     if (classToRules.size === 0) return false;
-    writeChainFormat2(w, r, coverageOff, backtrackCDOff, inputCDOff, lookaheadCDOff, origToNew, classToRules);
+    writeChainFormat2(w, r, coverageOff, backtrackCDOff, inputCDOff, lookaheadCDOff, origToNew, classToRules, covCache, gidLookup);
     return true;
   }
 
   if (format === 3) {
     /** 显式 coverage 数组 + SubstLookupRecord */
-    const parsed = parseChainFormat3(r, off, origToNew);
+    const parsed = parseChainFormat3(r, off, covCache, gidLookup);
     if (!parsed) return false;
     writeChainFormat3(w, parsed);
     return true;
@@ -660,6 +775,8 @@ function writeChainFormat2(
   lookaheadCDOff: number,
   origToNew: Map<number, number>,
   classToRules: Map<number, Array<{ back: number[]; input: number[]; look: number[]; records: Array<{ seq: number; lookup: number }> }>>,
+  covCache: CoverageCache,
+  gidLookup: GidLookup,
 ): void {
   const subStart = w.length;
   const coverageHolder: number[] = [0];
@@ -690,9 +807,10 @@ function writeChainFormat2(
     }
   }
 
-  /** Coverage 重映射：仅保留子集内 gid（input 第一分量必须在子集内才会被 shaping 命中） */
-  const origCovGids = readCoverageGids(r, coverageOff);
-  const newCovGids = origCovGids.map((g) => remapGid(origToNew, g)).filter((g): g is number => g !== null);
+  /** Coverage 重映射：仅保留子集内 gid（input 第一分量必须在子集内才会被 shaping 命中）。
+   *  readCoverageRemapped 返回 null 表示原 coverage 非空但全子集外，此时 emitCoverage 写空 coverage
+   *  （与原 map/filter 后为空数组等价，浏览器匹配不命中，不影响其他规则）。 */
+  const newCovGids = readCoverageRemapped(r, coverageOff, gidLookup, covCache) ?? [];
   coverageHolder[0] = emitCoverage(w, newCovGids);
 
   /** 重映射三个 ClassDef 的 gid（class index 不变） */
@@ -721,7 +839,8 @@ function writeChainFormat2(
 function parseChainFormat3(
   r: Reader,
   off: number,
-  origToNew: Map<number, number>,
+  covCache: CoverageCache,
+  gidLookup: GidLookup,
 ): { backCovs: number[][]; inputCovs: number[][]; lookCovs: number[][]; records: Array<{ seq: number; lookup: number }> } | null {
   let p = off + 2;
   const readCovArr = (): number[][] | null => {
@@ -730,10 +849,9 @@ function parseChainFormat3(
     const arr: number[][] = [];
     for (let k = 0; k < count; k++) {
       const covOff = off + r.u16(p + k * 2);
-      const gids = readCoverageGids(r, covOff);
-      const newGids = gids.map((g) => remapGid(origToNew, g)).filter((g): g is number => g !== null);
-      /** coverage 全部 gid 落在子集外，该 coverage 空 → 规则失效 */
-      if (newGids.length === 0 && gids.length > 0) return null;
+      const newGids = readCoverageRemapped(r, covOff, gidLookup, covCache);
+      /** coverage 全部 gid 落在子集外（原非空）→ 规则失效 */
+      if (newGids === null) return null;
       arr.push(newGids);
     }
     p += count * 2;
@@ -800,6 +918,8 @@ function serializeSubtable(
   off: number,
   type: number,
   origToNew: Map<number, number>,
+  covCache: CoverageCache,
+  gidLookup: GidLookup,
 ): boolean {
   r.clearError();
   let ok: boolean;
@@ -817,7 +937,7 @@ function serializeSubtable(
       ok = serializeLigatureSubst(w, r, off, origToNew);
       break;
     case LT_CHAIN:
-      ok = serializeChainedContextSubst(w, r, off, origToNew);
+      ok = serializeChainedContextSubst(w, r, off, origToNew, covCache, gidLookup);
       break;
     default:
       return false;
@@ -840,6 +960,17 @@ export function subsetGSUB(
 ): Uint8Array {
   const dv = new DataView(gsubBytes.buffer, gsubBytes.byteOffset, gsubBytes.byteLength);
   const r = new Reader(dv);
+
+  /** Coverage 解析缓存：ChainContextSubst format3 中 coverage 被大量 subtable 重复引用，
+   *  按 off 缓存解析结果，消除重复 u16 读取与数组分配（FiraCode 实测 604 引用/83 独立 coverage）。 */
+  const covCache: CoverageCache = new Map();
+
+  /** 原gid → 新gid 数组查找表（coverage 边解析边过滤的热路径用，数组索引比 Map.get 快数倍）。
+   *  下标=原gid，值=新gid，-1 表示不在子集。容量覆盖出现的最大原 gid。 */
+  let maxOrigGid = 0;
+  for (const g of origToNew.keys()) if (g > maxOrigGid) maxOrigGid = g;
+  const gidLookup: GidLookup = new Int32Array(maxOrigGid + 1).fill(-1);
+  for (const [g, n] of origToNew) gidLookup[g] = n;
 
   /** ---- GSUB Header ---- */
   const major = r.u16(0);
@@ -971,7 +1102,7 @@ export function subsetGSUB(
          *  不再用 copyBytesBlock 按估算范围拷贝——原始 subtable 数据可能与其他 lookup 物理交错，
          *  按 lookup 边界估算会拷贝到错误字节（霞鹜文楷实测 subtable 在表头区之后）。 */
         const before = w.length;
-        const ok = serializeSubtable(w, r, lk.subtableAbsOffs[j], lk.effectiveType, origToNew);
+        const ok = serializeSubtable(w, r, lk.subtableAbsOffs[j], lk.effectiveType, origToNew, covCache, gidLookup);
         if (!ok) {
           w.rollback(before);
           writeEmptySubtable(w, lk.effectiveType);

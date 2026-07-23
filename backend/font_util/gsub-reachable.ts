@@ -28,8 +28,17 @@ const LT_REVERSE_CHAIN = 5;
 const LT_CHAIN = 6;
 const LT_EXTENSION = 7;
 
-/** 读取 Coverage 表的 gid 列表 */
-function readCoverageGids(r: OTReader, off: number): number[] {
+/**
+ * Coverage 解析缓存（off → 原 gid 数组）。
+ * 不动点迭代每轮对全部 lookup 的 coverage 重复解析，但 coverage 字节不变故结果稳定。
+ * 实测 FiraCode 迭代多轮，缓存消除绝大部分重复 u16 读取与数组分配（reachable 阶段主热点）。
+ */
+type CoverageCache = Map<number, number[]>;
+
+/** 读取 Coverage 表的 gid 列表。传入 cache 时按绝对偏移缓存解析结果。 */
+function readCoverageGids(r: OTReader, off: number, cache: CoverageCache): number[] {
+  const hit = cache.get(off);
+  if (hit !== undefined) return hit;
   const format = r.u16(off);
   const gids: number[] = [];
   if (format === 1) {
@@ -45,6 +54,7 @@ function readCoverageGids(r: OTReader, off: number): number[] {
       p += 6;
     }
   }
+  cache.set(off, gids);
   return gids;
 }
 
@@ -61,6 +71,7 @@ export function collectReachableGsubTargets(
 ): Set<number> {
   const dv = new DataView(gsubBytes.buffer, gsubBytes.byteOffset, gsubBytes.byteLength);
   const r = new OTReader(dv);
+  const covCache: CoverageCache = new Map();
 
   const major = r.u16(0);
   const minor = r.u16(2);
@@ -120,7 +131,7 @@ export function collectReachableGsubTargets(
           /** type6：收集可触发规则引用的 lookup index 与所需 context gid */
           const refs = new Set<number>();
           const ctxGids = new Set<number>();
-          collectChainRefs(r, subAbs, refs, ctxGids, inSubset);
+          collectChainRefs(r, subAbs, refs, ctxGids, inSubset, covCache);
           for (const g of ctxGids) {
             if (!reachable.has(g)) { reachable.add(g); changed = true; }
           }
@@ -128,14 +139,14 @@ export function collectReachableGsubTargets(
             const refLk = lookups[li];
             if (!refLk) continue;
             for (const refSub of refLk.subtableAbsOffs) {
-              const refTargets = collectSubtableTargets(r, refSub, refLk.effectiveType, inSubset);
+              const refTargets = collectSubtableTargets(r, refSub, refLk.effectiveType, inSubset, covCache);
               for (const g of refTargets) {
                 if (!reachable.has(g)) { reachable.add(g); changed = true; }
               }
             }
           }
         } else {
-          const newTargets = collectSubtableTargets(r, subAbs, lk.effectiveType, inSubset);
+          const newTargets = collectSubtableTargets(r, subAbs, lk.effectiveType, inSubset, covCache);
           for (const g of newTargets) {
             if (!reachable.has(g)) {
               reachable.add(g);
@@ -157,13 +168,14 @@ function collectSubtableTargets(
   off: number,
   type: number,
   inSubset: (gid: number) => boolean,
+  covCache: CoverageCache,
 ): number[] {
   const targets: number[] = [];
   if (type === LT_SINGLE) {
     /** SingleSubst: format1 coverage+delta / format2 coverage+gidArray */
     const format = r.u16(off);
     const covOff = off + r.u16(off + 2);
-    const covGids = readCoverageGids(r, covOff);
+    const covGids = readCoverageGids(r, covOff, covCache);
     if (format === 1) {
       const delta = r.i16(off + 4);
       for (const g of covGids) {
@@ -178,7 +190,7 @@ function collectSubtableTargets(
   } else if (type === LT_MULTIPLE) {
     const covOff = off + r.u16(off + 2);
     const seqCount = r.u16(off + 4);
-    const covGids = readCoverageGids(r, covOff);
+    const covGids = readCoverageGids(r, covOff, covCache);
     for (let i = 0; i < covGids.length && i < seqCount; i++) {
       if (!inSubset(covGids[i])) continue;
       const seqOff = off + r.u16(off + 6 + i * 2);
@@ -188,7 +200,7 @@ function collectSubtableTargets(
   } else if (type === LT_ALTERNATE) {
     const covOff = off + r.u16(off + 2);
     const altCount = r.u16(off + 4);
-    const covGids = readCoverageGids(r, covOff);
+    const covGids = readCoverageGids(r, covOff, covCache);
     for (let i = 0; i < covGids.length && i < altCount; i++) {
       if (!inSubset(covGids[i])) continue;
       const altOff = off + r.u16(off + 6 + i * 2);
@@ -199,7 +211,7 @@ function collectSubtableTargets(
     /** LigatureSubst: 全部 component 在子集 → target gid */
     const covOff = off + r.u16(off + 2);
     const setCount = r.u16(off + 4);
-    const covGids = readCoverageGids(r, covOff);
+    const covGids = readCoverageGids(r, covOff, covCache);
     for (let i = 0; i < covGids.length && i < setCount; i++) {
       const firstInSubset = inSubset(covGids[i]);
       const setOff = off + r.u16(off + 6 + i * 2);
@@ -244,12 +256,13 @@ function collectChainRefs(
   refs: Set<number>,
   contextGids: Set<number>,
   inSubset: (gid: number) => boolean,
+  covCache: CoverageCache,
 ): void {
   const format = r.u16(off);
   if (format === 1) {
     /** format1: coverage(gid) + SubRuleSet 数组，按 coverage gid 索引 */
     const covOff = off + r.u16(off + 2);
-    const covGids = readCoverageGids(r, covOff);
+    const covGids = readCoverageGids(r, covOff, covCache);
     const setCount = r.u16(off + 4);
     for (let i = 0; i < covGids.length && i < setCount; i++) {
       /** 第一分量（coverage gid）须在子集，否则该 SubRuleSet 不触发 */
@@ -287,7 +300,7 @@ function collectChainRefs(
     let triggerable = true;
     const readCovGids = (cnt: number): boolean => {
       for (let k = 0; k < cnt; k++) {
-        const covGids = readCoverageGids(r, off + r.u16(p + k * 2));
+        const covGids = readCoverageGids(r, off + r.u16(p + k * 2), covCache);
         for (const g of covGids) {
           allGids.push(g);
           if (!inSubset(g)) triggerable = false;
