@@ -3,7 +3,7 @@ import { parseMultipart } from "../multipart";
 import { handleTempUpload, handleAdminUpload } from "../upload";
 
 /** POST /api/upload?mode=temp|admin — 上传字体 */
-export async function handleUpload(req: Request, res: Response) {
+export async function handleUpload(req: Request, _res: Response) {
   const url = parseUrl(req);
   const mode = url.searchParams.get("mode") ?? "temp";
 

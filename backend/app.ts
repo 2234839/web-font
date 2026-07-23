@@ -1,8 +1,9 @@
 import { mimeTypes } from "./server/mime_type";
 import type { cMiddleware } from "./server/req_res";
 import { SimpleHttpServer } from "./server/server";
-import { path_join, readFile, stat, readdir, mkdir } from "./interface";
-import { parseUrl, jsonResponse, stats } from "./shared";
+import { path_join, readFile, stat, mkdir } from "./interface";
+import { parseUrl, jsonResponse, stats, initStats, markStatsDirty } from "./shared";
+import { flushStatsSyncSafe } from "./stats_store";
 import { enableTempUpload, adminApiKey } from "./config";
 import { handleListFonts } from "./routes/fonts";
 import { handleGetConfig } from "./routes/config";
@@ -27,6 +28,7 @@ async function ensureDirectories() {
 
 const logMiddleware: cMiddleware = async (req, res, next) => {
   stats.totalRequests++;
+  markStatsDirty();
   const t1 = Date.now();
   const r = await next(req, res);
   const t2 = Date.now();
@@ -35,7 +37,7 @@ const logMiddleware: cMiddleware = async (req, res, next) => {
   return r;
 };
 
-const staticFileMiddleware: cMiddleware = async function (req, res, next) {
+const staticFileMiddleware: cMiddleware = async function (req, _res, next) {
   let newRes: Response;
   if (req.method === "GET") {
     const url = parseUrl(req);
@@ -149,6 +151,15 @@ const uploadSizeMiddleware: cMiddleware = async (req, res, next) => {
 };
 
 async function main() {
+  /** 最早期恢复累计计数：之后的请求计数会累加在历史值之上 */
+  await initStats();
+
+  /** 优雅退出时尽力落盘最后一次增量（SIGKILL 时由定时器兜底） */
+  globalThis.process?.on?.("beforeExit", () => {
+    markStatsDirty();
+    flushStatsSyncSafe();
+  });
+
   await ensureDirectories();
 
   const server = new SimpleHttpServer({ port: 8087 });

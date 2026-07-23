@@ -1,7 +1,7 @@
 import { jsonResponse, stats, subsetCache, fontBufferCache } from "../shared";
 
 /** GET /api/stats — 返回运行时统计 */
-export async function handleStats(req: Request, res: Response) {
+export async function handleStats(req: Request, _res: Response) {
   return {
     req,
     res: jsonResponse({

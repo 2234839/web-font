@@ -1,9 +1,9 @@
-import { jsonResponse, parseUrl } from "../shared";
-import { readdir, stat } from "../interface";
+import { jsonResponse } from "../shared";
+import { readdir } from "../interface";
 import { fontDirs } from "../config";
 
 /** GET /api/fonts — 列出所有可用字体 */
-export async function handleListFonts(req: Request, res: Response) {
+export async function handleListFonts(req: Request, _res: Response) {
   const allFonts: Array<{ name: string; temporary: boolean }> = [];
 
   for (const dir of fontDirs) {

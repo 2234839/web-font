@@ -175,7 +175,7 @@ async function connectionHandle(
     (rawReq as Request & { _bodyBuffer?: ArrayBuffer })._bodyBuffer = bodyArrayBuffer;
     const rawRes = new Response();
 
-    const { req, res } = await handle(rawReq, rawRes);
+    const { res } = await handle(rawReq, rawRes);
     const resWriter = connection.writable.getWriter();
     let headerText: string[] = [];
     res.headers.forEach((value, key) => {

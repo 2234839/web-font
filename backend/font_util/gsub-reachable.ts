@@ -24,7 +24,6 @@ const LT_SINGLE = 1;
 const LT_MULTIPLE = 2;
 const LT_ALTERNATE = 3;
 const LT_LIGATURE = 4;
-const LT_REVERSE_CHAIN = 5;
 const LT_CHAIN = 6;
 const LT_EXTENSION = 7;
 

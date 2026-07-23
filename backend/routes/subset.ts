@@ -1,6 +1,6 @@
 import { fontSubset } from "../font_util/font";
 import type { FontEditor } from "../../vendor/fonteditor-core/lib/ttf/font.js";
-import { parseUrl, jsonResponse, stats, subsetCache, findFontPath, readFontBuffer } from "../shared";
+import { parseUrl, stats, subsetCache, findFontPath, readFontBuffer, markStatsDirty } from "../shared";
 
 /**
  * 进程启动时戳（模块加载时取一次，进程重启即变化）
@@ -53,9 +53,11 @@ export async function handleFontSubset(req: Request, res: Response) {
   const cacheKey = `${SUBSET_CACHE_KEY}:${fontPath}:${outType}:${text}`;
   stats.subsetRequests++;
   stats.totalChars += text.length;
+  markStatsDirty();
   const cached = subsetCache.get(cacheKey);
   if (cached) {
     stats.subsetCacheHits++;
+    markStatsDirty();
     const contentTypes: Record<string, string> = { ttf: "font/ttf", woff2: "font/woff2" };
     return {
       req,
