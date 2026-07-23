@@ -1212,11 +1212,11 @@ export function subsetGSUB(
 
   /** ScriptList 重序列化字节 */
   scriptListAbsHolder[0] = w.length;
-  for (let i = 0; i < scriptListBytes.length; i++) w.writeUint8(scriptListBytes[i]);
+  w.writeBytes(scriptListBytes);
 
   /** FeatureList 重序列化字节 */
   featureListAbsHolder[0] = w.length;
-  for (let i = 0; i < featureListBytes.length; i++) w.writeUint8(featureListBytes[i]);
+  w.writeBytes(featureListBytes);
 
   /** LookupList 重写 */
   lookupListAbsHolder[0] = w.length;

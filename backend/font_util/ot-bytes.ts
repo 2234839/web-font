@@ -22,46 +22,83 @@
  * （subtable 主体先写，coverage/PairSet 偏移量后填）。
  */
 export class OTWriter {
-  private bytes: number[] = [];
+  /** 优化（Uint8Array 底层缓冲）：原用 number[] + push 累积字节，每个 writeUint8/16 触发
+   *  数字装箱与数组扩容；gsub-subset 逐字节 writeUint8 复制 ScriptList/FeatureList 字节块
+   *  极慢。改用 Uint8Array 容量缓冲 + size 指针：writeUint8/16 索引写入（无装箱），
+   *  writeBytes 用 TypedArray.set 批量复制，toUint8Array 零拷贝 subarray。 */
+  private buf: Uint8Array = new Uint8Array(256);
+  private size: number = 0;
   private patches: Array<{ pos: number; base: number; targetGetter: () => number }> = [];
 
   get length(): number {
-    return this.bytes.length;
+    return this.size;
+  }
+
+  /** 确保剩余容量 >= need，不足则按 2× 扩容 */
+  private ensure(need: number): void {
+    const required = this.size + need;
+    if (required <= this.buf.byteLength) return;
+    let cap = this.buf.byteLength;
+    while (cap < required) cap *= 2;
+    const grown = new Uint8Array(cap);
+    grown.set(this.buf);
+    this.buf = grown;
   }
 
   /** 回退到指定字节位置，丢弃之后写入的字节与对应的偏移量槽（用于 subtable 重映射失败的保守降级）。
    *  patches 按 pos 单调递增追加，故从尾部 pop 掉 pos >= 阈值的项即可，无需全量 filter
    *  （subsetGSUB 每个失败的 subtable 都 rollback，FiraCode 实测 392 次/call，filter 改 pop 后此热点消失）。 */
   rollback(pos: number): void {
-    this.bytes.length = pos;
+    this.size = pos;
     const patches = this.patches;
     while (patches.length > 0 && patches[patches.length - 1].pos >= pos) patches.pop();
   }
 
   writeUint8(v: number): void {
-    this.bytes.push(v & 0xff);
+    this.ensure(1);
+    this.buf[this.size++] = v & 0xff;
   }
 
   writeUint16(v: number): void {
-    this.bytes.push((v >>> 8) & 0xff, v & 0xff);
+    this.ensure(2);
+    const s = this.size;
+    this.buf[s] = (v >>> 8) & 0xff;
+    this.buf[s + 1] = v & 0xff;
+    this.size = s + 2;
   }
 
-  /** 在当前末尾写入 int16（大端，支持负数；如 SingleSubst format1 的 deltaGlyphID） */
+  /** 批量写入字节块（TypedArray.set，远快于逐字节 writeUint8 循环） */
+  writeBytes(arr: Uint8Array): void {
+    const n = arr.byteLength;
+    this.ensure(n);
+    this.buf.set(arr, this.size);
+    this.size += n;
+  }
+
+  /** 在当前末尾写入 int16（大端，支持负数；如 SingleSubst format1 的 deltaGlyphID）。
+   *  原实现依赖 number[] 索引赋值到 length 位置隐式扩展数组，Uint8Array 版需显式 ensure + 推进 size。 */
   writeInt16(v: number): void {
-    this.writeInt16At(this.bytes.length, v);
+    this.ensure(2);
+    const s = this.size;
+    const u16 = v < 0 ? 0x10000 + (v & 0xffff) : v & 0xffff;
+    this.buf[s] = (u16 >>> 8) & 0xff;
+    this.buf[s + 1] = u16 & 0xff;
+    this.size = s + 2;
   }
 
-  /** 在指定绝对位置写入 int16（支持负数；同时用于 flush 回填可能为负的偏移量） */
+  /** 在指定绝对位置写入 int16（支持负数；同时用于 flush 回填可能为负的偏移量）。
+   *  pos 必须已在已写入范围内（由 reserveOffset16 的 ensure 保证），仅覆盖不扩展。 */
   writeInt16At(pos: number, v: number): void {
     const u16 = v < 0 ? 0x10000 + (v & 0xffff) : v & 0xffff;
-    this.bytes[pos] = (u16 >>> 8) & 0xff;
-    this.bytes[pos + 1] = u16 & 0xff;
+    this.buf[pos] = (u16 >>> 8) & 0xff;
+    this.buf[pos + 1] = u16 & 0xff;
   }
 
   /** 预留一个 uint16 偏移量槽位，flush 时写入 (targetGetter() - base) */
   reserveOffset16(base: number, targetGetter: () => number): void {
-    const pos = this.bytes.length;
-    this.bytes.push(0, 0);
+    this.ensure(2);
+    const pos = this.size;
+    this.size += 2;
     this.patches.push({ pos, base, targetGetter });
   }
 
@@ -73,7 +110,7 @@ export class OTWriter {
   }
 
   toUint8Array(): Uint8Array {
-    return new Uint8Array(this.bytes);
+    return new Uint8Array(this.buf.subarray(0, this.size));
   }
 }
 
