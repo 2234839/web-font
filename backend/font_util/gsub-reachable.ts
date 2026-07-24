@@ -145,7 +145,7 @@ function coverageFirstExcludedGid(
  * @param gid 待查 gid
  * @returns gid 在 coverage 中的序号；不在返回 -1
  */
-function coverageIndexOf(r: OTReader, off: number, gid: number): number {
+export function coverageIndexOf(r: OTReader, off: number, gid: number): number {
   const dv = r.dv;
   const format = dv.getUint16(off, false);
   if (format === 1) {
@@ -195,7 +195,7 @@ function coverageIndexOf(r: OTReader, off: number, gid: number): number {
  * 反转遍历路径判断「coverage 是否明显多于 reachable」只需 gid 数，无需展开（思源 locl coverage
  * 达上万 gid，展开即 #1 热点）。format1 直接读 count；format2 累加各 range 的 (end-start+1)。
  */
-function coverageCount(r: OTReader, off: number): number {
+export function coverageCount(r: OTReader, off: number): number {
   const dv = r.dv;
   const format = dv.getUint16(off, false);
   if (format === 1) {

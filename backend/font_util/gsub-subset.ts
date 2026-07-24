@@ -22,6 +22,7 @@
  */
 
 import { OTWriter as Writer, OTReader as Reader, serializeScriptList, serializeFeatureList, scriptListSpan, featureListSpan } from "./ot-bytes.js";
+import { coverageIndexOf, coverageCount } from "./gsub-reachable.js";
 
 /** GSUB lookup 类型常量 */
 const LT_SINGLE = 1;
@@ -371,26 +372,62 @@ function serializeSingleSubst(
   const dv = r.dv;
   const format = r.u16(off);
   const covOff = off + r.u16(off + 2);
-  const covGids = readCoverageGids(r, covOff);
 
   /** 收集 (from新gid → to新gid) 有效项，子集外的剔除 */
   const entries: Array<{ from: number; to: number }> = [];
-  if (format === 1) {
-    const delta = r.i16(off + 4);
-    for (const g of covGids) {
-      const fromNew = gidLookup[g];
-      const toNew = gidLookup[(g + delta) & 0xffff];
-      if (fromNew >= 0 && toNew >= 0) entries.push({ from: fromNew, to: toNew });
-    }
-  } else if (format === 2) {
-    const count = r.u16(off + 4);
-    for (let i = 0; i < covGids.length && i < count; i++) {
-      const fromNew = gidLookup[covGids[i]];
-      const toNew = gidLookup[dv.getUint16(off + 6 + i * 2, false)];
-      if (fromNew >= 0 && toNew >= 0) entries.push({ from: fromNew, to: toNew });
+
+  /** 反转遍历快路径：思源 locl 等 type1 lookup 的 coverage 可达上千~上万 gid（lookup#43 = 8881），
+   *  但子集仅命中个位数。原实现 readCoverageGids 全量展开 coverage 再逐个查 gidLookup（8881 次，
+   *  几乎全未命中）。改为遍历子集原始 gid（currentSortedSubsetGids，仅 19 项），用 coverageIndexOf
+   *  在 coverage 中二分定位下标，命中才取 target——O(subsetSize × log covCount) 替代 O(covCount)。
+   *  与 [[gsub-reachable-type1-fmt2-reverse-iter]] 同思路。仅当 coverage 明显多于子集时启用，
+   *  否则短 coverage 原遍历更快（二分开销 > 跳过收益）。 */
+  const subsetGids = currentSortedSubsetGids;
+  const covGidCount = coverageCount(r, covOff);
+  /** 阈值：coverage gid 数 / 子集 gid 数 > 4 且 coverage 较大时启用反转 */
+  const useReverse = covGidCount > subsetGids.length * 4 && covGidCount > 16;
+
+  if (useReverse) {
+    if (format === 1) {
+      const delta = r.i16(off + 4);
+      for (const g of subsetGids) {
+        /** from gid 必须在 coverage 中（SingleSubst 仅对 coverage 内 gid 生效） */
+        if (coverageIndexOf(r, covOff, g) < 0) continue;
+        const fromNew = gidLookup[g];
+        const toNew = gidLookup[(g + delta) & 0xffff];
+        if (fromNew >= 0 && toNew >= 0) entries.push({ from: fromNew, to: toNew });
+      }
+    } else if (format === 2) {
+      for (const g of subsetGids) {
+        /** idx = gid 在 coverage 中的序号，与 substituteGlyphIDs 数组下标一一对应 */
+        const idx = coverageIndexOf(r, covOff, g);
+        if (idx < 0) continue;
+        const fromNew = gidLookup[g];
+        const toNew = gidLookup[dv.getUint16(off + 6 + idx * 2, false)];
+        if (fromNew >= 0 && toNew >= 0) entries.push({ from: fromNew, to: toNew });
+      }
+    } else {
+      return false;
     }
   } else {
-    return false;
+    const covGids = readCoverageGids(r, covOff);
+    if (format === 1) {
+      const delta = r.i16(off + 4);
+      for (const g of covGids) {
+        const fromNew = gidLookup[g];
+        const toNew = gidLookup[(g + delta) & 0xffff];
+        if (fromNew >= 0 && toNew >= 0) entries.push({ from: fromNew, to: toNew });
+      }
+    } else if (format === 2) {
+      const count = r.u16(off + 4);
+      for (let i = 0; i < covGids.length && i < count; i++) {
+        const fromNew = gidLookup[covGids[i]];
+        const toNew = gidLookup[dv.getUint16(off + 6 + i * 2, false)];
+        if (fromNew >= 0 && toNew >= 0) entries.push({ from: fromNew, to: toNew });
+      }
+    } else {
+      return false;
+    }
   }
   if (entries.length === 0) return false;
 
