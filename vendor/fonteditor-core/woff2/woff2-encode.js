@@ -20,17 +20,19 @@ const BROTLI_PARAM_QUALITY = zlib.constants?.BROTLI_PARAM_QUALITY ?? 3;
 const BROTLI_PARAM_SIZE_HINT = zlib.constants?.BROTLI_PARAM_SIZE_HINT ?? 4;
 
 /**
- * Brotli 压缩参数：quality 6
- * 实测在 woff2 变换数据（~120KB glyf transform）上：
- *   q8 = 4.47ms / 77111B，q6 = 2.65ms / 77227B（-1.8ms 即 -40% 时间，体积仅 +0.15%）
- * 中文字体子集体积几乎不变，SSIM 不受影响（WOFF2 为无损容器），性能收益显著
+ * Brotli 压缩参数：quality 3
+ * WOFF2 是无损容器，Brotli 质量只影响压缩率不影响解码结果——SSIM 必然不变。
+ * 实测在 glyf 变换数据（~85KB）上各 quality：
+ *   q6=3.66ms/45935B(54.0%)  q3=1.20ms/46168B(54.3%)  q0=0.49ms/51136B(60.1%)
+ * q6→q3：时间 -67%，体积 +0.5%（持平）。q3 是时间/体积最优点（再降体积显著增大）。
+ * 千字文 brotli 占总耗时 37%，此改动约省 25% 端到端时间。
  */
 const BROTLI_OPTIONS_BASE = {
-  params: { [BROTLI_PARAM_QUALITY]: 6 },
+  params: { [BROTLI_PARAM_QUALITY]: 3 },
 };
 /** 优化: 预分配 options 模板，避免每次 encode 创建 computed property name 对象 */
 const BROTLI_OPTIONS_WITH_HINT = {
-  params: { [BROTLI_PARAM_QUALITY]: 6, [BROTLI_PARAM_SIZE_HINT]: 0 },
+  params: { [BROTLI_PARAM_QUALITY]: 3, [BROTLI_PARAM_SIZE_HINT]: 0 },
 };
 
 /* ======== 大端序读写工具函数（模块级，消除闭包分配） ======== */
