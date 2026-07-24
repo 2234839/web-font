@@ -1274,12 +1274,16 @@ function serializeSubtable(
   origToNew: Map<number, number>,
   covCache: CoverageCache,
   gidLookup: GidLookup,
+  /** 预扫描已判定的 skipable 结果。传入时跳过内部 isSubtableSkipableByCoverage 重复预检
+   *  （subsetGSUB 主循环预扫描已对每个子表判过，结果只依赖 coverage 字节+gidLookup 不变，可复用）。 */
+  preCheckedSkipable: boolean | undefined,
 ): boolean {
   r.clearError();
   /** 预检：主 coverage（或 fmt3 的三组 coverage）全子集外则直接判失败（输出空 subtable），
    *  跳过昂贵的深度解析。FiraCode 403 lookup 中 ~330 个可预检跳过（type1-4 + fmt1 + fmt3 失效），
-   *  format2 不预检（class 驱动，主 coverage 非充分条件）。 */
-  if (isSubtableSkipableByCoverage(r, off, type, gidLookup, covCache)) return false;
+   *  format2 不预检（class 驱动，主 coverage 非充分条件）。
+   *  预扫描已判时直接用其结果（消除重复预检），否则现场判。 */
+  if (preCheckedSkipable !== undefined ? preCheckedSkipable : isSubtableSkipableByCoverage(r, off, type, gidLookup, covCache)) return false;
   let ok: boolean;
   switch (type) {
     case LT_SINGLE:
@@ -1365,6 +1369,12 @@ export function subsetGSUB(
      *  含 format2 class 驱动子表的 lookup，isSubtableSkipableByCoverage 返回 false，故 allEmpty 必为 false，
      *  走原逐子表路径（保守，与 FiraCode 连字安全要求一致 [[gsub-lookup-deletion-failed-fira]]）。 */
     allEmpty: boolean;
+    /** 每个子表的 isSubtableSkipableByCoverage 预扫描结果（与 subtableAbsOffs 同序）。
+     *  预扫描（下方）填，serialize 阶段复用——避免 serializeSubtable 内部对同一子表再调一次
+     *  isSubtableSkipableByCoverage（思源 56 lookup × 多子表，预扫描与 serialize 各判一次=重复）。
+     *  结果只依赖 coverage 字节 + gidLookup（subsetGSUB 内均不变），与 covCache 状态无关
+     *  （covCache 顺序依赖 bug 已修复，readCoverageRemapped 命中任意 entry 结果正确）。 */
+    subtableSkipable: boolean[];
   }
   const lookups: LookupInfo[] = [];
   for (let i = 0; i < lookupCount; i++) {
@@ -1395,7 +1405,7 @@ export function subsetGSUB(
       effectiveType === LT_ALTERNATE ||
       effectiveType === LT_LIGATURE ||
       effectiveType === LT_CHAIN;
-    lookups.push({ supported, effectiveType, subtableAbsOffs, origLookupOff: lOff, allEmpty: false });
+    lookups.push({ supported, effectiveType, subtableAbsOffs, origLookupOff: lOff, allEmpty: false, subtableSkipable: [] });
   }
 
   /**
@@ -1412,13 +1422,19 @@ export function subsetGSUB(
   for (let i = 0; i < lookupCount; i++) {
     const lk = lookups[i];
     if (!lk.supported) continue;
-    let allEmpty = lk.subtableAbsOffs.length > 0;
-    for (let j = 0; j < lk.subtableAbsOffs.length; j++) {
-      if (!isSubtableSkipableByCoverage(r, lk.subtableAbsOffs[j], lk.effectiveType, gidLookup, covCache)) {
-        allEmpty = false;
-        break;
-      }
+    /** 完整扫描每个子表记录 skipable（供 serialize 复用，避免 serializeSubtable 内部重复预检）。
+     *  原实现 allEmpty=false 时 break 早退省后续判定，但 serialize 阶段对每个子表再调一次
+     *  isSubtableSkipableByCoverage（type1/2/3/4 主 coverage + fmt3 三组 coverage）。缓存完整结果后
+     *  serialize 直接查数组，消除第二次预检。allEmpty = 全部 skipable（数组全 true）。 */
+    const subs = lk.subtableAbsOffs;
+    const skipable = new Array<boolean>(subs.length);
+    let allEmpty = subs.length > 0;
+    for (let j = 0; j < subs.length; j++) {
+      const sk = isSubtableSkipableByCoverage(r, subs[j], lk.effectiveType, gidLookup, covCache);
+      skipable[j] = sk;
+      if (!sk) allEmpty = false;
     }
+    lk.subtableSkipable = skipable;
     lk.allEmpty = allEmpty;
   }
 
@@ -1529,7 +1545,7 @@ export function subsetGSUB(
            *  不再用 copyBytesBlock 按估算范围拷贝——原始 subtable 数据可能与其他 lookup 物理交错，
            *  按 lookup 边界估算会拷贝到错误字节（霞鹜文楷实测 subtable 在表头区之后）。 */
           const before = w.length;
-          const ok = serializeSubtable(w, r, lk.subtableAbsOffs[j], lk.effectiveType, origToNew, covCache, gidLookup);
+          const ok = serializeSubtable(w, r, lk.subtableAbsOffs[j], lk.effectiveType, origToNew, covCache, gidLookup, lk.subtableSkipable[j]);
           if (!ok) {
             w.rollback(before);
             writeEmptySubtable(w, lk.effectiveType);
