@@ -104,19 +104,16 @@ export function collectReachableGsubTargets(
   const lookupListOff = r.u16(8);
 
   const lookupCount = r.u16(lookupListOff);
-  const lookupRelOffs: number[] = [];
-  for (let i = 0; i < lookupCount; i++) {
-    lookupRelOffs.push(r.u16(lookupListOff + 2 + i * 2));
-  }
 
-  /** 解析每个 lookup 的 (effectiveType, subtableAbsOffs) */
+  /** 解析每个 lookup 的 (effectiveType, subtableAbsOffs)。
+   *  合并 lookupRelOffs 读取到主循环（避免先收集到中间数组再按下标回读）。 */
   interface LookupParsed {
     effectiveType: number;
     subtableAbsOffs: number[];
   }
   const lookups: LookupParsed[] = [];
   for (let i = 0; i < lookupCount; i++) {
-    const lOff = lookupListOff + lookupRelOffs[i];
+    const lOff = lookupListOff + r.u16(lookupListOff + 2 + i * 2);
     const lookupType = r.u16(lOff);
     const subTableCount = r.u16(lOff + 4);
     const subtableAbsOffs: number[] = [];
