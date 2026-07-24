@@ -1209,14 +1209,17 @@ function writeChainFormat3(
   parsed: { backCovs: number[][]; inputCovs: number[][]; lookCovs: number[][]; records: Array<{ seq: number; lookup: number }> },
 ): void {
   const subStart = w.length;
-  const allHolders: number[][] = [];
-  /** 预留一个 Offset16 槽，flush 时回填 allHolders[slotIdx] 的值。
-   *  必须用 IIFE 捕获当前 slotIdx——闭包直接引用 allHolders.length-1 会在 flush 时（循环已结束）
-   *  统一取到最后一个槽，导致所有 coverage 偏移指向同一个 coverage（FiraCode === 连字断裂的根因）。 */
+  /** 每个 coverage 偏移槽的字节位置（writeUint16(0) 占位，emitCoverage 后 writeInt16At 回填）。
+   *  替代旧 allHolders: number[][] + reserveOffset16 闭包模式：消除每槽的 [0] 单元素数组分配 +
+   *  reserveOffset16 的 patches 闭包 push + flush 回填遍历（优化329 同思路，对 chain coverage slot 复用）。
+   *  coverage 槽数 = backCovs + inputCovs + lookCovs，一次性预分配容量避免 grow。 */
+  const totalCovSlots = parsed.backCovs.length + parsed.inputCovs.length + parsed.lookCovs.length;
+  const covSlotPositions: number[] = new Array<number>(totalCovSlots);
+  /** 占位写入 coverage 偏移槽并记录其字节位置 */
+  let slotIdx = 0;
   const reserveCovSlot = () => {
-    const slotIdx = allHolders.length;
-    allHolders.push([0]);
-    w.reserveOffset16(subStart, () => allHolders[slotIdx][0]);
+    covSlotPositions[slotIdx++] = w.length;
+    w.writeUint16(0);
   };
   w.writeUint16(3);
   w.writeUint16(parsed.backCovs.length);
@@ -1231,15 +1234,16 @@ function writeChainFormat3(
     w.writeUint16(rc.lookup);
   }
 
-  let holderIdx = 0;
+  /** 写出各组 coverage 并回填偏移槽（相对 subStart） */
+  let posIdx = 0;
   for (const cov of parsed.backCovs) {
-    allHolders[holderIdx++][0] = emitCoverage(w, cov);
+    w.writeInt16At(covSlotPositions[posIdx++], emitCoverage(w, cov) - subStart);
   }
   for (const cov of parsed.inputCovs) {
-    allHolders[holderIdx++][0] = emitCoverage(w, cov);
+    w.writeInt16At(covSlotPositions[posIdx++], emitCoverage(w, cov) - subStart);
   }
   for (const cov of parsed.lookCovs) {
-    allHolders[holderIdx++][0] = emitCoverage(w, cov);
+    w.writeInt16At(covSlotPositions[posIdx++], emitCoverage(w, cov) - subStart);
   }
 }
 
