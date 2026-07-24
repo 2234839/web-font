@@ -95,8 +95,10 @@ var _default = exports.default = _table.default.create('glyf', [], {
             var numberOfContours = view.getInt16(vOff, false);
             /** 非(component 引用的) simple 字形走快路径；compound 及 component 走完整 parse */
             if (numberOfContours >= 0 && !componentGids[index]) {
-              /** 优化310: 快路径——读 header(bbox) + endPtsOfContours(供 metrics)，存原始字节引用，
-               *  跳过 instructions/flags/坐标解码（省 parseSimpleGlyf，glyph.read 第一热点）。 */
+              /** 优化310+313: 快路径——读 header(bbox) + 最后一个 endPt（算 _totalPoints 供 metrics），
+               *  存原始字节引用，跳过 instructions/flags/坐标解码（省 parseSimpleGlyf，glyph.read 第一热点）。
+               *  优化313: 不再分配 endPtsOfContours 数组——下游（optimizettf 快路径分支、sizeof/write 拷贝
+               *  原始字节）均不消费它，_totalPoints 只需最后一个 endPt 即可算出。 */
               var glyfObj = {};
               glyfObj.xMin = view.getInt16(vOff + 2, false);
               glyfObj.yMin = view.getInt16(vOff + 4, false);
@@ -104,13 +106,9 @@ var _default = exports.default = _table.default.create('glyf', [], {
               glyfObj.yMax = view.getInt16(vOff + 8, false);
               glyfObj._origGlyfRef = { buffer: fullBuf, byteOffset: fullBufOff + gStart, length: gEnd - gStart };
               if (numberOfContours > 0) {
-                var endPts = new Array(numberOfContours);
-                for (var ei2 = 0; ei2 < numberOfContours; ei2++) {
-                  endPts[ei2] = view.getUint16(vOff + 10 + ei2 * 2, false);
-                }
-                glyfObj.endPtsOfContours = endPts;
                 glyfObj._numContours = numberOfContours;
-                glyfObj._totalPoints = endPts[numberOfContours - 1] + 1;
+                /** 最后一个 endPt 在 vOff + 10 + (numContours-1)*2，+1 即总点数 */
+                glyfObj._totalPoints = view.getUint16(vOff + 10 + (numberOfContours - 1) * 2, false) + 1;
               } else {
                 glyfObj._numContours = 0;
                 glyfObj._totalPoints = 0;
