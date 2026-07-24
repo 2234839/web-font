@@ -312,7 +312,7 @@ export function subsetGPOS(
         for (let j = 0; j < lk.subtableAbsOffs.length; j++) {
           subtableAbsPositions[j] = w.length;
           r.clearError();
-          const ok = serializeSubtable(w, r, lk.subtableAbsOffs[j], lk.effectiveType, origToNew);
+          const ok = serializeSubtable(w, r, lk.subtableAbsOffs[j], lk.effectiveType, origToNew, hits[j]);
           /** 越界读取（异常表）也降级为保留原始 GPOS 字节（调用方安全降级） */
           if (!ok || r.errorFlag) return null;
           w.writeInt16At(subtableSlotsStart + j * 2, subtableAbsPositions[j] - lookupStart);
@@ -357,7 +357,16 @@ function serializeSubtable(
   subAbs: number,
   type: number,
   origToNew: Map<number, number>,
+  /** 预扫描结果：该 subtable coverage 是否含任意子集字形。false 时 coverage 必空，直接写空 subtable 跳过全量解析 */
+  coverageHit: boolean,
 ): boolean {
+  if (!coverageHit) {
+    /** coverage 无任何子集字形：serializeSinglePos/serializePairPos 必然产出空 kept → 空 coverage。
+     *  空 coverage 浏览器查不到字形即跳过，与逐字段重序列化的空 subtable 渲染语义等价。
+     *  直接写空 subtable 跳过 readCoverageGids/kept 构建/emit 全部开销（初夏 96% subtable 命中此路径）。 */
+    writeEmptyPosSubtable(w, type);
+    return true;
+  }
   if (type === LT_SINGLE_POS) return serializeSinglePos(w, r, subAbs, origToNew);
   if (type === LT_PAIR_POS) return serializePairPos(w, r, subAbs, origToNew);
   return false;
