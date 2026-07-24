@@ -434,7 +434,6 @@ function transformGlyfAndLoca(glyfData, locaData, indexFormat, numGlyphs) {
       _reuseXCoords = new Int32Array(newCap);
     }
     const xCoords = _reuseXCoords;
-    let px = 0;
     /**
      * 优化314: 移除 simple glyph 的 bbox 计算。
      * WOFF2 规范：bboxBitmap bit=0 时解码端从轮廓点重建 bbox（= 点坐标 min/max），
@@ -451,18 +450,19 @@ function transformGlyfAndLoca(glyfData, locaData, indexFormat, numGlyphs) {
     for (let xi = 0; xi < numPoints; xi++) {
       const f = flagAccum[flagWriteBase + xi];
       if (f & XSHORT_FLAG) {
-        const b = glyfData[dataOff++];
-        px += b * (((f >> 4) & 1) * 2 - 1);
+        /** 存 delta（TTF xCoordinates 本就是相对前点的 delta），y+triplet 循环直接用，
+         *  省去原先 px 累积成绝对坐标、再用 cx-prevX 还原回 delta 的无意义往返 */
+        xCoords[xi] = glyfData[dataOff++] * (((f >> 4) & 1) * 2 - 1);
       } else if (!(f & XSAME_FLAG)) {
         let dx = (glyfData[dataOff] << 8) | glyfData[dataOff + 1];
         if (dx > 0x7FFF) dx -= 0x10000;
-        px += dx;
+        xCoords[xi] = dx;
         dataOff += 2;
+      } else {
+        /** XSAME_FLAG：该点 x 与前点相同，delta = 0 */
+        xCoords[xi] = 0;
       }
-      xCoords[xi] = px;
     }
-
-    let py = 0;
 
     if (numberOfContours > 0) {
 
@@ -479,34 +479,35 @@ function transformGlyfAndLoca(glyfData, locaData, indexFormat, numGlyphs) {
       }
       const gsBase = glyphAccumLen;
       let gsbi = 0;
-      let prevX = 0, prevY = 0;
       const _gs = glyphAccum;
       const _fa = flagAccum;
       const _fwb = flagWriteBase;
       const _gd = glyfData;
       /**
-       * 优化312: y 解码 + triplet 编码合并为单循环。
-       * py 从 TTF yCoord 字节流解码（累积绝对坐标），cx 从 xCoords 取（x 已在前一循环解好），
-       * triplet delta = cx - prevX / py - prevY，当场编码写入 glyphAccum。
+       * 优化318: x/y 都直接用 TTF delta 编码 triplet，省去绝对坐标累积+还原往返。
+       *  TTF xCoordinates/yCoordinates 本就是「相对前一点的有符号 delta」，
+       *  triplet 的 dx/dy 语义 = 当前点与前点的坐标差 = TTF delta 本身。
+       *  原 x 循环 px 累积成绝对、y 循环 py 累积成绝对再用 cx-prevX/cy-prevY 还原回 delta 是无意义往返。
+       *  现 x 循环直接存 delta（xCoords），本循环 dy 直接取解码出的 y delta、dx 直接取 xCoords[yi]。
        */
       for (let yi = 0; yi < numPoints; yi++) {
         const f = _fa[_fwb + yi];
+        let dy;
         if (f & YSHORT_FLAG) {
-          const b = _gd[dataOff++];
-          py += b * (((f >> 5) & 1) * 2 - 1);
+          dy = _gd[dataOff++] * (((f >> 5) & 1) * 2 - 1);
         } else if (!(f & YSAME_FLAG)) {
           let dy0 = (_gd[dataOff] << 8) | _gd[dataOff + 1];
           if (dy0 > 0x7FFF) dy0 -= 0x10000;
-          py += dy0;
+          dy = dy0;
           dataOff += 2;
+        } else {
+          /** YSAME_FLAG：该点 y 与前点相同，delta = 0 */
+          dy = 0;
         }
 
         /** triplet 编码（与原 calcTripletAndWrite inline 语义一致） */
-        const cx = xCoords[yi];
-        const cy = py;
+        const dx = xCoords[yi];
         const curveBit = ((f & 1) ^ 1) << 7;
-        const dx = cx - prevX;
-        const dy = cy - prevY;
         /**
          * 优化317: 无分支 abs + 符号位提取。
          * dx/dy 为 SmI（Int32 路径），dx >> 31 在非负时为 0、负时为 -1（算术右移）。
@@ -567,8 +568,6 @@ function transformGlyfAndLoca(glyfData, locaData, indexFormat, numGlyphs) {
         /** triplet flag 回写到 flagAccum（flagStream 存 triplet flag 而非原始 flag） */
         _fa[_fwb + yi] = flag;
         gsbi += adv;
-        prevX = cx;
-        prevY = cy;
       }
       glyphAccumLen += gsbi;
       glyphStreamSize += gsbi;
