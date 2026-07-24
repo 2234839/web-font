@@ -323,27 +323,30 @@ function readCoverageRemapped(
 function emitCoverage(w: Writer, newGids: number[]): number {
   const off = w.length;
   const n = newGids.length;
-  /** 第一遍：统计连续区间数（决定 format2 是否更紧凑） */
-  let rangeCount = 0;
+  /** 单遍收集连续区间 [start,end]：原实现两遍扫描（先统计 rangeCount 决定 format，再写出），
+   *  合并为一遍收集到 ranges 数组，再据 rangeCount vs n 选 format 直接写出。
+   *  V8 短命小数组近乎免费，省第二遍重新扫描 + 重新计算 covIndex。 */
+  const rangeStarts: number[] = [];
+  const rangeEnds: number[] = [];
   for (let i = 0; i < n; ) {
+    const start = newGids[i];
     let j = i;
     while (j + 1 < n && newGids[j + 1] === newGids[j] + 1) j++;
-    rangeCount++;
+    rangeStarts.push(start);
+    rangeEnds.push(newGids[j]);
     i = j + 1;
   }
+  const rangeCount = rangeStarts.length;
   if (rangeCount > 0 && rangeCount < n) {
     /** format2 区间更紧凑 */
     w.writeUint16(COV_RANGE);
     w.writeUint16(rangeCount);
     let covIndex = 0;
-    for (let i = 0; i < n; ) {
-      let j = i;
-      while (j + 1 < n && newGids[j + 1] === newGids[j] + 1) j++;
-      w.writeUint16(newGids[i]);
-      w.writeUint16(newGids[j]);
+    for (let k = 0; k < rangeCount; k++) {
+      w.writeUint16(rangeStarts[k]);
+      w.writeUint16(rangeEnds[k]);
       w.writeUint16(covIndex);
-      covIndex += newGids[j] - newGids[i] + 1;
-      i = j + 1;
+      covIndex += rangeEnds[k] - rangeStarts[k] + 1;
     }
   } else {
     /** format1 列表 */
