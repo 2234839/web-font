@@ -58,6 +58,32 @@ function readCoverageGids(r: OTReader, off: number, cache: CoverageCache): numbe
 }
 
 /**
+ * 找 coverage 中第一个不在子集（inSubset 返回 false）的 gid，无需展开完整数组。
+ *
+ * format1 list：逐项 u16 读取 + inSubset，命中即返回。
+ * format2 range：逐 gid 生成（start..end）+ inSubset，命中即返回，避免 readCoverageGids
+ * 的完整展开与数组分配。初夏纯标点 280 个 format3 首轮全失败，第一个 coverage 的首个 gid
+ * 往往就排除，本函数短路返回省掉全量展开。
+ *
+ * 全部 gid 都在子集时返回 -1（coverage「全包含」）。命中 covCache 时直接遍历已缓存的数组
+ * （与其他 lookup type 共享解析结果）。
+ *
+ * @param off coverage 绝对偏移
+ * @param inSubset 判定 gid 是否在子集
+ * @returns 第一个不在子集的 gid；全在子集返回 -1
+ */
+function coverageFirstExcludedGid(
+  r: OTReader,
+  off: number,
+  cache: CoverageCache,
+  inSubset: (gid: number) => boolean,
+): number {
+  const gids = readCoverageGids(r, off, cache);
+  for (const g of gids) if (!inSubset(g)) return g;
+  return -1;
+}
+
+/**
  * 收集从 seedGids 出发、经 GSUB 替换链可达的全部 target gid（不含 seed 本身）。
  *
  * @param gsubBytes 原始 GSUB 表字节
@@ -339,34 +365,46 @@ function collectChainRefs(
     /** format3: 显式 coverage 数组 + SubstLookupRecords。
      *  三个 coverage 数组（backtrack/input/lookahead）的 gid 须全在子集才触发。
      *
-     *  优化315：消除 readCovGidsChecked 闭包——collectChainRefs 在固定点迭代中高频调用
-     *  （初夏纯标点 280 个 format3 subtable × 2 轮 = 560 次/call），每次创建闭包有分配开销。
-     *  改为显式三段循环，p 局部变量手动推进，保留 triggerable 短路语义（任一 coverage 含
-     *  子集外 gid 即停止后续 coverage 遍历与 refs 收集）。 */
+     *  优化（失败短路，跳过 coverage 展开与 contextGids 收集）：format3 triggerable=false 是常态
+     *  （初夏纯标点 280 个 format3 首轮全 false）。失败时只需找到第一个不在 reachable 的 gid 记入
+     *  failGid 供跨轮跳过——此时 contextGids 的收集无意义：break 前已检查的 gid 都在 reachable
+     *  （inSubset=reachable.has），调用方对其 reachable.add 是 no-op。故失败路径用
+     *  coverageFirstExcludedGid 边读边查（format2 range 不预展开），命中即返回，完全省掉
+     *  readCoverageGids 的完整展开 + 数组分配。仅 triggerable=true 时（coverage 全在子集、量小）
+     *  才 readCoverageGids 收集 contextGids。 */
     let p = off + 2;
     let triggerable = true;
-    /** 三段 coverage（backtrack/input/lookahead）逻辑相同：读 count，逐 coverage 校验 gid 全在子集 */
+    /** 第一遍：逐 coverage 找首个不在子集的 gid，全在子集则 triggerable 保持 true */
     for (let seg = 0; seg < 3 && triggerable; seg++) {
       const cnt = r.u16(p);
       p += 2;
       for (let k = 0; k < cnt; k++) {
-        const covGids = readCoverageGids(r, off + r.u16(p + k * 2), covCache);
-        for (const g of covGids) {
-          if (!inSubset(g)) {
-            triggerable = false;
-            /** 记录第一个不在 reachable 的 gid，供调用方跨轮跳过：该 gid 未进 reachable 前，
-             *  本 subtable 必定仍 triggerable=false，无需重扫。 */
-            failGid.v = g;
-            break;
-          }
-          contextGids.add(g);
+        const covOff = off + r.u16(p + k * 2);
+        const excluded = coverageFirstExcludedGid(r, covOff, covCache, inSubset);
+        if (excluded >= 0) {
+          triggerable = false;
+          /** 记录使其失败的 gid，供调用方跨轮跳过：该 gid 未进 reachable 前，本 subtable 必定仍 false。 */
+          failGid.v = excluded;
+          break;
         }
       }
       p += cnt * 2;
     }
     if (triggerable) {
-      const substCount = r.u16(p);
-      for (let k = 0; k < substCount; k++) refs.add(r.u16(p + 2 + k * 4 + 2));
+      /** 第二遍（仅 triggerable=true）：收集三段 coverage 的全部 gid 到 contextGids。
+       *  此刻 coverage 全部 gid 都在 reachable（已被 coverageFirstExcludedGid 确认），展开安全且量小。 */
+      let p2 = off + 2;
+      for (let seg = 0; seg < 3; seg++) {
+        const cnt = r.u16(p2);
+        p2 += 2;
+        for (let k = 0; k < cnt; k++) {
+          const covGids = readCoverageGids(r, off + r.u16(p2 + k * 2), covCache);
+          for (const g of covGids) contextGids.add(g);
+        }
+        p2 += cnt * 2;
+      }
+      const substCount = r.u16(p2);
+      for (let k = 0; k < substCount; k++) refs.add(r.u16(p2 + 2 + k * 4 + 2));
       /** triggerable=true：三段 coverage gid 全在 reachable（reachable 单调，后续仍全在），
        *  refs/contextGids 已确定，不随 reachable 扩展变化 → 稳定，可跨轮跳过。 */
       return true;
