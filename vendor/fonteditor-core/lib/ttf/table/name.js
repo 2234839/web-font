@@ -40,9 +40,6 @@ var _default = exports.default = _table.default.create('name', [], {
     reader.offset = vOffset - view.byteOffset;
 
     var baseOffset = offset + nameTbl.stringOffset;
-    for (var j = 0; j < count; ++j) {
-      nameRecordTbl[j].name = reader.readBytes(baseOffset + nameRecordTbl[j].offset, nameRecordTbl[j].length);
-    }
     var names = {};
 
     var platform = _platform.default.Macintosh;
@@ -60,10 +57,18 @@ var _default = exports.default = _table.default.create('name', [], {
         break;
       }
     }
+    /**
+     * 优化323: 延迟 readBytes——原实现对全部 count 条记录都 readBytes(slice 一份字节)，
+     * 但最终只有匹配 platform+encoding+language 且 nameId 有用的记录才解码字符串，
+     * 其余记录的 .name 字节从不被消费。思源 56 条记录只解码约 15 条，浪费 41 次 slice。
+     * 这里在第三循环里按需对匹配记录 readBytes，把 N 次 slice 降到「有用记录数」次。
+     */
+    var isUTF8 = language === 0;
     for (var m = 0; m < count; ++m) {
       var nameRecord = nameRecordTbl[m];
       if (nameRecord.platform === platform && nameRecord.encoding === encoding && nameRecord.language === language && _nameId.default[nameRecord.nameId]) {
-        names[_nameId.default[nameRecord.nameId]] = language === 0 ? _string.default.getUTF8String(nameRecord.name) : _string.default.getUCS2String(nameRecord.name);
+        var nameBytes = reader.readBytes(baseOffset + nameRecord.offset, nameRecord.length);
+        names[_nameId.default[nameRecord.nameId]] = isUTF8 ? _string.default.getUTF8String(nameBytes) : _string.default.getUCS2String(nameBytes);
       }
     }
     return names;
