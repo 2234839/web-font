@@ -289,6 +289,13 @@ function readCoverageRemapped(
   }
   /** 原 coverage 非空但全部 gid 落子集外 → 失效（与原 coverage 本就空的合法空数组区分） */
   if (newGids.length === 0 && origNonEmpty) outOfSubset = true;
+  /** 缓存前升序排序：原 coverage gid 升序，但 原gid→新gid 映射不保序（subsetGids 重编号），
+   *  过滤后的新 gid 可能乱序。readCoverageRemapped 的输出只作为「gid 集合」传给 emitCoverage，
+   *  调用方均不依赖顺序（fmt3 coverage / writeChainFormat2 coverage），故在缓存入口统一排序，
+   *  使缓存数组天然升序无重复——emitCoverageSorted 据此跳过 slice+sort（fmt3 高频热路径）。
+   *  排序发生在每个 coverage off 首次计算（covCache 命中率极高，FiraCode 604 引用/83 独立 coverage），
+   *  分摊到所有引用几乎免费。 */
+  if (!outOfSubset && newGids.length > 1) newGids.sort((a, b) => a - b);
   /** 只写 remapped 字段，不碰 gids 字段。
    *  covCache 被 readCoverageRemapped（fmt3 用，产 newGids）与 readCoverageGids
    *  （fmt1 ChainContext 用，需原始 gid 按 index 与 ruleSet 配对）共享。
@@ -303,38 +310,46 @@ function readCoverageRemapped(
  * 从一组（子集内的）新 gid 序列写出 Coverage 表，返回其在 Writer 中的起始偏移。
  * 自动选择 format1（列表）或 format2（区间）中更紧凑的。
  */
+/**
+ * 从一组（子集内的）新 gid 序列写出 Coverage 表，返回其在 Writer 中的起始偏移。
+ * 自动选择 format1（列表）或 format2（区间）中更紧凑的。
+ *
+ * 输入约定：newGids **必须已升序、无重复**。所有调用方均保证：
+ *   - readCoverageRemapped 在缓存入口已 sort（原 coverage gid 升序，但 原gid→新gid 映射不保序）
+ *   - type1/2/3/4 与 fmt1 的 entries 在调用前已按 from/firstGid 升序排序，map 保持顺序
+ * 直接在输入上扫描区间（不 slice 复制、不 sort、不分配 ranges 对象数组），
+ * fmt3 单次子集化 ~17 万次 emitCoverage 调用的主要 GC+CPU 开销由此消除。
+ * 仅读不修改输入，covCache 共享的数组实例安全复用。 */
 function emitCoverage(w: Writer, newGids: number[]): number {
-  /** 升序（Coverage 要求升序）。
-   *  无需去重：所有调用方传入的 newGids 逻辑上保证无重复——
-   *  readCoverageRemapped 按原 coverage（规范要求 gid 唯一）升序过滤，每个原 gid 映射唯一新 gid；
-   *  entries.map(e=>e.from) 的 from 是 entry 主键（唯一）。
-   *  实测 FiraCode 单次子集化 327 次 emitCoverage 调用 0 次发现重复，去重（new Set）纯为 GC 开销。
-   *  slice 复制后原地排序，避免修改调用方的数组。 */
-  const sorted = newGids.slice().sort((a, b) => a - b);
   const off = w.length;
-  let ranges: Array<{ start: number; end: number }> = [];
-  for (let i = 0; i < sorted.length; ) {
+  const n = newGids.length;
+  /** 第一遍：统计连续区间数（决定 format2 是否更紧凑） */
+  let rangeCount = 0;
+  for (let i = 0; i < n; ) {
     let j = i;
-    while (j + 1 < sorted.length && sorted[j + 1] === sorted[j] + 1) j++;
-    ranges.push({ start: sorted[i], end: sorted[j] });
+    while (j + 1 < n && newGids[j + 1] === newGids[j] + 1) j++;
+    rangeCount++;
     i = j + 1;
   }
-  if (ranges.length > 0 && ranges.length < sorted.length) {
+  if (rangeCount > 0 && rangeCount < n) {
     /** format2 区间更紧凑 */
     w.writeUint16(COV_RANGE);
-    w.writeUint16(ranges.length);
+    w.writeUint16(rangeCount);
     let covIndex = 0;
-    for (const rg of ranges) {
-      w.writeUint16(rg.start);
-      w.writeUint16(rg.end);
+    for (let i = 0; i < n; ) {
+      let j = i;
+      while (j + 1 < n && newGids[j + 1] === newGids[j] + 1) j++;
+      w.writeUint16(newGids[i]);
+      w.writeUint16(newGids[j]);
       w.writeUint16(covIndex);
-      covIndex += rg.end - rg.start + 1;
+      covIndex += newGids[j] - newGids[i] + 1;
+      i = j + 1;
     }
   } else {
     /** format1 列表 */
     w.writeUint16(COV_LIST);
-    w.writeUint16(sorted.length);
-    for (const g of sorted) w.writeUint16(g);
+    w.writeUint16(n);
+    for (let i = 0; i < n; i++) w.writeUint16(newGids[i]);
   }
   return off;
 }
