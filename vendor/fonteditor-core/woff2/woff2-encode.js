@@ -517,11 +517,14 @@ function transformGlyfAndLoca(glyfData, locaData, indexFormat, numGlyphs) {
           _gs[wpos] = absDy & 0xFF;
           flag = curveBit + ((absDy & 0xF00) >> 7) + (dy >= 0 ? 1 : 0);
           adv = 1;
-        } else if (dy === 0 && dx !== 0 && absDx < 1280) {
+        } else if (dy === 0 && absDx < 1280) {
+          /** 优化316: case2 去掉冗余 `dx !== 0`——case1 已排除 dx===0，走到此分支 dx 必非 0 */
           _gs[wpos] = absDx & 0xFF;
           flag = curveBit + 10 + ((absDx & 0xF00) >> 7) + (dx >= 0 ? 1 : 0);
           adv = 1;
-        } else if (dx !== 0 && dy !== 0 && absDx < 65 && absDy < 65) {
+        } else if (absDx < 65 && absDy < 65) {
+          /** 优化316: case3 去掉冗余 `dx !== 0 && dy !== 0`——case1/case2 已排除任一轴为 0，
+           *  走到此分支两轴必非 0。令东 74.6% 的点命中此分支，省 2 次/点冗余比较 */
           const ax = absDx - 1;
           const ay = absDy - 1;
           _gs[wpos] = ((ax & 0xF) << 4) | (ay & 0xF);
@@ -529,7 +532,8 @@ function transformGlyfAndLoca(glyfData, locaData, indexFormat, numGlyphs) {
           const ySignBit = dy >= 0 ? 1 : 0;
           flag = curveBit + 20 + (ax & 0x30) + ((ay & 0x30) >> 2) + xSignBit + 2 * ySignBit;
           adv = 1;
-        } else if (dx !== 0 && dy !== 0 && absDx < 769 && absDy < 769) {
+        } else if (absDx < 769 && absDy < 769) {
+          /** 优化316: case4 同理去掉冗余 `dx !== 0 && dy !== 0` */
           const ax = absDx - 1;
           const ay = absDy - 1;
           _gs[wpos] = ax & 0xFF;
