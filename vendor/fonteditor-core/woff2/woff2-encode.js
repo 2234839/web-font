@@ -507,20 +507,32 @@ function transformGlyfAndLoca(glyfData, locaData, indexFormat, numGlyphs) {
         const curveBit = ((f & 1) ^ 1) << 7;
         const dx = cx - prevX;
         const dy = cy - prevY;
-        const absDx = dx < 0 ? -dx : dx;
-        const absDy = dy < 0 ? -dy : dy;
+        /**
+         * 优化317: 无分支 abs + 符号位提取。
+         * dx/dy 为 SmI（Int32 路径），dx >> 31 在非负时为 0、负时为 -1（算术右移）。
+         *   absDx = (dx ^ sgn) - sgn  —— sgn=0 时不变，sgn=-1 时 dx^(-1)=~dx，~dx-(-1)=~dx+1=-dx
+         *   xSignBit = sgn + 1        —— 0→1（正/零）、-1→0（负），与原 `dx >= 0 ? 1 : 0` 等价
+         * 中文字体 dx/dy 正负近似 50/50，原三元是不可预测分支致流水线冲刷；位运算无分支。
+         * 每点消除 4 次三元（absDx/absDy/xSign/ySign），令东 74.6% 点走 case3 收益最大。
+         */
+        const dxSgn = dx >> 31;
+        const dySgn = dy >> 31;
+        const absDx = (dx ^ dxSgn) - dxSgn;
+        const absDy = (dy ^ dySgn) - dySgn;
+        const xSignBit = dxSgn + 1;
+        const ySignBit = dySgn + 1;
         const wpos = gsBase + gsbi;
         let flag;
         /** 优化313: 各分支内直接累加 gsbi（字节数由分支确定：1/1/1/2/3/4），消除 TRIPLET_DATA_SIZES 查表 */
         let adv;
         if (dx === 0 && absDy < 1280) {
           _gs[wpos] = absDy & 0xFF;
-          flag = curveBit + ((absDy & 0xF00) >> 7) + (dy >= 0 ? 1 : 0);
+          flag = curveBit + ((absDy & 0xF00) >> 7) + ySignBit;
           adv = 1;
         } else if (dy === 0 && absDx < 1280) {
           /** 优化316: case2 去掉冗余 `dx !== 0`——case1 已排除 dx===0，走到此分支 dx 必非 0 */
           _gs[wpos] = absDx & 0xFF;
-          flag = curveBit + 10 + ((absDx & 0xF00) >> 7) + (dx >= 0 ? 1 : 0);
+          flag = curveBit + 10 + ((absDx & 0xF00) >> 7) + xSignBit;
           adv = 1;
         } else if (absDx < 65 && absDy < 65) {
           /** 优化316: case3 去掉冗余 `dx !== 0 && dy !== 0`——case1/case2 已排除任一轴为 0，
@@ -528,8 +540,6 @@ function transformGlyfAndLoca(glyfData, locaData, indexFormat, numGlyphs) {
           const ax = absDx - 1;
           const ay = absDy - 1;
           _gs[wpos] = ((ax & 0xF) << 4) | (ay & 0xF);
-          const xSignBit = dx >= 0 ? 1 : 0;
-          const ySignBit = dy >= 0 ? 1 : 0;
           flag = curveBit + 20 + (ax & 0x30) + ((ay & 0x30) >> 2) + xSignBit + 2 * ySignBit;
           adv = 1;
         } else if (absDx < 769 && absDy < 769) {
@@ -538,16 +548,12 @@ function transformGlyfAndLoca(glyfData, locaData, indexFormat, numGlyphs) {
           const ay = absDy - 1;
           _gs[wpos] = ax & 0xFF;
           _gs[wpos + 1] = ay & 0xFF;
-          const xSignBit = dx >= 0 ? 1 : 0;
-          const ySignBit = dy >= 0 ? 1 : 0;
           flag = curveBit + 84 + 12 * ((ax & 0x300) >> 8) + ((ay & 0x300) >> 6) + xSignBit + 2 * ySignBit;
           adv = 2;
         } else if (absDx < 4096 && absDy < 4096) {
           _gs[wpos] = absDx >> 4;
           _gs[wpos + 1] = ((absDx & 0xF) << 4) | (absDy >> 8);
           _gs[wpos + 2] = absDy & 0xFF;
-          const xSignBit = dx >= 0 ? 1 : 0;
-          const ySignBit = dy >= 0 ? 1 : 0;
           flag = curveBit + 120 + xSignBit + 2 * ySignBit;
           adv = 3;
         } else {
@@ -555,8 +561,6 @@ function transformGlyfAndLoca(glyfData, locaData, indexFormat, numGlyphs) {
           _gs[wpos + 1] = absDx & 0xFF;
           _gs[wpos + 2] = (absDy >> 8) & 0xFF;
           _gs[wpos + 3] = absDy & 0xFF;
-          const xSignBit = dx >= 0 ? 1 : 0;
-          const ySignBit = dy >= 0 ? 1 : 0;
           flag = curveBit + 124 + xSignBit + 2 * ySignBit;
           adv = 4;
         }
