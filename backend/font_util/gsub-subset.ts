@@ -82,6 +82,14 @@ const EMPTY_GIDS: number[] = [];
  */
 type GidLookup = Int32Array;
 
+/**
+ * 当前 subsetGSUB 调用的子集原始 gid 升序数组，供 readClassDefMap format2 二分优化复用。
+ *
+ * subsetGSUB 同步单线程执行，每次入口重置此变量；避免将 sortedSubsetGids 参数穿透
+ * serializeSubtable → serializeChainedContextSubst → writeChainFormat2 → readClassDefMap 多层。
+ */
+let currentSortedSubsetGids: number[] = [];
+
 /** 读取 Coverage 表，返回覆盖的原 gid 列表（保持顺序）。
  *  传入 cache 时按 coverage 绝对偏移缓存解析结果（同一 off 复用同一数组实例）。
  *  热路径：coverage 偏移来自已验证的 subtable 结构（合法范围），直接用 dv.getUint16 绕过
@@ -578,10 +586,14 @@ function serializeLigatureSubst(
 }
 
 /**
- * 读取 ClassDef 表为 (origGid → classIndex) map，仅含子集内 gid。
- * format1: 逐 gid 赋 class；format2: 区间赋 class。
+ * 读取 ClassDef 表为 (新gid → classIndex) map，class index 原样保留（不紧致重编号）。
+ *
+ * format2 优化（range 二分而非展开）：原实现遍历每个 range 的 [start..end] 全部 gid 查 gidLookup
+ * （FiraCode 实测 33 次 readClassDefMap 展开共 9686 gid 仅命中 19，命中率 0.2%，子集仅 89 gid）。
+ * 改为对每个 range 在升序子集 gid 数组上二分定位 [start,end] 内的 gid，仅对命中的 set class——
+ * 从「展开 range 全部 gid」转为「只处理落在 range 内的子集 gid」。OpenType 规范要求 ClassDef format2
+ * ranges 按 start 升序且不重叠（已验证 FiraCode 全部合规），但此处不依赖该性质，仅依赖 currentSortedSubsetGids 升序。
  */
-/** 读取 ClassDef 表为 (新gid → classIndex) map，class index 原样保留（不紧致重编号） */
 function readClassDefMap(r: Reader, off: number, gidLookup: GidLookup): Map<number, number> {
   const result = new Map<number, number>();
   if (off === 0) return result;
@@ -592,24 +604,40 @@ function readClassDefMap(r: Reader, off: number, gidLookup: GidLookup): Map<numb
     for (let i = 0; i < count; i++) {
       const origGid = startGid + i;
       /** 优化333：gidLookup（Int32Array 索引，~1ns）替代 origToNew.get（Map.get ~9ns）。
-       *  FiraCode fmt2 ClassDef 展开后 9699 个 gid 逐个 Map.get 是 fmt2 路径主热点（86μs/11 子表）。
        *  语义等价：gidLookup[g] >= 0 ⟺ origToNew.has(g) 且值相同。 */
       const newGid = gidLookup[origGid];
       if (newGid >= 0) result.set(newGid, r.u16(off + 6 + i * 2));
     }
   } else if (format === 2) {
     const rangeCount = r.u16(off + 2);
-    let p = off + 4;
+    const subsetGids = currentSortedSubsetGids;
+    const subsetLen = subsetGids.length;
+    if (subsetLen === 0) return result;
+    /** ClassDef format2 class range 数组起始（每个 range 6 字节：startGid/endGid/startClassIndex） */
+    const rangesBase = off + 4;
+    const minSubset = subsetGids[0];
+    const maxSubset = subsetGids[subsetLen - 1];
     for (let i = 0; i < rangeCount; i++) {
+      const p = rangesBase + i * 6;
       const start = r.u16(p);
       const end = r.u16(p + 2);
+      /** range 内无 gid 可能时跳过（end < 最小子集 gid 或 start > 最大子集 gid） */
+      if (end < minSubset || start > maxSubset) continue;
       const cls = r.u16(p + 4);
-      for (let g = start; g <= end; g++) {
-        /** 同上，gidLookup 数组索引替代 Map.get */
-        const newGid = gidLookup[g];
-        if (newGid >= 0) result.set(newGid, cls);
+      /** 二分定位第一个 >= start 的子集 gid，顺序遍历到 > end 为止（子集数组升序） */
+      let lo = 0;
+      let hi = subsetLen;
+      while (lo < hi) {
+        const mid = (lo + hi) >>> 1;
+        if (subsetGids[mid] < start) lo = mid + 1;
+        else hi = mid;
       }
-      p += 6;
+      for (let j = lo; j < subsetLen; j++) {
+        const g = subsetGids[j];
+        if (g > end) break;
+        /** gidLookup[g] 必 >= 0（g 来自子集数组），但仍查以保持与 format1 路径一致 */
+        result.set(gidLookup[g], cls);
+      }
     }
   }
   return result;
@@ -1187,6 +1215,9 @@ export function subsetGSUB(
   for (const g of origToNew.keys()) if (g > maxOrigGid) maxOrigGid = g;
   const gidLookup: GidLookup = new Int32Array(maxOrigGid + 1).fill(-1);
   for (const [g, n] of origToNew) gidLookup[g] = n;
+
+  /** 升序子集原始 gid 数组，供 readClassDefMap format2 range 二分优化（替代展开 [start..end] 全部 gid） */
+  currentSortedSubsetGids = Array.from(origToNew.keys()).sort((a, b) => a - b);
 
   /** ---- GSUB Header ---- */
   const major = r.u16(0);
