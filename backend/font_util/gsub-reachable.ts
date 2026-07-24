@@ -61,12 +61,19 @@ function readCoverageGids(r: OTReader, off: number, cache: CoverageCache): numbe
  * 找 coverage 中第一个不在子集（inSubset 返回 false）的 gid，无需展开完整数组。
  *
  * format1 list：逐项 u16 读取 + inSubset，命中即返回。
- * format2 range：逐 gid 生成（start..end）+ inSubset，命中即返回，避免 readCoverageGids
+ * format2 range：逐 range 内 gid 生成（start..end）+ inSubset，命中即返回，避免 readCoverageGids
  * 的完整展开与数组分配。初夏纯标点 280 个 format3 首轮全失败，第一个 coverage 的首个 gid
  * 往往就排除，本函数短路返回省掉全量展开。
  *
- * 全部 gid 都在子集时返回 -1（coverage「全包含」）。命中 covCache 时直接遍历已缓存的数组
- * （与其他 lookup type 共享解析结果）。
+ * 全部 gid 都在子集时返回 -1（coverage「全包含」）。
+ *
+ * 优化310: cache 命中时遍历已缓存数组（与其他 lookup type 共享解析结果）；
+ *   cache miss 时**直接边解析边查、不调 readCoverageGids 也不填 cache**。
+ *   原实现 `readCoverageGids(off, cache)` 会完整展开 coverage 到数组再遍历——对 format2 range
+ *   （初夏明朝 coverage 常覆盖上千 gid）即使首个 gid 就 excluded 也要展开全量，是「展开全量命中极少」浪费
+ *   （同类见 [[gsub-classdef-format2-bsearch]]）。fmt3 失败路径的 coverage 永不被 collectSubtableTargets
+ *   读（失败不产 target），故不填 cache 无碍；仅 triggerable=true 的 coverage 才在后续 readCoverageGids
+ *   收集 contextGids 时缓存。
  *
  * @param off coverage 绝对偏移
  * @param inSubset 判定 gid 是否在子集
@@ -78,8 +85,34 @@ function coverageFirstExcludedGid(
   cache: CoverageCache,
   inSubset: (gid: number) => boolean,
 ): number {
-  const gids = readCoverageGids(r, off, cache);
-  for (const g of gids) if (!inSubset(g)) return g;
+  /** cache 命中：遍历已缓存数组（复用其他 lookup 的解析结果） */
+  const cached = cache.get(off);
+  if (cached !== undefined) {
+    for (const g of cached) if (!inSubset(g)) return g;
+    return -1;
+  }
+  /** cache miss：边解析边查，不分配数组、不填 cache */
+  const format = r.u16(off);
+  if (format === 1) {
+    const count = r.u16(off + 2);
+    for (let i = 0; i < count; i++) {
+      const g = r.u16(off + 4 + i * 2);
+      if (!inSubset(g)) return g;
+    }
+    return -1;
+  } else if (format === 2) {
+    const rangeCount = r.u16(off + 2);
+    let p = off + 4;
+    for (let i = 0; i < rangeCount; i++) {
+      const start = r.u16(p);
+      const end = r.u16(p + 2);
+      for (let g = start; g <= end; g++) {
+        if (!inSubset(g)) return g;
+      }
+      p += 6;
+    }
+    return -1;
+  }
   return -1;
 }
 
