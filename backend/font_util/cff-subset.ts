@@ -226,56 +226,67 @@ export function collectSubrRefs(
   localRefs: Set<number>,
   gsubrRefs: Set<number>,
 ): void {
+  /**
+   * 优化：用 stackLen 计数器 + lastVal 替代 stack: number[]。
+   *  仅需栈长度（HSTEM 算 stemCount）与栈顶值（CALLSUBR/CALLGSUBR 取调用编号），
+   *  无需完整栈数组。消除每 operand 的 push（含装箱）与 stack.length=0 重置。
+   *  lastVal 仅在 stackLen>0 时有效（CALLSUBR 前必有 operand push）。
+   */
   let p = start;
-  const stack: number[] = [];
+  let stackLen = 0;
+  let lastVal = NaN;
   let stemCount = 0;
   while (p < end) {
     const b0 = b[p++];
     if (b0 === 255) {
       /** fixed point（坐标），4 字节，不入栈编号判定 */
-      stack.push(NaN);
+      lastVal = NaN;
+      stackLen++;
       p += 4;
     } else if (b0 === 28) {
-      stack.push(((b[p] << 24) | (b[p + 1] << 16)) >> 16);
+      lastVal = ((b[p] << 24) | (b[p + 1] << 16)) >> 16;
+      stackLen++;
       p += 2;
     } else if (b0 === 29) {
-      stack.push(((b[p] << 24) | (b[p + 1] << 16) | (b[p + 2] << 8) | b[p + 3]) | 0);
+      lastVal = ((b[p] << 24) | (b[p + 1] << 16) | (b[p + 2] << 8) | b[p + 3]) | 0;
+      stackLen++;
       p += 4;
     } else if (b0 >= 32 && b0 <= 246) {
-      stack.push(b0 - 139);
+      lastVal = b0 - 139;
+      stackLen++;
     } else if (b0 >= 247 && b0 <= 250) {
-      stack.push((b0 - 247) * 256 + b[p] + 108);
+      lastVal = (b0 - 247) * 256 + b[p] + 108;
+      stackLen++;
       p += 1;
     } else if (b0 >= 251 && b0 <= 254) {
-      stack.push(-(b0 - 251) * 256 - b[p] - 108);
+      lastVal = -(b0 - 251) * 256 - b[p] - 108;
+      stackLen++;
       p += 1;
     } else {
       /** 操作码（b0 <= 27，含 12 双字节） */
       if (b0 === 12) {
         p += 1;
-        stack.length = 0;
+        stackLen = 0;
       } else if (b0 === T2_HSTEM || b0 === T2_VSTEM || b0 === T2_HSTEMHM || b0 === T2_VSTEMHM) {
-        stemCount += stack.length >> 1;
-        stack.length = 0;
+        stemCount += stackLen >> 1;
+        stackLen = 0;
       } else if (b0 === T2_HINTMASK || b0 === T2_CNTRMASK) {
         p += (stemCount + 7) >>> 3;
-        stack.length = 0;
+        stackLen = 0;
       } else if (b0 === T2_CALLSUBR) {
-        const arg = stack[stack.length - 1];
-        if (Number.isInteger(arg)) {
-          const sn = arg + localBias;
+        if (Number.isInteger(lastVal)) {
+          const sn = lastVal + localBias;
           if (sn >= 0 && sn < localCount) localRefs.add(sn);
         }
-        stack.length = 0;
+        stackLen = 0;
       } else if (b0 === T2_CALLGSUBR) {
-        const arg = stack[stack.length - 1];
-        if (Number.isInteger(arg)) gsubrRefs.add(arg);
-        stack.length = 0;
+        if (Number.isInteger(lastVal)) gsubrRefs.add(lastVal);
+        stackLen = 0;
       } else if (b0 === T2_ENDCHAR) {
         break;
       } else {
         /** 其余操作码（运动/曲线等）消费栈 */
-        stack.length = 0;
+        stackLen = 0;
       }
     }
   }
