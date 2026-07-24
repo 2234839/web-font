@@ -22,6 +22,7 @@
  */
 
 import { OTWriter as Writer, OTReader as Reader, serializeScriptList, serializeFeatureList } from "./ot-bytes.js";
+import { performance } from "perf_hooks";
 
 /** GSUB lookup 类型常量 */
 const LT_SINGLE = 1;
@@ -578,6 +579,7 @@ function serializeLigatureSubst(
 function readClassDefMap(r: Reader, off: number, origToNew: Map<number, number>): Map<number, number> {
   const result = new Map<number, number>();
   if (off === 0) return result;
+  const __f10 = (globalThis).__sp?performance.now():0;
   const format = r.u16(off);
   if (format === 1) {
     const startGid = r.u16(off + 2);
@@ -647,6 +649,7 @@ function serializeChainedContextSubst(
   covCache: CoverageCache,
   gidLookup: GidLookup,
 ): boolean {
+  const __f10 = (globalThis).__sp?performance.now():0;
   const format = r.u16(off);
   if (format === 1) {
     /** coverage(gid) + 子规则数组，每规则含 backtrack/input/lookahead gid 序列 + SubstLookupRecord */
@@ -673,10 +676,11 @@ function serializeChainedContextSubst(
       }
       if (validRules.length > 0) entries.push({ firstGid: firstNew, rules: validRules });
     }
-    if (entries.length === 0) return false;
+    if (entries.length === 0) { if((globalThis).__sp){const G=globalThis as any; G.__f1_fail_t=(G.__f1_fail_t||0)+performance.now()-__f10; G.__f1_fail_c=(G.__f1_fail_c||0)+1;} return false; }
     /** 按 firstGid 升序排序，使 coverage（emitCoverage 强制升序）与 SubRuleSet 数组保持下标配对 */
     entries.sort((a, b) => a.firstGid - b.firstGid);
     writeChainFormat1(w, entries);
+    if((globalThis).__sp){const G=globalThis as any; G.__f1_ok_t=(G.__f1_ok_t||0)+performance.now()-__f10; G.__f1_ok_c=(G.__f1_ok_c||0)+1;}
     return true;
   }
 
@@ -733,10 +737,12 @@ function serializeChainedContextSubst(
   }
 
   if (format === 3) {
+    const __f30 = (globalThis).__sp?performance.now():0;
     /** 显式 coverage 数组 + SubstLookupRecord */
     const parsed = parseChainFormat3(r, off, covCache, gidLookup);
-    if (!parsed) return false;
+    if (!parsed) { if((globalThis).__sp){const G=globalThis as any; G.__f3_fail_t=(G.__f3_fail_t||0)+performance.now()-__f30; G.__f3_fail_c=(G.__f3_fail_c||0)+1;} return false; }
     writeChainFormat3(w, parsed);
+    if((globalThis).__sp){const G=globalThis as any; G.__f3_ok_t=(G.__f3_ok_t||0)+performance.now()-__f30; G.__f3_ok_c=(G.__f3_ok_c||0)+1;}
     return true;
   }
 
@@ -1029,23 +1035,27 @@ function isSubtableSkipableByCoverage(
     const chainFmt = dv.getUint16(off, false);
     if (chainFmt === 2) return false; /** format2 class 驱动，不预检 */
     if (chainFmt === 3) {
+      /**
+       * 优化317：format3 预检判定修正。
+       * format3 规则触发需 backtrack/input/lookahead 三组 coverage 的 gid 全部在子集内。
+       * 故只要【任一 coverage】原非空且全子集外，规则就不可能触发，可跳过深度解析。
+       *
+       * 旧实现的判定为「整组 coverage 全部子集外」(grpOrigNonEmpty && !grpHasInSubset)，
+       * 语义过强：当一组内部分 coverage 全子集外、部分含子集内 gid时，预检不跳过，
+       * 但 parseChainFormat3 遇到那个全子集外的 coverage 即返回 null 失败。
+       * FiraCode 实测 16 个 format3 因此误入深度解析（0.094ms/次，占 GSUB 69%）。
+       */
       let p = off + 2;
       for (let grp = 0; grp < 3; grp++) {
         if (p + 2 > len) return false;
         const cnt = dv.getUint16(p, false);
         p += 2;
-        let grpOrigNonEmpty = false;
-        let grpHasInSubset = false;
         for (let k = 0; k < cnt; k++) {
           if (p + 2 > len) return false;
           const covOff = off + dv.getUint16(p + k * 2, false);
-          const st = coverageAllOutOfSubset(dv, covOff, len, gidLookup);
-          if (st === false) grpHasInSubset = true;
-          else if (st === true) grpOrigNonEmpty = true;
-          if (grpHasInSubset) break;
+          if (coverageAllOutOfSubset(dv, covOff, len, gidLookup) === true) return true;
         }
         p += cnt * 2;
-        if (grpOrigNonEmpty && !grpHasInSubset) return true;
       }
       return false;
     }
