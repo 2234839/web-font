@@ -55,10 +55,6 @@ function readIndex(b: Uint8Array, pos: number): CffIndex {
   return { start: pos, count, offSize, offsets, dataStart, end: dataStart + offsets[count] - 1 };
 }
 
-/** 取一个已解析 INDEX 的完整字节切片（含头部+偏移量+数据，[start, end)） */
-function getIndexBytes(b: Uint8Array, idx: CffIndex): Uint8Array {
-  return b.subarray(idx.start, idx.end);
-}
 /** 只取 INDEX 的字节范围 [start, end)，不解析中间 offset 数组。
  *  Local/Global Subr INDEX 透传时只需整体字节切片，全量解析 count+1 个 offset 是纯浪费
  *  （思源等大字体的 Local Subr 可达数千 subr，readIndex 全量解析占 subsetCFF 主要耗时）。
@@ -308,9 +304,10 @@ export function subsetCFF(cffBytes: Uint8Array, subsetGids: number[]): Uint8Arra
   /** Header: major(1) minor(1) hdrSize(1) offSize(1) */
   const hdrSize = b[2];
   /** Name INDEX 紧接 Header */
-  const nameIndex = readIndex(b, hdrSize);
+  /** Name INDEX 仅需字节范围（透传 headerName）+ end（Top DICT INDEX 起始），不全量解析 offset */
+  const nameRange = indexByteRange(b, hdrSize);
   /** Top DICT INDEX 紧接 Name INDEX */
-  const topDictIndex = readIndex(b, nameIndex.end);
+  const topDictIndex = readIndex(b, nameRange.end);
   if (topDictIndex.count < 1) return null;
 
   /** Top DICT 数据 */
@@ -321,9 +318,10 @@ export function subsetCFF(cffBytes: Uint8Array, subsetGids: number[]): Uint8Arra
   /** 非 CID 字体（无 ROS）走 name-keyed 结构，当前不支持 */
   if (!topDict.has(OP_ROS)) return null;
 
-  /** String INDEX 紧接 Top DICT INDEX；Global Subr INDEX 紧接其后 */
-  const stringIndex = readIndex(b, topDictIndex.end);
-  const globalSubrIndex = readIndex(b, stringIndex.end);
+  /** String INDEX 紧接 Top DICT INDEX；Global Subr INDEX 紧接其后。
+   *  两者仅需字节范围透传 + end（下一 INDEX 起始），不全量解析 offset。 */
+  const stringRange = indexByteRange(b, topDictIndex.end);
+  const globalSubrRange = indexByteRange(b, stringRange.end);
 
   /** Top DICT 中各结构表的绝对偏移（相对 CFF 起始） */
   const charStringsOff = topDict.get(OP_charStrings)?.[0];
@@ -452,9 +450,9 @@ export function subsetCFF(cffBytes: Uint8Array, subsetGids: number[]): Uint8Arra
   /** 组装新 CFF：Header + Name INDEX + Top DICT INDEX + String INDEX + Global Subr INDEX
    *  + charset + charStrings + FDArray + FDSelect + Private 段。
    *  Top DICT 的四个 offset 须 patch 为新位置。 */
-  const headerNameBytes = combineBytes([b.subarray(0, hdrSize), getIndexBytes(b, nameIndex)]);
-  const stringSeg = getIndexBytes(b, stringIndex);
-  const globalSubrSeg = getIndexBytes(b, globalSubrIndex);
+  const headerNameBytes = combineBytes([b.subarray(0, hdrSize), b.subarray(nameRange.start, nameRange.end)]);
+  const stringSeg = b.subarray(stringRange.start, stringRange.end);
+  const globalSubrSeg = b.subarray(globalSubrRange.start, globalSubrRange.end);
 
   /** Top DICT 原始字节（待 patch offset 后替换） */
   const topDictBytes = b.subarray(topDictDataStart, topDictDataEnd);
