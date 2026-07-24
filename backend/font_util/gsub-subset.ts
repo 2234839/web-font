@@ -365,6 +365,7 @@ function serializeSingleSubst(
   off: number,
   gidLookup: GidLookup,
 ): boolean {
+  const dv = r.dv;
   const format = r.u16(off);
   const covOff = off + r.u16(off + 2);
   const covGids = readCoverageGids(r, covOff);
@@ -382,7 +383,7 @@ function serializeSingleSubst(
     const count = r.u16(off + 4);
     for (let i = 0; i < covGids.length && i < count; i++) {
       const fromNew = gidLookup[covGids[i]];
-      const toNew = gidLookup[r.u16(off + 6 + i * 2)];
+      const toNew = gidLookup[dv.getUint16(off + 6 + i * 2, false)];
       if (fromNew >= 0 && toNew >= 0) entries.push({ from: fromNew, to: toNew });
     }
   } else {
@@ -462,6 +463,7 @@ function serializeMultipleSubst(
   off: number,
   gidLookup: GidLookup,
 ): boolean {
+  const dv = r.dv;
   const covOff = off + r.u16(off + 2);
   const seqCount = r.u16(off + 4);
   const covGids = readCoverageGids(r, covOff);
@@ -471,11 +473,11 @@ function serializeMultipleSubst(
   for (let i = 0; i < covGids.length && i < seqCount; i++) {
     const fromNew = gidLookup[covGids[i]];
     if (fromNew < 0) continue;
-    const seqOff = off + r.u16(off + 6 + i * 2);
-    const glyphCount = r.u16(seqOff);
+    const seqOff = off + dv.getUint16(off + 6 + i * 2, false);
+    const glyphCount = dv.getUint16(seqOff, false);
     const newSeq: number[] = [];
     for (let k = 0; k < glyphCount; k++) {
-      const g = gidLookup[r.u16(seqOff + 2 + k * 2)];
+      const g = gidLookup[dv.getUint16(seqOff + 2 + k * 2, false)];
       if (g >= 0) newSeq.push(g);
     }
     /** 序列至少 1 个目标 gid 才有意义 */
@@ -512,6 +514,7 @@ function serializeAlternateSubst(
   off: number,
   gidLookup: GidLookup,
 ): boolean {
+  const dv = r.dv;
   const covOff = off + r.u16(off + 2);
   const altCount = r.u16(off + 4);
   const covGids = readCoverageGids(r, covOff);
@@ -520,11 +523,11 @@ function serializeAlternateSubst(
   for (let i = 0; i < covGids.length && i < altCount; i++) {
     const fromNew = gidLookup[covGids[i]];
     if (fromNew < 0) continue;
-    const altOff = off + r.u16(off + 6 + i * 2);
-    const cnt = r.u16(altOff);
+    const altOff = off + dv.getUint16(off + 6 + i * 2, false);
+    const cnt = dv.getUint16(altOff, false);
     const newAlts: number[] = [];
     for (let k = 0; k < cnt; k++) {
-      const g = gidLookup[r.u16(altOff + 2 + k * 2)];
+      const g = gidLookup[dv.getUint16(altOff + 2 + k * 2, false)];
       if (g >= 0) newAlts.push(g);
     }
     if (newAlts.length > 0) entries.push({ from: fromNew, alts: newAlts });
@@ -561,6 +564,7 @@ function serializeLigatureSubst(
   off: number,
   gidLookup: GidLookup,
 ): boolean {
+  const dv = r.dv;
   const covOff = off + r.u16(off + 2);
   const setCount = r.u16(off + 4);
   const covGids = readCoverageGids(r, covOff);
@@ -572,19 +576,19 @@ function serializeLigatureSubst(
      *  serializeLigatureSubst 对每条 ligature 的全部分量密集 remapGid，是 CJK ligature 子集热点。 */
     const fromNew = gidLookup[covGids[i]];
     if (fromNew < 0) continue;
-    const setOff = off + r.u16(off + 6 + i * 2);
-    const ligCount = r.u16(setOff);
+    const setOff = off + dv.getUint16(off + 6 + i * 2, false);
+    const ligCount = dv.getUint16(setOff, false);
     const newLigs: Array<{ comp: number[]; lig: number }> = [];
     for (let j = 0; j < ligCount; j++) {
-      const ligOff = setOff + r.u16(setOff + 2 + j * 2);
-      const compCount = r.u16(ligOff);
-      const ligNew = gidLookup[r.u16(ligOff + 2)];
+      const ligOff = setOff + dv.getUint16(setOff + 2 + j * 2, false);
+      const compCount = dv.getUint16(ligOff, false);
+      const ligNew = gidLookup[dv.getUint16(ligOff + 2, false)];
       if (ligNew < 0) continue;
       /** components 从第 2 字形开始（第 1 字形即 coverage 字形），compCount 含第 1 字形 */
       const compNew: number[] = [fromNew];
       let ok = true;
       for (let k = 0; k < compCount - 1; k++) {
-        const c = gidLookup[r.u16(ligOff + 4 + k * 2)];
+        const c = gidLookup[dv.getUint16(ligOff + 4 + k * 2, false)];
         if (c < 0) {
           ok = false;
           break;
@@ -637,6 +641,7 @@ function serializeLigatureSubst(
 function readClassDefMap(r: Reader, off: number, gidLookup: GidLookup): Map<number, number> {
   const result = new Map<number, number>();
   if (off === 0) return result;
+  const dv = r.dv;
   const format = r.u16(off);
   if (format === 1) {
     const startGid = r.u16(off + 2);
@@ -646,7 +651,7 @@ function readClassDefMap(r: Reader, off: number, gidLookup: GidLookup): Map<numb
       /** 优化333：gidLookup（Int32Array 索引，~1ns）替代 origToNew.get（Map.get ~9ns）。
        *  语义等价：gidLookup[g] >= 0 ⟺ origToNew.has(g) 且值相同。 */
       const newGid = gidLookup[origGid];
-      if (newGid >= 0) result.set(newGid, r.u16(off + 6 + i * 2));
+      if (newGid >= 0) result.set(newGid, dv.getUint16(off + 6 + i * 2, false));
     }
   } else if (format === 2) {
     const rangeCount = r.u16(off + 2);
@@ -659,11 +664,11 @@ function readClassDefMap(r: Reader, off: number, gidLookup: GidLookup): Map<numb
     const maxSubset = subsetGids[subsetLen - 1];
     for (let i = 0; i < rangeCount; i++) {
       const p = rangesBase + i * 6;
-      const start = r.u16(p);
-      const end = r.u16(p + 2);
+      const start = dv.getUint16(p, false);
+      const end = dv.getUint16(p + 2, false);
       /** range 内无 gid 可能时跳过（end < 最小子集 gid 或 start > 最大子集 gid） */
       if (end < minSubset || start > maxSubset) continue;
-      const cls = r.u16(p + 4);
+      const cls = dv.getUint16(p + 4, false);
       /** 二分定位第一个 >= start 的子集 gid，顺序遍历到 > end 为止（子集数组升序） */
       let lo = 0;
       let hi = subsetLen;
@@ -727,6 +732,8 @@ function serializeChainedContextSubst(
   gidLookup: GidLookup,
 ): boolean {
   const format = r.u16(off);
+  /** 缓存 dv 供 format1/format2 ruleSet/rule 偏移的连续 u16 读取直接调用 getUint16 */
+  const dv = r.dv;
   if (format === 1) {
     /** coverage(gid) + 子规则数组，每规则含 backtrack/input/lookahead gid 序列 + SubstLookupRecord */
     const covOff = off + r.u16(off + 2);
@@ -741,12 +748,12 @@ function serializeChainedContextSubst(
     for (let i = 0; i < covGids.length && i < ruleSetCount; i++) {
       const firstNew = remapGid(origToNew, covGids[i]);
       if (firstNew === null) continue;
-      const setOff = off + r.u16(off + 6 + i * 2);
-      const ruleCount = r.u16(setOff);
+      const setOff = off + dv.getUint16(off + 6 + i * 2, false);
+      const ruleCount = dv.getUint16(setOff, false);
       if (ruleCount > 0x7fff) return false;
       const validRules: Array<{ back: number[]; input: number[]; look: number[]; records: Array<{ seq: number; lookup: number }> }> = [];
       for (let j = 0; j < ruleCount; j++) {
-        const ruleOff = setOff + r.u16(setOff + 2 + j * 2);
+        const ruleOff = setOff + dv.getUint16(setOff + 2 + j * 2, false);
         const parsed = parseChainRuleFormat1or2(r, ruleOff, origToNew, true);
         if (parsed) validRules.push(parsed);
       }
@@ -790,13 +797,13 @@ function serializeChainedContextSubst(
     /** 收集每个 input class 的有效规则（class index 不变） */
     const classToRules = new Map<number, Array<{ back: number[]; input: number[]; look: number[]; records: Array<{ seq: number; lookup: number }> }>>();
     for (let i = 0; i < classSetCount; i++) {
-      const setOffRel = r.u16(off + 12 + i * 2);
+      const setOffRel = dv.getUint16(off + 12 + i * 2, false);
       if (setOffRel === 0) continue;
       const setOff = off + setOffRel;
-      const ruleCount = r.u16(setOff);
+      const ruleCount = dv.getUint16(setOff, false);
       if (ruleCount > 0x7fff) return false;
       for (let j = 0; j < ruleCount; j++) {
-        const ruleOff = setOff + r.u16(setOff + 2 + j * 2);
+        const ruleOff = setOff + dv.getUint16(setOff + 2 + j * 2, false);
         /** format2 的元素是 class index（非 gid），原样保留，传 isGidFormat=false。
          *  class index 始终有效（ClassDef 重映射 gid 后 class 编号不变），规则恒保留。 */
         const parsed = parseChainRuleFormat1or2(r, ruleOff, origToNew, false);
@@ -833,6 +840,7 @@ function parseChainRuleFormat1or2(
   origToNew: Map<number, number>,
   isGidFormat: boolean,
 ): { back: number[]; input: number[]; look: number[]; records: Array<{ seq: number; lookup: number }> } | null {
+  const dv = r.dv;
   const backCount = r.u16(ruleOff);
   /** count 异常大（偏移错位读到垃圾值）则放弃该规则，返回 null。实际规则序列长度很小（<256） */
   if (backCount > 255) return null;
@@ -847,14 +855,14 @@ function parseChainRuleFormat1or2(
     if (isGidFormat) {
       const out: number[] = [];
       for (let k = 0; k < count; k++) {
-        const m = remapGid(origToNew, r.u16(p + k * 2));
+        const m = remapGid(origToNew, dv.getUint16(p + k * 2, false));
         if (m === null) return null;
         out.push(m);
       }
       return out;
     }
     const out2: number[] = [];
-    for (let k = 0; k < count; k++) out2.push(r.u16(p + k * 2));
+    for (let k = 0; k < count; k++) out2.push(dv.getUint16(p + k * 2, false));
     return out2;
   };
   const back = readSeq(backCount);
@@ -879,7 +887,7 @@ function parseChainRuleFormat1or2(
   p += 2;
   const records: Array<{ seq: number; lookup: number }> = [];
   for (let k = 0; k < seqCount; k++) {
-    records.push({ seq: r.u16(p + k * 4), lookup: r.u16(p + k * 4 + 2) });
+    records.push({ seq: dv.getUint16(p + k * 4, false), lookup: dv.getUint16(p + k * 4 + 2, false) });
   }
   return { back, input, look, records };
 }
@@ -1007,13 +1015,14 @@ function parseChainFormat3(
   covCache: CoverageCache,
   gidLookup: GidLookup,
 ): { backCovs: number[][]; inputCovs: number[][]; lookCovs: number[][]; records: Array<{ seq: number; lookup: number }> } | null {
+  const dv = r.dv;
   let p = off + 2;
   const readCovArr = (): number[][] | null => {
     const count = r.u16(p);
     p += 2;
     const arr: number[][] = [];
     for (let k = 0; k < count; k++) {
-      const covOff = off + r.u16(p + k * 2);
+      const covOff = off + dv.getUint16(p + k * 2, false);
       const newGids = readCoverageRemapped(r, covOff, gidLookup, covCache);
       /** coverage 全部 gid 落在子集外（原非空）→ 规则失效 */
       if (newGids === null) return null;
@@ -1031,7 +1040,7 @@ function parseChainFormat3(
   p += 2;
   const records: Array<{ seq: number; lookup: number }> = [];
   for (let k = 0; k < seqCount; k++) {
-    records.push({ seq: r.u16(p + k * 4), lookup: r.u16(p + k * 4 + 2) });
+    records.push({ seq: dv.getUint16(p + k * 4, false), lookup: dv.getUint16(p + k * 4 + 2, false) });
   }
   return { backCovs, inputCovs, lookCovs, records };
 }
