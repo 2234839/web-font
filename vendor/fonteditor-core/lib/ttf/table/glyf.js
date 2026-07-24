@@ -100,6 +100,20 @@ var _default = exports.default = _table.default.create('glyf', [], {
                *  优化313: 不再分配 endPtsOfContours 数组——_totalPoints 只需最后一个 endPt。
                *  优化314: 原始字节引用展平到 glyfObj（_origBuf/_origOff/_origLen），
                *  省掉每个 simple 字形的 _origGlyfRef 子对象分配。 */
+              /** instructions 剥离定位（优化320）：simple 字节布局 header(10)+endPts(nc*2)+instructionLength(2)+
+               *  instructions(n)+flags+x+y。instructionLength 紧接 endPtsOfContours（OpenType 规范，
+               *  与 parse.js line 242 一致），无需展开 flags。_instrOff 指向 instructionLength 字段
+               *  （相对 view 起始的绝对偏移），_instrLen 为 instructions 字节数。_instrOff=-1 表示无
+               *  instructions，write 走原始整段拷贝。 */
+              var _instrOff = -1;
+              var _instrLen = 0;
+              if (numberOfContours > 0) {
+                var _instrLenPos = vOff + 10 + numberOfContours * 2;
+                if (_instrLenPos + 2 <= vOff + (gEnd - gStart)) {
+                  _instrLen = view.getUint16(_instrLenPos, false);
+                  if (_instrLen > 0) _instrOff = _instrLenPos;
+                }
+              }
               var glyfObj = {
                 xMin: view.getInt16(vOff + 2, false),
                 yMin: view.getInt16(vOff + 4, false),
@@ -110,6 +124,8 @@ var _default = exports.default = _table.default.create('glyf', [], {
                 _origLen: gEnd - gStart,
                 _numContours: numberOfContours,
                 _totalPoints: numberOfContours > 0 ? view.getUint16(vOff + 10 + (numberOfContours - 1) * 2, false) + 1 : 0,
+                _instrOff: _instrOff,
+                _instrLen: _instrLen,
               };
               glyphs[index] = glyfObj;
             } else {

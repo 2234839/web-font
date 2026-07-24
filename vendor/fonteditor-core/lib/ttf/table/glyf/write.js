@@ -57,9 +57,34 @@ function write(writer, ttf) {
     /** 优化314: 原始字节引用展平为 _origBuf/_origOff/_origLen，消除 _origGlyfRef 子对象解引用 */
     var origBuf = glyf._origBuf;
     if (origBuf) {
-      var origBytes = new Uint8Array(origBuf, glyf._origOff, glyf._origLen);
-      fullView.set(origBytes, pos);
-      pos += glyf._origLen;
+      /** 优化320: instructions 剥离。_instrOff>=0 时 simple 字形含 hinting instructions，
+       *  输出跳过 instructions 段并把 instructionLength 置 0。
+       *  字节布局：[header+endPts+flags+x+y 前段][instructionLength(2)][instructions(n)][flags+x+y 后段]
+       *  注意 instructions 在 flags/x/y 之前（OpenType 规范：endPts → instructionLength → instructions → flags → x → y）。
+       *  _instrOff 是相对 view 起始的绝对偏移（指向 instructionLength 字段），换算为相对 _origOff 的局部偏移。 */
+      if (glyf._instrOff >= 0) {
+        var instrRelOff = glyf._instrOff - glyf._origOff;
+        /** instructionLength 字段前（header+endPts+flags+x+y 已写部分？不——flags/x/y 在 instructions 之后）。
+         *  实际：instrRelOff 之前是 header(10)+endPts(nc*2)。instrRelOff 处是 instructionLength(2)，
+         *  之后是 instructions(_instrLen)，再之后是 flags+x+y 直到 _origLen。 */
+        /** 前 segment：[_origOff, _origOff+instrRelOff) = header+endPts */
+        fullView.set(new Uint8Array(origBuf, glyf._origOff, instrRelOff), pos);
+        pos += instrRelOff;
+        /** instructionLength = 0（替换原 2 字节值） */
+        view.setUint16(pos, 0, false);
+        pos += 2;
+        /** 后 segment：跳过 instructions(_instrLen)，写 [_origOff+instrRelOff+2+_instrLen, _origOff+_origLen) = flags+x+y */
+        var afterOff = glyf._origOff + instrRelOff + 2 + glyf._instrLen;
+        var afterLen = glyf._origLen - (instrRelOff + 2 + glyf._instrLen);
+        if (afterLen > 0) {
+          fullView.set(new Uint8Array(origBuf, afterOff, afterLen), pos);
+          pos += afterLen;
+        }
+      } else {
+        var origBytes = new Uint8Array(origBuf, glyf._origOff, glyf._origLen);
+        fullView.set(origBytes, pos);
+        pos += glyf._origLen;
+      }
     } else {
 
     /* 优化31+103: header 直接 view 写入 10 字节，优先使用 _numContours */
