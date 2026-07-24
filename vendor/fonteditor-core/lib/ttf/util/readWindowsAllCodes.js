@@ -140,8 +140,22 @@ function lookupFormat4(format4, unicode, _graphIdArrayIndexOffset) {
  * @return {Object} 字符字典索引，unicode => glyf index
  */
 function readWindowsAllCodes(tables, ttf) {
-  var codes = {};
   var subset = ttf.readOptions && ttf.readOptions.subset;
+
+  /**
+   * 优化315: 复用 probeGsubAndCmap 预计算的 codepoint→gid 映射，跳过 subset 模式下的 format4/12 二分查找循环。
+   * subset 模式下 readWindowsAllCodes 仅对 subset 字符做 lookupFormat4/lookupFormat12 二分（format0/format14
+   * 已在 parse 阶段跳过，glyphIdArray/groups 为空不贡献 codes），这与 probeGsubAndCmap 的 probe.lookup
+   * （backend/font_util/gsub-probe.ts，仅 format4/12 查找，算法一致）完全等价。
+   * fontSubset 已先跑 probe，将 probe.lookup 转为普通对象经 readOptions.presetCmap 注入，此处直接返回，
+   * 消除 readWindowsAllCodes 内 N 次（subset 长度）二分查找的重复计算（千字文 cmap.read -约50%）。
+   * 仅 subset 模式 + presetCmap 存在时启用；非 subset 或无 preset 走原逻辑。
+   */
+  if (subset && subset.length > 0 && ttf.readOptions && ttf.readOptions.presetCmap) {
+    return ttf.readOptions.presetCmap;
+  }
+
+  var codes = {};
 
   /* 优化65: 合并5次 tables.find 为单次遍历 */
   var format0 = null, format12 = null, format4 = null, format2 = null, format14 = null;

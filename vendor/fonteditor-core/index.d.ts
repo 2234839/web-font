@@ -240,6 +240,19 @@ export namespace FontEditor {
      * @default true
      */
     combinePath?: boolean;
+
+    /**
+     * 额外保留的原始 gid（如 GSUB 连字 target glyph，多无 unicode，subset codepoint 无法覆盖）。
+     * fonteditor-core subset 流程会把这些 gid 加入 subsetGids 一起保留。
+     */
+    extraSubsetGids?: number[];
+
+    /**
+     * 预计算的 codepoint→gid 映射（subset 模式复用 probeGsubAndCmap 结果）。
+     * subset 模式下 readWindowsAllCodes 只对 subset 字符做 format4/12 二分查找，
+     * 与 probeGsubAndCmap 的 probe.lookup 等价；注入此对象可跳过重复的二分查找（优化315）。
+     */
+    presetCmap?: Record<number, number>;
   }
 
   interface FontWriteOptions {

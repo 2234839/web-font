@@ -142,13 +142,21 @@ export const fontSubset = (
   const probe = probeGsubAndCmap(fontBuffer, codePoints, option.sourceType);
   let probedSeedGids: Set<number> | undefined;
   let probedGsubBytes: Uint8Array | undefined;
+  /** probe.lookup（codepoint→gid，仅 format4/12 查到）与 Font.create 内 readWindowsAllCodes 的 subset
+   *  路径产出等价（subset 模式 format0/14 不解析）。转为普通对象注入 readOptions.presetCmap，供
+   *  readWindowsAllCodes 直接复用，消除 subset 字符的 format4/12 二分查找重复计算。仅 probe.ok 时可用。 */
+  let presetCmap: Record<number, number> | undefined;
   if (probe.ok) {
     probedGsubBytes = probe.gsubBytes;
     probedSeedGids = new Set<number>();
     probedSeedGids.add(0); /** .notdef */
+    presetCmap = {};
     for (const cp of codePoints) {
       const gid = probe.lookup.get(cp);
-      if (gid !== undefined) probedSeedGids.add(gid);
+      if (gid !== undefined) {
+        probedSeedGids.add(gid);
+        presetCmap[cp] = gid;
+      }
     }
   } else if (probe.needsFallback) {
     /** 有 GSUB 但 cmap 无 format4/12，回退 Font.create probe（与原路径一致） */
@@ -180,6 +188,8 @@ export const fontSubset = (
     subset: codePoints,
     kerning: true,
     extraSubsetGids,
+    /** presetCmap 复用 probe 结果，跳过 readWindowsAllCodes 的 format4/12 二分查找（优化315） */
+    presetCmap,
   });
 
   /** subsetGids 在 optimize 前后均保留，记录子集字形的原始 gid 顺序（新 gid = 数组索引）。 */
