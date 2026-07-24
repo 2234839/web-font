@@ -112,8 +112,10 @@ var _default = exports.default = _table.default.create('name', [], {
       var ki_name = nameKeys[ki];
       var name = ki_name;
       var id = _nameId.default.names[name];
-      var utf8Bytes = _string.default.toUTF8Bytes(names[ki_name]);
-      var usc2Bytes = _string.default.toUCS2Bytes(names[ki_name]);
+      /** 优化320: 合并 UTF-8 + UCS-2 编码（单次扫描 + ASCII 快路径），替代两次独立编码 */
+      var _pair = _string.default.toUTF8AndUCS2Bytes(names[ki_name]);
+      var utf8Bytes = _pair.utf8;
+      var usc2Bytes = _pair.ucs2;
       if (undefined !== id) {
         // mac
         nameRecordTbl.push({
