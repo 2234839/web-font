@@ -234,7 +234,9 @@ var _default = exports.default = _table.default.create('OS/2', [['version', _str
 
       /** 优化260: delete → null 赋值，避免 V8 隐藏类转换 */
       ttf._metrics = null;
-      return _table.default.size.call(this, ttf);
+      /** 优化326: size 固定返回 96——os2.version 恒设 0x4（version>=2 全 46 字段=96 字节），
+       *  write 已 view 化写满 96 字节（优化176），无需通用 struct size 循环 46 字段查表 */
+      return 96;
     }
 
     /* 无预计算 metrics 时的原始逻辑 */
@@ -390,6 +392,7 @@ var _default = exports.default = _table.default.create('OS/2', [['version', _str
       maxComponentElements: maxComponentElements,
       maxComponentDepth: maxComponentElements ? 1 : 0
     };
-    return _table.default.size.call(this, ttf);
+    /** 优化326: 同上，version 恒 0x4 → 固定 96 字节 */
+    return 96;
   }
 });
