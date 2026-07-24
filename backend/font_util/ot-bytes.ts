@@ -33,9 +33,15 @@ export class OTWriter {
    *  （思源 subsetGPOS 207 次/call 占 ~58%），原实现每次调 private ensure()——V8 对 class
    *  private method 内联不充分，per-call 函数调用开销在百次累计下显著。改为内联容量判断
    *  （够用直接写，不够才调 grow），消除热路径上的函数调用。 */
-  private buf: Uint8Array = new Uint8Array(2048);
+  /** 初始容量：默认 2048；subsetGPOS/subsetGSUB 主 Writer 按原表大小预分配避免多次 grow 全拷贝 */
+  private buf: Uint8Array;
   private size: number = 0;
   private patches: Array<{ pos: number; base: number; targetGetter: () => number }> = [];
+
+  /** 预估输出容量的 Writer（省去从默认容量多次 2× 扩容的全拷贝）。initialCapacity 为 0/省略时用默认 2048。 */
+  constructor(initialCapacity: number = 2048) {
+    this.buf = new Uint8Array(initialCapacity > 0 ? initialCapacity : 2048);
+  }
 
   get length(): number {
     return this.size;

@@ -222,7 +222,10 @@ export function subsetGPOS(
   /** ScriptList/FeatureList 解析失败（异常表）则整体降级返回 null（调用方保留原始 GPOS 字节） */
   if (!scriptListBytes || !featureListBytes) return null;
 
-  const w = new Writer();
+  /** 主 Writer 按原 GPOS 表大小预分配容量：子集输出通常 ≤ 原表（剔除字形），
+   *  默认 2048 对大 GPOS（初夏 lookup[10] 283 subtable 累积 ~16KB）触发 4+ 次 grow 全拷贝。
+   *  取原表大小作为初始容量（足够且不至于对小表浪费太多）。 */
+  const w = new Writer(gposBytes.byteLength);
 
   /** Header（偏移量最后回填） */
   w.writeUint16(1);

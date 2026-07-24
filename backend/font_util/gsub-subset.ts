@@ -1398,7 +1398,8 @@ export function subsetGSUB(
   /** ScriptList/FeatureList 解析失败（异常表）则整体保留原始 GSUB 字节（安全降级） */
   if (!scriptListBytes || !featureListBytes) return gsubBytes;
 
-  const w = new Writer();
+  /** 主 Writer 按原 GSUB 表大小预分配容量，避免大 GSUB（令东千字文 GSUB 数十 KB）多次 grow 全拷贝 */
+  const w = new Writer(gsubBytes.byteLength);
 
   /** Header */
   w.writeUint16(1);
