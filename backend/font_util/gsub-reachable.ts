@@ -309,6 +309,50 @@ export function collectReachableGsubTargets(
           /** 已知失败 gid 仍未进 reachable → 必定仍 triggerable=false，跳过重扫 */
           const knownFail = failGidMap.get(subAbs);
           if (knownFail !== undefined && !reachable.has(knownFail)) continue;
+          /** format3 失败快判内联（避免大量失败 format3 的完整 collectChainRefs 调用开销）：
+           *  初夏纯标点 280 个 format3 首轮全失败（276 个 backtrack 段为空，失败在 input 段），
+           *  FiraCode 207 个 format3 中 121 个 backtrack 首 gid 即不在 reachable。
+           *  format3 触发需 backtrack/input/lookahead 三段全部 gid 在子集，故【任一非空段】的首个 coverage
+           *  首 gid 不在 reachable 即可判定失败。依次查 backtrack→input→lookahead 第一个非空段首 gid，
+           *  命中失败则记 failGidMap 跳过 collectChainRefs（省函数调用 + clear + format3 分支进入）。
+           *  快判未命中（首 gid 在 reachable 或所有段空或 format 非 3）走完整 collectChainRefs（含 errorFlag 安全网）。 */
+          {
+            /** 命中失败时记录的 gid（某段首 gid 不在 reachable），-1 表示快判未命中 */
+            let fastFailGid = -1;
+            /** format3 布局：format(2)+btCnt(2)+btCov[btCnt]+inCnt(2)+inCov[inCnt]+laCnt(2)+laCov[laCnt] */
+            if (subAbs + 6 <= dv.byteLength && dv.getUint16(subAbs, false) === 3) {
+              /** 当前段的 count 字段位置与 count 值，从 backtrack 段开始 */
+              let segCntPos = subAbs + 2;
+              let segCnt = dv.getUint16(subAbs + 2, false);
+              /** 依次检查 backtrack / input / lookahead 三段，找第一个非空段且首 gid 不在 reachable */
+              for (let seg = 0; seg < 3 && fastFailGid < 0; seg++) {
+                if (segCnt > 0) {
+                  /** 该段首个 coverage offset 紧跟 segCnt 字段 */
+                  const covOffPos = segCntPos + 2;
+                  if (covOffPos + 2 <= dv.byteLength) {
+                    const covOff = subAbs + dv.getUint16(covOffPos, false);
+                    if (covOff + 6 <= dv.byteLength) {
+                      const covFormat = dv.getUint16(covOff, false);
+                      const covCount = dv.getUint16(covOff + 2, false);
+                      if ((covFormat === 1 || covFormat === 2) && covCount > 0) {
+                        const firstGid = dv.getUint16(covOff + 4, false);
+                        if (!inSubset(firstGid)) fastFailGid = firstGid;
+                      }
+                    }
+                  }
+                }
+                /** 推进到下一段：跳过 segCnt 字段 + segCnt 个 coverage offset */
+                const nextSegCntPos = segCntPos + 2 + segCnt * 2;
+                if (nextSegCntPos + 2 > dv.byteLength) break;
+                segCntPos = nextSegCntPos;
+                segCnt = dv.getUint16(segCntPos, false);
+              }
+            }
+            if (fastFailGid >= 0) {
+              failGidMap.set(subAbs, fastFailGid);
+              continue;
+            }
+          }
           /** type6：收集可触发规则引用的 lookup index 与所需 context gid */
           refsReuse.clear();
           ctxGidsReuse.clear();
