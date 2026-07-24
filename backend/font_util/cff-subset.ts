@@ -138,6 +138,219 @@ function encodeDictInt(v: number): number[] {
   return [29, (v >>> 24) & 0xff, (v >> 16) & 0xff, (v >> 8) & 0xff, v & 0xff];
 }
 
+/** Type 2 charstring 操作码（Adobe Type 2 Charstring Format）。 */
+const T2_CALLSUBR = 10;
+const T2_RETURN = 11;
+const T2_ENDCHAR = 14;
+const T2_HSTEM = 1;
+const T2_VSTEM = 3;
+const T2_HSTEMHM = 18;
+const T2_VSTEMHM = 23;
+const T2_HINTMASK = 19;
+const T2_CNTRMASK = 20;
+const T2_CALLGSUBR = 29;
+
+/** 计算 subr INDEX 的 bias（CFF 规范：调用编号 = 实际 subr 索引 + bias）。
+ *  nSubrs < 1240 → 107；< 33900 → 1131；否则 32768。 */
+function subrBias(nSubrs: number): number {
+  if (nSubrs < 1240) return 107;
+  if (nSubrs < 33900) return 1131;
+  return 32768;
+}
+
+/**
+ * 扫描单个 Type 2 charstring/subr 字节，收集其引用的 local subr 与 global subr 编号。
+ * 采用栈模拟：operand 依次入栈，遇 callsubr(10)/callgsubr(29) 取栈顶为调用编号（减 bias 得实际索引）。
+ *
+ * hintmask(19)/cntrmask(20) 后跟 ceil(stemCount/8) 字节掩码，必须跳过——否则掩码字节会被
+ * 误判为操作码致扫描错位、漏收引用（思源 charstring 大量使用 hint）。
+ * stemCount 由 stem 类操作码（hstem/vstem/hstemhm/vstemhm）的栈深度累加（每 stem = 2 operand）。
+ *
+ * @param b CFF 字节
+ * @param start charstring/subr 起始偏移
+ * @param end charstring/subr 结束偏移（不含）
+ * @param localBias 该 charstring 所属 FD 的 local subr bias
+ * @param localCount local subr 总数（越界保护）
+ * @param localRefs 输出：收集到的 local subr 实际索引
+ * @param gsubrRefs 输出：收集到的 global subr 实际索引
+ */
+export function collectSubrRefs(
+  b: Uint8Array,
+  start: number,
+  end: number,
+  localBias: number,
+  localCount: number,
+  localRefs: Set<number>,
+  gsubrRefs: Set<number>,
+): void {
+  let p = start;
+  const stack: number[] = [];
+  let stemCount = 0;
+  while (p < end) {
+    const b0 = b[p++];
+    if (b0 === 255) {
+      /** fixed point（坐标），4 字节，不入栈编号判定 */
+      stack.push(NaN);
+      p += 4;
+    } else if (b0 === 28) {
+      stack.push(((b[p] << 24) | (b[p + 1] << 16)) >> 16);
+      p += 2;
+    } else if (b0 === 29) {
+      stack.push(((b[p] << 24) | (b[p + 1] << 16) | (b[p + 2] << 8) | b[p + 3]) | 0);
+      p += 4;
+    } else if (b0 >= 32 && b0 <= 246) {
+      stack.push(b0 - 139);
+    } else if (b0 >= 247 && b0 <= 250) {
+      stack.push((b0 - 247) * 256 + b[p] + 108);
+      p += 1;
+    } else if (b0 >= 251 && b0 <= 254) {
+      stack.push(-(b0 - 251) * 256 - b[p] - 108);
+      p += 1;
+    } else {
+      /** 操作码（b0 <= 27，含 12 双字节） */
+      if (b0 === 12) {
+        p += 1;
+        stack.length = 0;
+      } else if (b0 === T2_HSTEM || b0 === T2_VSTEM || b0 === T2_HSTEMHM || b0 === T2_VSTEMHM) {
+        stemCount += stack.length >> 1;
+        stack.length = 0;
+      } else if (b0 === T2_HINTMASK || b0 === T2_CNTRMASK) {
+        p += (stemCount + 7) >>> 3;
+        stack.length = 0;
+      } else if (b0 === T2_CALLSUBR) {
+        const arg = stack[stack.length - 1];
+        if (Number.isInteger(arg)) {
+          const sn = arg + localBias;
+          if (sn >= 0 && sn < localCount) localRefs.add(sn);
+        }
+        stack.length = 0;
+      } else if (b0 === T2_CALLGSUBR) {
+        const arg = stack[stack.length - 1];
+        if (Number.isInteger(arg)) gsubrRefs.add(arg);
+        stack.length = 0;
+      } else if (b0 === T2_ENDCHAR) {
+        break;
+      } else {
+        /** 其余操作码（运动/曲线等）消费栈 */
+        stack.length = 0;
+      }
+    }
+  }
+}
+
+/**
+ * 重写 Type 2 charstring/subr：把 callsubr/callgsubr 的调用编号 operand 重映射到子集编号。
+ * 其余字节原样保留（坐标、操作码、hintmask 掩码等）。
+ *
+ * 实现：逐字节复制到输出，operand 入栈时记录其在输出的起始位置；遇 callsubr/callgsubr 时
+ * 截断输出回栈顶 operand 起始处，写入新编号编码（operand 编码长度可能变化，故必须重建流而非原地改）。
+ *
+ * @param b CFF 字节
+ * @param start charstring 起始偏移
+ * @param end charstring 结束偏移
+ * @param localBias 原 local subr bias（解析 operand 用）
+ * @param localRemap 旧 local subr 索引 → 新索引（-1 表示未保留，不该出现于引用 charstring）
+ * @param newLocalCount 新 local subr 总数（算新 bias）
+ * @returns 重写后的字节。global subr 不子集化（callgsubr operand 原样保留，bias 不变）。
+ */
+export function rewriteCharstring(
+  b: Uint8Array,
+  start: number,
+  end: number,
+  localBias: number,
+  localRemap: Map<number, number>,
+  newLocalCount: number,
+): Uint8Array {
+  const newLocalBias = subrBias(newLocalCount);
+  const out: number[] = [];
+  /** 栈：记录每个 operand 在 out 中的起始位置（便于截断重写）。值为原始解析值。 */
+  const stackStart: number[] = [];
+  const stackVal: number[] = [];
+  let stemCount = 0;
+  let p = start;
+  while (p < end) {
+    const b0 = b[p++];
+    if (b0 === 255) {
+      stackStart.push(out.length);
+      stackVal.push(NaN);
+      out.push(255, b[p], b[p + 1], b[p + 2], b[p + 3]);
+      p += 4;
+    } else if (b0 === 28) {
+      stackStart.push(out.length);
+      stackVal.push(((b[p] << 24) | (b[p + 1] << 16)) >> 16);
+      out.push(28, b[p], b[p + 1]);
+      p += 2;
+    } else if (b0 === 29) {
+      stackStart.push(out.length);
+      stackVal.push(((b[p] << 24) | (b[p + 1] << 16) | (b[p + 2] << 8) | b[p + 3]) | 0);
+      out.push(29, b[p], b[p + 1], b[p + 2], b[p + 3]);
+      p += 4;
+    } else if (b0 >= 32 && b0 <= 246) {
+      stackStart.push(out.length);
+      stackVal.push(b0 - 139);
+      out.push(b0);
+    } else if (b0 >= 247 && b0 <= 250) {
+      stackStart.push(out.length);
+      stackVal.push((b0 - 247) * 256 + b[p] + 108);
+      out.push(b0, b[p]);
+      p += 1;
+    } else if (b0 >= 251 && b0 <= 254) {
+      stackStart.push(out.length);
+      stackVal.push(-(b0 - 251) * 256 - b[p] - 108);
+      out.push(b0, b[p]);
+      p += 1;
+    } else {
+      /** 操作码 */
+      if (b0 === 12) {
+        out.push(12, b[p]);
+        p += 1;
+        stackStart.length = 0;
+        stackVal.length = 0;
+      } else if (b0 === T2_HSTEM || b0 === T2_VSTEM || b0 === T2_HSTEMHM || b0 === T2_VSTEMHM) {
+        stemCount += stackVal.length >> 1;
+        out.push(b0);
+        stackStart.length = 0;
+        stackVal.length = 0;
+      } else if (b0 === T2_HINTMASK || b0 === T2_CNTRMASK) {
+        out.push(b0);
+        const maskBytes = (stemCount + 7) >>> 3;
+        for (let i = 0; i < maskBytes; i++) out.push(b[p + i]);
+        p += maskBytes;
+        stackStart.length = 0;
+        stackVal.length = 0;
+      } else if (b0 === T2_CALLSUBR) {
+        const arg = stackVal[stackVal.length - 1];
+        const oldSn = Number.isInteger(arg) ? arg + localBias : -1;
+        const newSn = localRemap.get(oldSn);
+        if (newSn === undefined) {
+          /** subr 未保留（理论上引用 charstring 必命中）——保留原 operand 保底 */
+          out.push(T2_CALLSUBR);
+        } else {
+          /** 截断到栈顶 operand 起始，写入新编号编码 */
+          out.length = stackStart[stackStart.length - 1];
+          for (const eb of encodeDictInt(newSn - newLocalBias)) out.push(eb);
+          out.push(T2_CALLSUBR);
+        }
+        stackStart.length = 0;
+        stackVal.length = 0;
+      } else if (b0 === T2_CALLGSUBR) {
+        /** global subr 不子集化：operand（调用编号）原样保留，bias 不变 */
+        out.push(T2_CALLGSUBR);
+        stackStart.length = 0;
+        stackVal.length = 0;
+      } else if (b0 === T2_ENDCHAR) {
+        out.push(b0);
+        break;
+      } else {
+        out.push(b0);
+        stackStart.length = 0;
+        stackVal.length = 0;
+      }
+    }
+  }
+  return new Uint8Array(out);
+}
+
 /**
  * 序列化 CFF INDEX：count + offSize + (count+1)*offSize 偏移量 + 数据拼接。
  * 选最小能容纳最大偏移量的 offSize。偏移量 1-based（首个 offset=1）。
@@ -344,10 +557,11 @@ export function subsetCFF(cffBytes: Uint8Array, subsetGids: number[]): Uint8Arra
   /** .notdef（gid 0）必须保留，且 subsetGids[0] 应为 0 */
   const newSubsetGids = subsetGids[0] === 0 ? subsetGids : [0, ...subsetGids];
 
-  /** 重建 CharStrings INDEX：按 newSubsetGids 顺序透传原 charstring 字节。
-   *  按 gid 随机读 2 个 offset 取区间，跳过全量 offset 遍历。 */
-  const newCharStringObjects: { bytes: Uint8Array; start: number; len: number }[] = [];
-  for (const gid of newSubsetGids) {
+  /** 先记录每个子集字形在原 CharStrings 的字节区间 [start, end)，供后续 subr 子集化重写。 */
+  const newSubsetNumGlyphs = newSubsetGids.length;
+  const charStringRanges: { start: number; end: number }[] = new Array(newSubsetNumGlyphs);
+  for (let gi = 0; gi < newSubsetNumGlyphs; gi++) {
+    const gid = newSubsetGids[gi];
     /** 读 offset[gid] 与 offset[gid+1]（offSize 字节大端） */
     let o0 = 0;
     let o1 = 0;
@@ -355,17 +569,13 @@ export function subsetCFF(cffBytes: Uint8Array, subsetGids: number[]): Uint8Arra
     const p1 = csOffArrStart + (gid + 1) * csOffSize;
     for (let j = 0; j < csOffSize; j++) o0 = (o0 << 8) | b[p0 + j];
     for (let j = 0; j < csOffSize; j++) o1 = (o1 << 8) | b[p1 + j];
-    const s = csDataStart + o0 - 1;
-    const e = csDataStart + o1 - 1;
-    newCharStringObjects.push({ bytes: b, start: s, len: e - s });
+    charStringRanges[gi] = { start: csDataStart + o0 - 1, end: csDataStart + o1 - 1 };
   }
-  const newCharStrings = writeIndex(newCharStringObjects);
 
   /** 重建 charset：CID-keyed 字体的 charset 是 gid→CID 映射。格式 0/1/2，按 newSubsetGids 取 CID。
    *  CID 0 固定留给 .notdef（gid 0），其余按原 charset 顺序。新 charset 用格式 0 最简单：
    *  format(1) + (numGlyphs-1)×CID(u16)（charset 不含 gid 0，它隐式为 CID 0）。
    *  按需查 CID（lookupCharsetCID 遍历 range 查单个 gid），不全量展开 65535 项。 */
-  const newSubsetNumGlyphs = newSubsetGids.length;
   const newCharsetBody: number[] = [];
   for (let i = 1; i < newSubsetNumGlyphs; i++) {
     /** newSubsetGids[i] 是原始 gid，取其原 CID */
@@ -403,10 +613,24 @@ export function subsetCFF(cffBytes: Uint8Array, subsetGids: number[]): Uint8Arra
     len: number;
     /** Local Subr INDEX 原始字节（无则 null）。思源等 CID 字体字形通过 callsubr 引用本地 subr */
     localSubr: Uint8Array | null;
+    /** Local Subr INDEX 全量解析（off→字节区间），供引用收集与重建；null 表示无 local subr */
+    localSubrIdx: CffIndex | null;
+    /** 原 local subr bias（localSubrIdx.count 决定） */
+    localBias: number;
+    /** 子集 local subr 旧索引→新索引映射（引用收集后填充）；null 表示无需重映射（无 subr 或全保留） */
+    localRemap: Map<number, number> | null;
+    /** 子集后 local subr 总数 */
+    newLocalCount: number;
+    /** 子集 local subr INDEX 字节（重建后；无 subr 为 null）。最终拼入 Private 段 */
+    newLocalSubr: Uint8Array | null;
   }
   interface FdInfo { dictBytes: Uint8Array; priv: PrivInfo; }
   /** 原始 Private 段去重：相同 origOff 的 Private 共享同一份（含其 Local Subr） */
   const privSegCache = new Map<number, PrivInfo>();
+  /** 每个 unique Private 池（按 privOrigOff）收集的 local subr 引用集（多 FD 共享一池时合并） */
+  const privLocalRefs = new Map<number, Set<number>>();
+  /** global subr 不子集化，collectSubrRefs 的 gsubrRefs 参数占位（引用不收集） */
+  const dummyGsubrRefs = new Set<number>();
   const fdInfos: FdInfo[] = [];
   for (const fd of usedFds) {
     const s = fdArrayIndex.dataStart + fdArrayIndex.offsets[fd] - 1;
@@ -416,7 +640,7 @@ export function subsetCFF(cffBytes: Uint8Array, subsetGids: number[]): Uint8Arra
     const priv = fdDict.get(OP_Private);
     /** 无 Private 的 FD（极罕见）原样透传 */
     if (!priv || priv.length < 2) {
-      fdInfos.push({ dictBytes, priv: { origOff: -1, len: 0, localSubr: null } });
+      fdInfos.push({ dictBytes, priv: { origOff: -1, len: 0, localSubr: null, localSubrIdx: null, localBias: 0, localRemap: null, newLocalCount: 0, newLocalSubr: null } });
       continue;
     }
     const privLen = priv[0];
@@ -427,17 +651,104 @@ export function subsetCFF(cffBytes: Uint8Array, subsetGids: number[]): Uint8Arra
       const privDict = parseDict(b, privOrigOff, privOrigOff + privLen);
       const subrRel = privDict.get(OP_LocalSubr)?.[0];
       let localSubr: Uint8Array | null = null;
+      let localSubrIdx: CffIndex | null = null;
+      let localBias = 0;
       if (subrRel !== undefined) {
         /** Local Subr INDEX 紧接 Private DICT 字节之后（绝对偏移 = privOrigOff + subrRel） */
-        /** Local Subr INDEX 仅需整体字节切片透传，不全量解析 offset（思源 Local Subr 可达数千 subr） */
-        const subrRange = indexByteRange(b, privOrigOff + subrRel);
-        localSubr = b.subarray(subrRange.start, subrRange.end);
+        const subrAbs = privOrigOff + subrRel;
+        /** 全量解析 INDEX（含所有 offset）：引用收集需按 subr 编号读字节区间，
+         *  子集重建需重排 offset。仅命中的 Private 才解析（思源仅 1-2 个 FD 有 subr）。 */
+        localSubrIdx = readIndex(b, subrAbs);
+        localBias = subrBias(localSubrIdx.count);
+        localSubr = b.subarray(localSubrIdx.start, localSubrIdx.end);
       }
-      info = { origOff: privOrigOff, len: privLen, localSubr };
+      info = { origOff: privOrigOff, len: privLen, localSubr, localSubrIdx, localBias, localRemap: null, newLocalCount: localSubrIdx ? localSubrIdx.count : 0, newLocalSubr: localSubr };
       privSegCache.set(privOrigOff, info);
+      privLocalRefs.set(privOrigOff, new Set());
     }
     fdInfos.push({ dictBytes, priv: info });
+    /** 收集该 FD 所有子集字形的 local subr 引用到其 Private 池的引用集 */
+    const refs = privLocalRefs.get(info.origOff)!;
+    if (info.localSubrIdx) {
+      const idx = info.localSubrIdx;
+      for (let i = 0; i < newSubsetNumGlyphs; i++) {
+        if (gidOrigFds[i] !== fd) continue;
+        const r = charStringRanges[i];
+        collectSubrRefs(b, r.start, r.end, info.localBias, idx.count, refs, dummyGsubrRefs);
+      }
+    }
   }
+
+  /** 递归收敛：被引用的 local subr 可能再引用其他 local subr，迭代至不动点。
+   *  （global subr 不子集化，故不收集 gsubr 引用；collectSubrRefs 的 gsubrRefs 占位用 dummyGsubrRefs） */
+  if (privLocalRefs.size > 0) {
+    let changed = true;
+    let guard = 0;
+    while (changed && guard < 64) {
+      changed = false;
+      guard++;
+      for (const [privOrigOff, refs] of privLocalRefs) {
+        const info = privSegCache.get(privOrigOff)!;
+        const idx = info.localSubrIdx;
+        if (!idx) continue;
+        const before = refs.size;
+        for (const sn of [...refs]) {
+          const ss = idx.dataStart + idx.offsets[sn] - 1;
+          const se = idx.dataStart + idx.offsets[sn + 1] - 1;
+          collectSubrRefs(b, ss, se, info.localBias, idx.count, refs, dummyGsubrRefs);
+        }
+        if (refs.size > before) changed = true;
+      }
+    }
+  }
+
+  /** 各 Private 池：构建旧→新 local subr 映射 + 重建子集 INDEX。引用为空则保留空 INDEX。 */
+  for (const [privOrigOff, refs] of privLocalRefs) {
+    const info = privSegCache.get(privOrigOff)!;
+    const idx = info.localSubrIdx;
+    if (!idx) continue;
+    const sortedRefs = [...refs].sort((a, c) => a - c);
+    const remap = new Map<number, number>();
+    for (let i = 0; i < sortedRefs.length; i++) remap.set(sortedRefs[i], i);
+    info.localRemap = remap;
+    info.newLocalCount = sortedRefs.length;
+    if (sortedRefs.length === 0) {
+      /** 无引用：输出空 INDEX（count=0，2 字节），newLocalSubr 占位（下方 patchPrivateDict 后拼入） */
+      info.newLocalSubr = new Uint8Array(2);
+    } else {
+      /** 重建 INDEX：按新顺序写出被引用的 subr 字节。subr 内部 callsubr 也需重映射（递归 patch） */
+      const objects: { bytes: Uint8Array; start: number; len: number }[] = [];
+      for (const oldSn of sortedRefs) {
+        const ss = idx.dataStart + idx.offsets[oldSn] - 1;
+        const se = idx.dataStart + idx.offsets[oldSn + 1] - 1;
+        const rewritten = rewriteCharstring(b, ss, se, info.localBias, remap, sortedRefs.length);
+        objects.push({ bytes: rewritten, start: 0, len: rewritten.length });
+      }
+      info.newLocalSubr = writeIndex(objects);
+    }
+  }
+
+  /** 重建 CharStrings INDEX：按 newSubsetGids 顺序输出 charstring。
+   *  所属 FD 有 local subr 子集化时，patch callsubr operand（重映射到新 subr 编号 - 新 bias）；
+   *  否则透传原 charstring 字节。global subr 不子集化，callgsubr operand 原样保留。 */
+  const newCharStringObjects: { bytes: Uint8Array; start: number; len: number }[] = [];
+  for (let gi = 0; gi < newSubsetNumGlyphs; gi++) {
+    const r = charStringRanges[gi];
+    const origFd = gidOrigFds[gi];
+    /** 该 gid 所属原 FD 对应的 Private 信息（经 privSegCache 去重，按 privOrigOff 查） */
+    let privInfo: PrivInfo | null = null;
+    /** usedFds 顺序与 fdInfos 一致，反查 origFd→privInfo */
+    for (let fi = 0; fi < usedFds.length; fi++) {
+      if (usedFds[fi] === origFd) { privInfo = fdInfos[fi].priv; break; }
+    }
+    if (privInfo && privInfo.localRemap) {
+      const rewritten = rewriteCharstring(b, r.start, r.end, privInfo.localBias, privInfo.localRemap, privInfo.newLocalCount);
+      newCharStringObjects.push({ bytes: rewritten, start: 0, len: rewritten.length });
+    } else {
+      newCharStringObjects.push({ bytes: b, start: r.start, len: r.end - r.start });
+    }
+  }
+  const newCharStrings = writeIndex(newCharStringObjects);
 
   /** 新 FDSelect：每个新 gid → 新 FD 编号（复用首次遍历的 gidOrigFds，无需第二次 lookupFDSelect）。
    *  单 FD 用格式 0（最省，1+numGlyphs 字节）；多 FD 用格式 3 ranges（与原始 CID 字体一致，兼容 OTS 严格校验）。 */
@@ -485,8 +796,8 @@ export function subsetCFF(cffBytes: Uint8Array, subsetGids: number[]): Uint8Arra
     /** 先 patch 各唯一 Private DICT：op19 指向新 DICT 长度（Local Subr 紧跟其后） */
     const curPatchedPriv: { dict: Uint8Array; subr: Uint8Array | null }[] = [];
     for (const pi of uniquePrivInfos) {
-      const patchedPriv = patchPrivateDict(b, pi.origOff, pi.len, pi.localSubr !== null);
-      curPatchedPriv.push({ dict: patchedPriv, subr: pi.localSubr });
+      const patchedPriv = patchPrivateDict(b, pi.origOff, pi.len, pi.newLocalSubr !== null);
+      curPatchedPriv.push({ dict: patchedPriv, subr: pi.newLocalSubr });
     }
     /** patched 私有段总长（含各自 Local Subr） */
     let curPrivTotal = 0;
