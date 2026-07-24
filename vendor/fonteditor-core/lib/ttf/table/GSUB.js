@@ -18,7 +18,9 @@ function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { de
 var _default = exports.default = _table.default.create('GSUB', [], {
   read: function read(reader, ttf) {
     var length = ttf.tables.GSUB.length;
-    return reader.readBytes(this.offset, length);
+    /* 优化328: 零拷贝 subarray 替代 readBytes 的 slice（同 GPOS）。
+     * subsetGSUB 只读原始字节 + 写全新 OTWriter，write 只读，从不原地修改。 */
+    return new Uint8Array(reader.view.buffer, reader.view.byteOffset + this.offset, length);
   },
   write: function write(writer, ttf) {
     if (ttf.GSUB) {
