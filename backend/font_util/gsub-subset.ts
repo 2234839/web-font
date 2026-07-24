@@ -237,25 +237,50 @@ function readCoverageRemapped(
        *  FiraCode 实测 11 次 format2 miss 含 439 个 end >= numGlyphs 的越界 range，逐 gid 展开浪费
        *  ~320 万次 gidLookup 索引（占 readCoverageRemapped 总工作量绝大头）。 */
       const numGlyphs = gidLookup.length;
+      /**
+       * 优化（range 二分而非展开，与 readClassDefMap format2 同思路 [[gsub-classdef-format2-bsearch]]）：
+       * 原实现逐 gid 遍历 [start..e] 全部查 gidLookup（FiraCode 实测 coverage format2 首次展开共 2317 gid，
+       * 子集仅占极小部分）。改为在升序子集 gid 数组上二分定位 [start,end] 内的 gid，仅 push 命中的 newGid。
+       * range 顺序遍历 + range 内子集 gid 升序扫描 → newGids 保持 gid 升序（与原展开顺序一致）。 */
+      const subsetGids = currentSortedSubsetGids;
+      const subsetLen = subsetGids.length;
       let p = off + 4;
       for (let i = 0; i < rangeCount; i++) {
         if (p + 6 > len) break;
         const start = dv.getUint16(p, false);
         const end = dv.getUint16(p + 2, false);
+        /** COVERAGE_MAX_EXPAND 上限保护保留（与原代码一致）：超大 range（损坏数据）整体跳过。
+         *  二分本身是 O(log) 不会因 range 大而慢，但保留此检查以维持与原实现完全一致的边界语义。 */
         if (end >= start && end - start < COVERAGE_MAX_EXPAND && newGids.length + (end - start + 1) <= COVERAGE_MAX_EXPAND) {
           if (start >= numGlyphs) {
             /** 整个 range 越界：原代码逐 gid 遍历全跳过 push 但会设 origNonEmpty=true，此处保持等价语义
              *  （→ newGids 空、origNonEmpty=true → outOfSubset → 返回 null） */
             origNonEmpty = true;
-          } else {
-            /** clamp end 到合法 gid 范围；start..numGlyphs-1 段与原代码逐 gid 处理完全相同，
-             *  numGlyphs..end 段原代码全越界跳过，clamp 后省去该段空循环 */
+          } else if (subsetLen > 0) {
+            /** clamp end 到合法 gid 范围；与原代码 clamp 后逐 gid 处理 [start..e] 完全等价，
+             *  但用子集 gid 二分仅处理落在范围内的子集 gid */
             const e = end < numGlyphs ? end : numGlyphs - 1;
-            for (let g = start; g <= e; g++) {
-              origNonEmpty = true;
-              const m = gidLookup[g];
-              if (m >= 0) newGids.push(m);
+            /** range 含至少一个合法 gid（start<=e）即 origNonEmpty=true，无论是否命中子集——
+             *  与原代码逐 gid 遍历 [start..e] 必设 origNonEmpty=true 一致（即使全无子集命中） */
+            origNonEmpty = true;
+            if (!(e < subsetGids[0] || start > subsetGids[subsetLen - 1])) {
+              /** 二分定位第一个 >= start 的子集 gid，顺序扫描到 > e 为止 */
+              let lo = 0;
+              let hi = subsetLen;
+              while (lo < hi) {
+                const mid = (lo + hi) >>> 1;
+                if (subsetGids[mid] < start) lo = mid + 1;
+                else hi = mid;
+              }
+              for (let j = lo; j < subsetLen; j++) {
+                const g = subsetGids[j];
+                if (g > e) break;
+                newGids.push(gidLookup[g]);
+              }
             }
+          } else {
+            /** 子集为空（理论不会，subsetGSUB 必有 .notdef）：保持 origNonEmpty 语义 */
+            origNonEmpty = true;
           }
         }
         p += 6;
