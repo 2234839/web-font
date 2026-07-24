@@ -21,7 +21,7 @@
  * @reference https://learn.microsoft.com/en-us/typography/opentype/spec/gsub
  */
 
-import { OTWriter as Writer, OTReader as Reader, serializeScriptList, serializeFeatureList } from "./ot-bytes.js";
+import { OTWriter as Writer, OTReader as Reader, serializeScriptList, serializeFeatureList, scriptListSpan, featureListSpan } from "./ot-bytes.js";
 
 /** GSUB lookup 类型常量 */
 const LT_SINGLE = 1;
@@ -1252,8 +1252,28 @@ export function subsetGSUB(
    *    - 支持的：gid 重映射后重新序列化
    *    - 不支持的（type5 等）：原样拷贝原始字节（gid 不重映射，浏览器查 coverage 查不到会跳过）
    */
-  const scriptListBytes = serializeScriptList(r, scriptListOff);
-  const featureListBytes = serializeFeatureList(r, featureListOff);
+  /** ScriptList / FeatureList 整块拷贝快路径（同 subsetGPOS）：
+   *  两表不含 glyphId，若子表紧凑排列不与相邻 list 物理交错，字节块本身即合法表，
+   *  直接 subarray 拷贝跳过逐字段序列化，并保留 fontTools 去重。
+   *
+   *  交错判定用「span 不越过下一 list 的 header offset」：SL 上界为 featureListOff，
+   *  FL 上界为 lookupListOff。霞鹜文楷 GSUB 布局为 LookupList(10) < ScriptList(38)
+   *  < FeatureList(76)，ScriptTable 跨越 FeatureList 起始、且 LookupList 数据散落在
+   *  FeatureList 之后——此时 lookupListOff(10) < featureListOff(76)，FL 的 span 必然
+   *  > lookupListOff 而降级；SL span(350) 也越过 fl(76) 而降级。故物理交错字体自动走
+   *  serialize，安全。不使用「三个 offset 中下一个更大值」作上界：LookupList 的 subtable
+   *  可散落在任意偏移，header offset 不能代表其字节范围。 */
+  const slSpan = scriptListSpan(r, scriptListOff);
+  const slContiguous = slSpan >= 0 && scriptListOff + slSpan <= featureListOff;
+  const scriptListBytes = slContiguous
+    ? gsubBytes.subarray(scriptListOff, scriptListOff + slSpan)
+    : serializeScriptList(r, scriptListOff);
+  const flSpan = featureListSpan(r, featureListOff);
+  const flContiguous = flSpan >= 0 && featureListOff + flSpan <= lookupListOff;
+  const featureListBytes = flContiguous
+    ? gsubBytes.subarray(featureListOff, featureListOff + flSpan)
+    : serializeFeatureList(r, featureListOff);
+  r.clearError();
   /** ScriptList/FeatureList 解析失败（异常表）则整体保留原始 GSUB 字节（安全降级） */
   if (!scriptListBytes || !featureListBytes) return gsubBytes;
 
