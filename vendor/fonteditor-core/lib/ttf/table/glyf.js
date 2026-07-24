@@ -100,22 +100,17 @@ var _default = exports.default = _table.default.create('glyf', [], {
                *  优化313: 不再分配 endPtsOfContours 数组——_totalPoints 只需最后一个 endPt。
                *  优化314: 原始字节引用展平到 glyfObj（_origBuf/_origOff/_origLen），
                *  省掉每个 simple 字形的 _origGlyfRef 子对象分配。 */
-              var glyfObj = {};
-              glyfObj.xMin = view.getInt16(vOff + 2, false);
-              glyfObj.yMin = view.getInt16(vOff + 4, false);
-              glyfObj.xMax = view.getInt16(vOff + 6, false);
-              glyfObj.yMax = view.getInt16(vOff + 8, false);
-              glyfObj._origBuf = fullBuf;
-              glyfObj._origOff = fullBufOff + gStart;
-              glyfObj._origLen = gEnd - gStart;
-              if (numberOfContours > 0) {
-                glyfObj._numContours = numberOfContours;
-                /** 最后一个 endPt 在 vOff + 10 + (numContours-1)*2，+1 即总点数 */
-                glyfObj._totalPoints = view.getUint16(vOff + 10 + (numberOfContours - 1) * 2, false) + 1;
-              } else {
-                glyfObj._numContours = 0;
-                glyfObj._totalPoints = 0;
-              }
+              var glyfObj = {
+                xMin: view.getInt16(vOff + 2, false),
+                yMin: view.getInt16(vOff + 4, false),
+                xMax: view.getInt16(vOff + 6, false),
+                yMax: view.getInt16(vOff + 8, false),
+                _origBuf: fullBuf,
+                _origOff: fullBufOff + gStart,
+                _origLen: gEnd - gStart,
+                _numContours: numberOfContours,
+                _totalPoints: numberOfContours > 0 ? view.getUint16(vOff + 10 + (numberOfContours - 1) * 2, false) + 1 : 0,
+              };
               glyphs[index] = glyfObj;
             } else {
               /* compound 字形：完整 parse（component glyphIndex 后续要重映射） */
