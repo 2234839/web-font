@@ -125,7 +125,14 @@ export class OTWriter {
   }
 
   toUint8Array(): Uint8Array {
-    return new Uint8Array(this.buf.subarray(0, this.size));
+    /** 直接返回 buf 的 subarray view（零拷贝，共享底层 buffer）。
+     *  原实现 new Uint8Array(subarray) 会把 size 字节再拷贝到新 buffer，
+     *  但所有调用方（serializeScriptList/FeatureList、subsetGPOS/GSUB 主 writer、pairSet writer）
+     *  都是只读消费（writeBytes.set 到别处 / 存数组后读），toUint8Array 后 writer 不再写入，
+     *  故 view 共享 buf 完全等价，省一次 size 字节 memcpy。
+     *  安全前提：调用方不得在取得 view 后继续对同一 writer 写入/grow（grow 会替换 this.buf，
+     *  旧 view 仍指向旧 buffer 有效区但不再反映新写入）—— 当前所有调用点均满足（用完即弃）。 */
+    return this.buf.subarray(0, this.size);
   }
 }
 
