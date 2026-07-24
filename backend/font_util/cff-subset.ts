@@ -305,8 +305,18 @@ export function rewriteCharstring(
   newLocalCount: number,
 ): Uint8Array {
   const newLocalBias = subrBias(newLocalCount);
-  const out: number[] = [];
-  /** 栈：记录每个 operand 在 out 中的起始位置（便于截断重写）。值为原始解析值。 */
+  /**
+   * 优化：预分配 Uint8Array + 写指针 wp 替代 number[] + push。
+   *  原 out: number[] 逐字节 push 有装箱开销，且最终 new Uint8Array(out) 要二次遍历转换。
+   *  Uint8Array 直接写字节，wp 模拟 length（CALLSUBR 截断即 wp = stackStart[...]）。
+   *  容量上界：(end-start) 是原始字节长度；CALLSUBR 重写时新 operand 编码（1~5 字节）
+   *  可能比原 operand（1~5 字节）长，最坏每个 operand 多 4 字节。operand 数 ≤ end-start，
+   *  故 (end-start)*2 + 16 是安全上界（远超实际，仅预分配不写入多余字节）。
+   */
+  const cap = ((end - start) << 1) + 16;
+  const out = new Uint8Array(cap);
+  let wp = 0;
+  /** 栈：记录每个 operand 在输出中的起始 wp（便于截断重写）。值为原始解析值。 */
   const stackStart: number[] = [];
   const stackVal: number[] = [];
   let stemCount = 0;
@@ -314,50 +324,57 @@ export function rewriteCharstring(
   while (p < end) {
     const b0 = b[p++];
     if (b0 === 255) {
-      stackStart.push(out.length);
+      stackStart.push(wp);
       stackVal.push(NaN);
-      out.push(255, b[p], b[p + 1], b[p + 2], b[p + 3]);
+      out[wp] = 255; out[wp + 1] = b[p]; out[wp + 2] = b[p + 1]; out[wp + 3] = b[p + 2]; out[wp + 4] = b[p + 3];
+      wp += 5;
       p += 4;
     } else if (b0 === 28) {
-      stackStart.push(out.length);
+      stackStart.push(wp);
       stackVal.push(((b[p] << 24) | (b[p + 1] << 16)) >> 16);
-      out.push(28, b[p], b[p + 1]);
+      out[wp] = 28; out[wp + 1] = b[p]; out[wp + 2] = b[p + 1];
+      wp += 3;
       p += 2;
     } else if (b0 === 29) {
-      stackStart.push(out.length);
+      stackStart.push(wp);
       stackVal.push(((b[p] << 24) | (b[p + 1] << 16) | (b[p + 2] << 8) | b[p + 3]) | 0);
-      out.push(29, b[p], b[p + 1], b[p + 2], b[p + 3]);
+      out[wp] = 29; out[wp + 1] = b[p]; out[wp + 2] = b[p + 1]; out[wp + 3] = b[p + 2]; out[wp + 4] = b[p + 3];
+      wp += 5;
       p += 4;
     } else if (b0 >= 32 && b0 <= 246) {
-      stackStart.push(out.length);
+      stackStart.push(wp);
       stackVal.push(b0 - 139);
-      out.push(b0);
+      out[wp++] = b0;
     } else if (b0 >= 247 && b0 <= 250) {
-      stackStart.push(out.length);
+      stackStart.push(wp);
       stackVal.push((b0 - 247) * 256 + b[p] + 108);
-      out.push(b0, b[p]);
+      out[wp] = b0; out[wp + 1] = b[p];
+      wp += 2;
       p += 1;
     } else if (b0 >= 251 && b0 <= 254) {
-      stackStart.push(out.length);
+      stackStart.push(wp);
       stackVal.push(-(b0 - 251) * 256 - b[p] - 108);
-      out.push(b0, b[p]);
+      out[wp] = b0; out[wp + 1] = b[p];
+      wp += 2;
       p += 1;
     } else {
       /** 操作码 */
       if (b0 === 12) {
-        out.push(12, b[p]);
+        out[wp] = 12; out[wp + 1] = b[p];
+        wp += 2;
         p += 1;
         stackStart.length = 0;
         stackVal.length = 0;
       } else if (b0 === T2_HSTEM || b0 === T2_VSTEM || b0 === T2_HSTEMHM || b0 === T2_VSTEMHM) {
         stemCount += stackVal.length >> 1;
-        out.push(b0);
+        out[wp++] = b0;
         stackStart.length = 0;
         stackVal.length = 0;
       } else if (b0 === T2_HINTMASK || b0 === T2_CNTRMASK) {
-        out.push(b0);
+        out[wp++] = b0;
         const maskBytes = (stemCount + 7) >>> 3;
-        for (let i = 0; i < maskBytes; i++) out.push(b[p + i]);
+        out.set(b.subarray(p, p + maskBytes), wp);
+        wp += maskBytes;
         p += maskBytes;
         stackStart.length = 0;
         stackVal.length = 0;
@@ -367,31 +384,48 @@ export function rewriteCharstring(
         const newSn = localRemap.get(oldSn);
         if (newSn === undefined) {
           /** subr 未保留（理论上引用 charstring 必命中）——保留原 operand 保底 */
-          out.push(T2_CALLSUBR);
+          out[wp++] = T2_CALLSUBR;
         } else {
-          /** 截断到栈顶 operand 起始，写入新编号编码 */
-          out.length = stackStart[stackStart.length - 1];
-          for (const eb of encodeDictInt(newSn - newLocalBias)) out.push(eb);
-          out.push(T2_CALLSUBR);
+          /** 截断到栈顶 operand 起始，写入新编号编码（直接写 Uint8Array，不分配临时数组） */
+          wp = stackStart[stackStart.length - 1];
+          const delta = newSn - newLocalBias;
+          if (delta >= -107 && delta <= 107) {
+            out[wp++] = delta + 139;
+          } else if (delta >= 108 && delta <= 1131) {
+            const v0 = delta - 108;
+            out[wp] = 247 + (v0 >> 8); out[wp + 1] = v0 & 0xff;
+            wp += 2;
+          } else if (delta >= -1131 && delta <= -108) {
+            const v0 = -delta - 108;
+            out[wp] = 251 + (v0 >> 8); out[wp + 1] = v0 & 0xff;
+            wp += 2;
+          } else if (delta >= -32768 && delta <= 32767) {
+            out[wp] = 28; out[wp + 1] = (delta >> 8) & 0xff; out[wp + 2] = delta & 0xff;
+            wp += 3;
+          } else {
+            out[wp] = 29; out[wp + 1] = (delta >>> 24) & 0xff; out[wp + 2] = (delta >> 16) & 0xff; out[wp + 3] = (delta >> 8) & 0xff; out[wp + 4] = delta & 0xff;
+            wp += 5;
+          }
+          out[wp++] = T2_CALLSUBR;
         }
         stackStart.length = 0;
         stackVal.length = 0;
       } else if (b0 === T2_CALLGSUBR) {
         /** global subr 不子集化：operand（调用编号）原样保留，bias 不变 */
-        out.push(T2_CALLGSUBR);
+        out[wp++] = T2_CALLGSUBR;
         stackStart.length = 0;
         stackVal.length = 0;
       } else if (b0 === T2_ENDCHAR) {
-        out.push(b0);
+        out[wp++] = b0;
         break;
       } else {
-        out.push(b0);
+        out[wp++] = b0;
         stackStart.length = 0;
         stackVal.length = 0;
       }
     }
   }
-  return new Uint8Array(out);
+  return out.subarray(0, wp);
 }
 
 /**
@@ -1082,8 +1116,15 @@ function encodeCharsetFormat0(cids: number[]): Uint8Array {
  * @param replacements 操作码键 → 新 offset 值
  */
 function replaceDictOffsets(dictBytes: Uint8Array, replacements: Map<number, number>): Uint8Array {
-  /** 先分段：按操作码切，重组 */
-  const chunks: number[][] = [];
+  /**
+   * 优化：预分配 Uint8Array + 写指针 wp 替代 chunks: number[][] + Array.from + 二次拼接。
+   *  原 chunks 方案每个操作码段分配一个 number[]（含 Array.from 拷贝 + spread 再拷贝），
+   *  最后还要两轮遍历拼接。Uint8Array 直接顺序写入，零中间数组。
+   *  容量上界：原 DICT 长度 + 每个替换 operand 最大 +4 字节（短编码→长编码）。
+   */
+  const cap = dictBytes.length + replacements.size * 4 + 16;
+  const out = new Uint8Array(cap);
+  let wp = 0;
   let p = 0;
   let operandStart = 0;
   const len = dictBytes.length;
@@ -1093,17 +1134,35 @@ function replaceDictOffsets(dictBytes: Uint8Array, replacements: Map<number, num
       let op = b0;
       if (b0 === 12) op = (12 << 8) | dictBytes[p++];
       if (replacements.has(op)) {
-        /** 替换：新操作数 + 操作码 */
+        /** 替换：写入新编码操作数 + 操作码（内联 encodeDictInt 避免 number[] 分配） */
         const newVal = replacements.get(op)!;
-        const encoded = encodeDictInt(newVal);
-        if (op >= 256) {
-          chunks.push([...encoded, 12, op & 0xff]);
+        if (newVal >= -107 && newVal <= 107) {
+          out[wp++] = newVal + 139;
+        } else if (newVal >= 108 && newVal <= 1131) {
+          const v0 = newVal - 108;
+          out[wp] = 247 + (v0 >> 8); out[wp + 1] = v0 & 0xff;
+          wp += 2;
+        } else if (newVal >= -1131 && newVal <= -108) {
+          const v0 = -newVal - 108;
+          out[wp] = 251 + (v0 >> 8); out[wp + 1] = v0 & 0xff;
+          wp += 2;
+        } else if (newVal >= -32768 && newVal <= 32767) {
+          out[wp] = 28; out[wp + 1] = (newVal >> 8) & 0xff; out[wp + 2] = newVal & 0xff;
+          wp += 3;
         } else {
-          chunks.push([...encoded, op]);
+          out[wp] = 29; out[wp + 1] = (newVal >>> 24) & 0xff; out[wp + 2] = (newVal >> 16) & 0xff; out[wp + 3] = (newVal >> 8) & 0xff; out[wp + 4] = newVal & 0xff;
+          wp += 5;
+        }
+        if (op >= 256) {
+          out[wp] = 12; out[wp + 1] = op & 0xff;
+          wp += 2;
+        } else {
+          out[wp++] = op;
         }
       } else {
-        /** 保留原操作数 + 操作码 */
-        chunks.push(Array.from(dictBytes.subarray(operandStart, p)));
+        /** 保留原操作数 + 操作码（operandStart..p 原样拷贝） */
+        out.set(dictBytes.subarray(operandStart, p), wp);
+        wp += p - operandStart;
       }
       operandStart = p;
     } else if (b0 === 28) {
@@ -1122,13 +1181,5 @@ function replaceDictOffsets(dictBytes: Uint8Array, replacements: Map<number, num
     }
     /** 32~246 单字节，无后续 */
   }
-  /** 拼接 */
-  let total = 0;
-  for (const c of chunks) total += c.length;
-  const out = new Uint8Array(total);
-  let off = 0;
-  for (const c of chunks) {
-    for (const v of c) out[off++] = v;
-  }
-  return out;
+  return out.subarray(0, wp);
 }
