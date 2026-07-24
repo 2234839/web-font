@@ -170,6 +170,27 @@ export function subsetGPOS(
     lookups.push({ supported, effectiveType, subtableAbsOffs, origLookupOff: lOff });
   }
 
+  /**
+   * 优化330: 预扫描每个 supported lookup 的 subtable coverage 是否命中子集字形。
+   * 大字体（初夏 GPOS lookup[7] 285 / lookup[10] 283 个 SinglePos subtable）的小子集（11 字）
+   * 场景下，绝大多数 subtable 的 coverage 完全不含子集字形（初夏纯标点命中仅 0.9%）。原实现仍逐个
+   * 序列化空 subtable（每个 ~5 次 writeUint16），是 subsetGPOS 主热点。预扫描后，全无命中的 lookup
+   * 可折叠为 subCount=1 的单个空 subtable（feature 仅按 lookup index 引用，subCount 改变语义等价、
+   * 浏览器查 coverage 空即跳过），跳过数百个空 subtable 的逐个序列化。
+   * subtableCoverageHits 读 subtable 头的 coverageOff → coverage，任一 gid 在子集即命中（提前退出）。
+   */
+  const subtableHits: boolean[][] = [];
+  for (let i = 0; i < lookupCount; i++) {
+    const lk = lookups[i];
+    const hits: boolean[] = [];
+    if (lk.supported) {
+      for (let j = 0; j < lk.subtableAbsOffs.length; j++) {
+        hits.push(subtableCoverageHits(r, lk.subtableAbsOffs[j], origToNew));
+      }
+    }
+    subtableHits.push(hits);
+  }
+
   /** ---- 重新序列化 ----
    * ScriptList / FeatureList 与 glyphId 无关（仅引用 lookup index），但其子表
    * （ScriptTable/LangSys/FeatureTable）偏移相对各自 List 起始，且在原始字体中可能与
@@ -242,27 +263,60 @@ export function subsetGPOS(
       const lookupFlag = r.u16(lk.origLookupOff + 2);
       const useMarkFilteringSet = (lookupFlag & 0x0010) !== 0;
 
-      /** extension 包裹时输出仍用 effectiveType，直接内嵌 subtable（不再用 extension） */
-      w.writeUint16(lk.effectiveType);
-      w.writeUint16(lookupFlag);
-      w.writeUint16(lk.subtableAbsOffs.length);
+      /**
+       * 优化330: 若 lookup 的所有 subtable coverage 都不命中子集，折叠为 subCount=1 的单个空 subtable。
+       * feature 仅按 lookup index 引用，subCount 改变不影响 feature；浏览器遍历 subtable 查 coverage，
+       * 单个空 subtable 与 N 个全空 subtable 渲染语义等价（都查不到字形跳过）。大幅省去大 lookup
+       * （初夏 lookup[10] 283 个）逐空 subtable 的序列化开销。空 subtable 用 effectiveType 对应的
+       * writeEmptyPosSubtable（format=1 + coverageOff + valueFormat=0 + 空 coverage）。
+       */
+      const hits = subtableHits[i];
+      let anyHit = false;
+      for (let j = 0; j < hits.length; j++) { if (hits[j]) { anyHit = true; break; } }
 
-      const lookupStart = w.length - 6;
-      const subtableAbsPositions: number[] = new Array(lk.subtableAbsOffs.length);
-      for (let j = 0; j < lk.subtableAbsOffs.length; j++) {
-        const slotIdx = j;
-        w.reserveOffset16(lookupStart, () => subtableAbsPositions[slotIdx]);
-      }
-      if (useMarkFilteringSet) {
-        w.writeUint16(r.u16(lk.origLookupOff + 6 + lk.subtableAbsOffs.length * 2));
-      }
+      if (!anyHit) {
+        /** 全空折叠：subCount=1，单个空 subtable */
+        w.writeUint16(lk.effectiveType);
+        w.writeUint16(lookupFlag);
+        w.writeUint16(1);
+        const lookupStart = w.length - 6;
+        const subtableSlotsStart = w.length;
+        w.writeUint16(0);
+        if (useMarkFilteringSet) {
+          w.writeUint16(r.u16(lk.origLookupOff + 6 + lk.subtableAbsOffs.length * 2));
+        }
+        const subtablePos = w.length;
+        writeEmptyPosSubtable(w, lk.effectiveType);
+        w.writeInt16At(subtableSlotsStart, subtablePos - lookupStart);
+      } else {
+        /** extension 包裹时输出仍用 effectiveType，直接内嵌 subtable（不再用 extension） */
+        w.writeUint16(lk.effectiveType);
+        w.writeUint16(lookupFlag);
+        w.writeUint16(lk.subtableAbsOffs.length);
 
-      for (let j = 0; j < lk.subtableAbsOffs.length; j++) {
-        subtableAbsPositions[j] = w.length;
-        r.clearError();
-        const ok = serializeSubtable(w, r, lk.subtableAbsOffs[j], lk.effectiveType, origToNew);
-        /** 越界读取（异常表）也降级为保留原始 GPOS 字节（调用方安全降级） */
-        if (!ok || r.errorFlag) return null;
+        const lookupStart = w.length - 6;
+        const subtableAbsPositions: number[] = new Array(lk.subtableAbsOffs.length);
+        /**
+         * 优化329: subtable 偏移槽用 writeUint16(0) 占位 + 记录 slot 位置，序列化后统一 writeInt16At 回填，
+         * 替代 reserveOffset16 的 per-slot 闭包分配 + patch push。
+         * writeUint16(0) 仅推进 size 不分配对象，回填用已有 writeInt16At。
+         */
+        const subtableSlotsStart = w.length;
+        for (let j = 0; j < lk.subtableAbsOffs.length; j++) {
+          w.writeUint16(0);
+        }
+        if (useMarkFilteringSet) {
+          w.writeUint16(r.u16(lk.origLookupOff + 6 + lk.subtableAbsOffs.length * 2));
+        }
+
+        for (let j = 0; j < lk.subtableAbsOffs.length; j++) {
+          subtableAbsPositions[j] = w.length;
+          r.clearError();
+          const ok = serializeSubtable(w, r, lk.subtableAbsOffs[j], lk.effectiveType, origToNew);
+          /** 越界读取（异常表）也降级为保留原始 GPOS 字节（调用方安全降级） */
+          if (!ok || r.errorFlag) return null;
+          w.writeInt16At(subtableSlotsStart + j * 2, subtableAbsPositions[j] - lookupStart);
+        }
       }
     } else {
       /** 不支持的 lookup（Cursive/MarkBase/Context/ChainContext 等）：
@@ -273,22 +327,23 @@ export function subsetGPOS(
        *  对无法构造合法空 subtable 的罕见类型（MarkBase/MarkLig/MarkMark），整体降级 return null。 */
       const lookupFlag = r.u16(lk.origLookupOff + 2);
       const useMarkFilteringSet = (lookupFlag & 0x0010) !== 0;
+      /**
+       * 优化330: unsupported lookup 本就要把每个 subtable 输出为空（gid 不重映射、coverage 空），
+       *  N 个空 subtable 与 1 个空 subtable 渲染语义等价，折叠 subCount=1 省去逐空 subtable 序列化。
+       *  lookup 类型（type/flag）保留原值以维持 feature 的 lookup 类型语义。
+       */
       w.writeUint16(r.u16(lk.origLookupOff));
       w.writeUint16(lookupFlag);
-      w.writeUint16(lk.subtableAbsOffs.length);
+      w.writeUint16(1);
       const lookupStart = w.length - 6;
-      const subtableAbsPositions: number[] = new Array(lk.subtableAbsOffs.length);
-      for (let j = 0; j < lk.subtableAbsOffs.length; j++) {
-        const slotIdx = j;
-        w.reserveOffset16(lookupStart, () => subtableAbsPositions[slotIdx]);
-      }
+      const subtableSlotsStart = w.length;
+      w.writeUint16(0);
       if (useMarkFilteringSet) {
         w.writeUint16(r.u16(lk.origLookupOff + 6 + lk.subtableAbsOffs.length * 2));
       }
-      for (let j = 0; j < lk.subtableAbsOffs.length; j++) {
-        subtableAbsPositions[j] = w.length;
-        writeEmptyPosSubtable(w, lk.effectiveType);
-      }
+      const subtablePos = w.length;
+      writeEmptyPosSubtable(w, lk.effectiveType);
+      w.writeInt16At(subtableSlotsStart, subtablePos - lookupStart);
     }
   }
 
@@ -312,6 +367,46 @@ function serializeSubtable(
 function remapGid(origGid: number, origToNew: Map<number, number>): number {
   const ng = origToNew.get(origGid);
   return ng === undefined ? -1 : ng;
+}
+
+/**
+ * 优化330: 判断 SinglePos/PairPos subtable 的 coverage 是否含任意子集字形（提前退出）。
+ * 用于 lookup 折叠预扫描——subtable 头的 coverageOff 在偏移 +2（SinglePos/PairPos format 一致）。
+ * 读 coverage 逐 gid 查 origToNew，命中即返回 true，避免 readCoverageGids 的全量展开 + 数组分配。
+ */
+function subtableCoverageHits(r: Reader, subAbs: number, origToNew: Map<number, number>): boolean {
+  const dv = r.dv;
+  const len = dv.byteLength;
+  const coverageOff = r.u16(subAbs + 2);
+  const covAbs = subAbs + coverageOff;
+  if (covAbs + 4 > len) return false;
+  const fmt = dv.getUint16(covAbs, false);
+  if (fmt === 1) {
+    const count = dv.getUint16(covAbs + 2, false);
+    const base = covAbs + 4;
+    if (base + count * 2 > len) return false;
+    for (let i = 0; i < count; i++) {
+      if (origToNew.has(dv.getUint16(base + i * 2, false))) return true;
+    }
+    return false;
+  }
+  if (fmt === 2) {
+    const rangeCount = dv.getUint16(covAbs + 2, false);
+    let p = covAbs + 4;
+    for (let i = 0; i < rangeCount; i++) {
+      if (p + 6 > len) break;
+      const start = dv.getUint16(p, false);
+      const end = dv.getUint16(p + 2, false);
+      /** range 内逐 gid 查子集；range 通常很短（CJK 标点压缩覆盖分散），逐个可接受且命中即退出 */
+      for (let g = start; g <= end; g++) {
+        if (origToNew.has(g)) return true;
+      }
+      p += 6;
+    }
+    return false;
+  }
+  /** 未知 coverage format，保守视为可能命中（避免错误折叠） */
+  return true;
 }
 
 /**
