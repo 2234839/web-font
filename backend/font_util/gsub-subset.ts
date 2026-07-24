@@ -1171,7 +1171,6 @@ function isSubtableSkipableByCoverage(
   off: number,
   type: number,
   gidLookup: GidLookup,
-  covCache: CoverageCache,
 ): boolean {
   const dv = r.dv;
   const len = dv.byteLength;
@@ -1202,7 +1201,15 @@ function isSubtableSkipableByCoverage(
         for (let k = 0; k < cnt; k++) {
           if (p + 2 > len) return false;
           const covOff = off + dv.getUint16(p + k * 2, false);
-          if (readCoverageRemapped(r, covOff, gidLookup, covCache) === null) return true;
+          /** 用 coverageAllOutOfSubset 内联快判「全子集外」（不分配数组、不读写 covCache）。
+           *  思源 fmt3 预检 281 个 coverage 全子集外且 avg 仅 1.3 gid——readCoverageRemapped 对每个
+           *  都 new Array+sort+Map.set 是纯固定开销，且这些 skipable coverage 的 cache entry 永不被命中
+           *  （skipable subtable 不深度解析）。预检只判「是否全子集外」→ skipable，无需填 cache；
+           *  非 skipable 的 subtable 深度解析时 readCoverageRemapped 自行首次填 cache（命中率不变）。
+           *  一致性（[[gsub-subset-fmt3-prefetch-consistency]]）：coverageAllOutOfSubset 的判定语义已与
+           *  readCoverageRemapped 对齐（COV_RANGE clamp 到 numGlyphs、越界 range 计 origNonEmpty），
+           *  故预检 skipable ⟺ 深度解析 coverage 失效，输出逐字节一致。 */
+          if (coverageAllOutOfSubset(dv, covOff, len, gidLookup)) return true;
         }
         p += cnt * 2;
       }
@@ -1246,6 +1253,10 @@ function coverageAllOutOfSubset(
   }
   if (format === COV_RANGE) {
     const rangeCount = dv.getUint16(covOff + 2, false);
+    /** 与 readCoverageRemapped 一致：end clamp 到 numGlyphs-1，start>=numGlyphs 的 range 跳过 gid 展开
+     *  （gidLookup[g] 对 g>=numGlyphs 必然不在子集，逐 gid 展开全越界是浪费）。保证 fmt3 预检「全子集外」
+     *  判定与 readCoverageRemapped 完全一致，避免 [[gsub-subset-fmt3-prefetch-consistency]] 类不一致。 */
+    const numGlyphs = gidLookup.length;
     let p = covOff + 4;
     let origNonEmpty = false;
     for (let i = 0; i < rangeCount; i++) {
@@ -1253,9 +1264,15 @@ function coverageAllOutOfSubset(
       const start = dv.getUint16(p, false);
       const end = dv.getUint16(p + 2, false);
       if (end >= start && end - start < COVERAGE_MAX_EXPAND) {
-        for (let g = start; g <= end; g++) {
+        if (start >= numGlyphs) {
+          /** 整 range 越界：gid 全不在子集，但 range 非空（origNonEmpty），不短路 return false */
           origNonEmpty = true;
-          if (gidLookup[g] >= 0) return false;
+        } else {
+          const e = end < numGlyphs ? end : numGlyphs - 1;
+          for (let g = start; g <= e; g++) {
+            origNonEmpty = true;
+            if (gidLookup[g] >= 0) return false;
+          }
         }
       }
       p += 6;
@@ -1283,7 +1300,7 @@ function serializeSubtable(
    *  跳过昂贵的深度解析。FiraCode 403 lookup 中 ~330 个可预检跳过（type1-4 + fmt1 + fmt3 失效），
    *  format2 不预检（class 驱动，主 coverage 非充分条件）。
    *  预扫描已判时直接用其结果（消除重复预检），否则现场判。 */
-  if (preCheckedSkipable !== undefined ? preCheckedSkipable : isSubtableSkipableByCoverage(r, off, type, gidLookup, covCache)) return false;
+  if (preCheckedSkipable !== undefined ? preCheckedSkipable : isSubtableSkipableByCoverage(r, off, type, gidLookup)) return false;
   let ok: boolean;
   switch (type) {
     case LT_SINGLE:
@@ -1430,7 +1447,7 @@ export function subsetGSUB(
     const skipable = new Array<boolean>(subs.length);
     let allEmpty = subs.length > 0;
     for (let j = 0; j < subs.length; j++) {
-      const sk = isSubtableSkipableByCoverage(r, subs[j], lk.effectiveType, gidLookup, covCache);
+      const sk = isSubtableSkipableByCoverage(r, subs[j], lk.effectiveType, gidLookup);
       skipable[j] = sk;
       if (!sk) allEmpty = false;
     }
