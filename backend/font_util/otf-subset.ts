@@ -404,9 +404,11 @@ function assembleSfnt(tables: { tag: string; bytes: Uint8Array }[]): Uint8Array 
   dv.setUint16(8, entrySelector, false);
   dv.setUint16(10, rangeShift, false);
 
-  /** 表记录 + 数据 */
+  /** 表记录 + 数据；各表 checksum 同时累加进 wholeSum（数据段 sum 等于表 checksum） */
   let dataOff = dirSize;
   const headIdx = tables.findIndex((t) => t.tag === "head");
+  /** wholeSum = Σ 各表数据段 checksum。head.checkSumAdjustment 此刻为 0（passthroughHead 已清零），目录区稍后补算 */
+  let tablesDataSum = 0;
   for (let i = 0; i < numTables; i++) {
     const r = 12 + i * 16;
     out[r] = tables[i].tag.charCodeAt(0);
@@ -414,6 +416,7 @@ function assembleSfnt(tables: { tag: string; bytes: Uint8Array }[]): Uint8Array 
     out[r + 2] = tables[i].tag.charCodeAt(2);
     out[r + 3] = tables[i].tag.charCodeAt(3);
     const checksum = calcTableChecksum(tables[i].bytes);
+    tablesDataSum = (tablesDataSum + checksum) >>> 0;
     dv.setUint32(r + 4, checksum, false);
     dv.setUint32(r + 8, dataOff, false);
     dv.setUint32(r + 12, tables[i].bytes.length, false);
@@ -421,20 +424,18 @@ function assembleSfnt(tables: { tag: string; bytes: Uint8Array }[]): Uint8Array 
     dataOff += paddedLens[i];
   }
 
-  /** head.checkSumAdjustment = 0xB1B0AFBA - 全文件 sum */
+  /** head.checkSumAdjustment = 0xB1B0AFBA - 全文件 sum。
+   *  全文件 sum = 目录区 sum + Σ 各表数据段 checksum。
+   *  数据段 sum 已在写表时累加（=各表 checksum），目录区仅 dirSize 字节（sfnt 头+表记录），单独遍历即可，
+   *  避免对数百 KB 的 CFF 等大表做第二次整段遍历。 */
   if (headIdx >= 0) {
     const headRecOff = 12 + headIdx * 16;
     const headDataOff = dv.getUint32(headRecOff + 8, false);
-    /** 先算全文件 checksum（head.checkSumAdjustment 此时为 0） */
-    let wholeSum = 0;
-    const wholePadded = (out.length + 3) & ~3;
-    for (let i = 0; i < wholePadded; i += 4) {
-      const b0 = out[i] || 0;
-      const b1 = out[i + 1] || 0;
-      const b2 = out[i + 2] || 0;
-      const b3 = out[i + 3] || 0;
-      wholeSum = (wholeSum + ((b0 << 24) | (b1 << 16) | (b2 << 8) | b3)) >>> 0;
+    let dirSum = 0;
+    for (let i = 0; i < dirSize; i += 4) {
+      dirSum = (dirSum + ((out[i] << 24) | (out[i + 1] << 16) | (out[i + 2] << 8) | out[i + 3])) >>> 0;
     }
+    const wholeSum = (dirSum + tablesDataSum) >>> 0;
     const adjustment = (0xb1b0afba - wholeSum) >>> 0;
     dv.setUint32(headDataOff + 8, adjustment, false);
   }
