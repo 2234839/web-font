@@ -1209,6 +1209,11 @@ export function subsetGSUB(
     effectiveType: number;
     subtableAbsOffs: number[];
     origLookupOff: number;
+    /** 该 lookup 的所有子表 coverage 是否都「原非空且全子集外」（→ 序列化必为空 subtable）。
+     *  为 true 时跳过逐子表 serializeSubtable，直接批量写空 subtable（保留 subCount，不删 lookup）。
+     *  含 format2 class 驱动子表的 lookup，isSubtableSkipableByCoverage 返回 false，故 allEmpty 必为 false，
+     *  走原逐子表路径（保守，与 FiraCode 连字安全要求一致 [[gsub-lookup-deletion-failed-fira]]）。 */
+    allEmpty: boolean;
   }
   const lookups: LookupInfo[] = [];
   for (let i = 0; i < lookupCount; i++) {
@@ -1239,7 +1244,31 @@ export function subsetGSUB(
       effectiveType === LT_ALTERNATE ||
       effectiveType === LT_LIGATURE ||
       effectiveType === LT_CHAIN;
-    lookups.push({ supported, effectiveType, subtableAbsOffs, origLookupOff: lOff });
+    lookups.push({ supported, effectiveType, subtableAbsOffs, origLookupOff: lOff, allEmpty: false });
+  }
+
+  /**
+   * 优化331：lookup 级全空预扫描。
+   * 大字体小子集场景（初夏 51 lookup × lookup[5] 268 子表），逐子表 serializeSubtable 即使预检
+   * 判空仍要付出「函数调用 + isSubtableSkipableByCoverage 读 coverage + rollback」的 per-subtable 开销。
+   * 若整个 lookup 的所有子表都 skipable（全子集外），序列化结果必然是 N 个空 subtable——
+   * 直接在 lookup 级批量写空，跳过 N 次 serializeSubtable 调用。
+   *
+   * 安全性：allEmpty 当且仅当「所有子表 isSubtableSkipableByCoverage === true」。而 serializeSubtable
+   * 内部对 skipable 子表直接 return false（→ 调用方写空 subtable）。故 allEmpty 路径的输出与
+   * 逐子表路径**逐字节相同**（都是 N 个 writeEmptySubtable）。format2 子表不预检（返回 false），
+   * 含 format2 的 lookup allEmpty 必为 false，走原路径。 */
+  for (let i = 0; i < lookupCount; i++) {
+    const lk = lookups[i];
+    if (!lk.supported) continue;
+    let allEmpty = lk.subtableAbsOffs.length > 0;
+    for (let j = 0; j < lk.subtableAbsOffs.length; j++) {
+      if (!isSubtableSkipableByCoverage(r, lk.subtableAbsOffs[j], lk.effectiveType, gidLookup, covCache)) {
+        allEmpty = false;
+        break;
+      }
+    }
+    lk.allEmpty = allEmpty;
   }
 
   /** ---- 重新序列化 ----
@@ -1328,17 +1357,27 @@ export function subsetGSUB(
       if (useMarkFilteringSet) {
         w.writeUint16(r.u16(lk.origLookupOff + 6 + lk.subtableAbsOffs.length * 2));
       }
-      for (let j = 0; j < lk.subtableAbsOffs.length; j++) {
-        subtableAbsPositions[j] = w.length;
-        /** 单个 subtable 重映射失败（coverage gid 全不在子集 / 解析异常）时，
-         *  回退已写入字节，改为输出合法的空 subtable（空 coverage，浏览器跳过，不破坏字体）。
-         *  不再用 copyBytesBlock 按估算范围拷贝——原始 subtable 数据可能与其他 lookup 物理交错，
-         *  按 lookup 边界估算会拷贝到错误字节（霞鹜文楷实测 subtable 在表头区之后）。 */
-        const before = w.length;
-        const ok = serializeSubtable(w, r, lk.subtableAbsOffs[j], lk.effectiveType, origToNew, covCache, gidLookup);
-        if (!ok) {
-          w.rollback(before);
+      if (lk.allEmpty) {
+        /** 优化331：全空 lookup 批量写空 subtable，跳过逐子表 serializeSubtable。
+         *  输出与逐子表路径逐字节相同（每个子表都是 writeEmptySubtable），仅省去 N 次
+         *  函数调用 + 预检 + rollback 的开销。subCount 不变，lookup 仍存在。 */
+        for (let j = 0; j < lk.subtableAbsOffs.length; j++) {
+          subtableAbsPositions[j] = w.length;
           writeEmptySubtable(w, lk.effectiveType);
+        }
+      } else {
+        for (let j = 0; j < lk.subtableAbsOffs.length; j++) {
+          subtableAbsPositions[j] = w.length;
+          /** 单个 subtable 重映射失败（coverage gid 全不在子集 / 解析异常）时，
+           *  回退已写入字节，改为输出合法的空 subtable（空 coverage，浏览器跳过，不破坏字体）。
+           *  不再用 copyBytesBlock 按估算范围拷贝——原始 subtable 数据可能与其他 lookup 物理交错，
+           *  按 lookup 边界估算会拷贝到错误字节（霞鹜文楷实测 subtable 在表头区之后）。 */
+          const before = w.length;
+          const ok = serializeSubtable(w, r, lk.subtableAbsOffs[j], lk.effectiveType, origToNew, covCache, gidLookup);
+          if (!ok) {
+            w.rollback(before);
+            writeEmptySubtable(w, lk.effectiveType);
+          }
         }
       }
     } else {
