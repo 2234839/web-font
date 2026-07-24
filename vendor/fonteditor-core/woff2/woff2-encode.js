@@ -187,11 +187,10 @@ for (let i = 124; i < 128; i++) TRIPLET_DATA_SIZES[i] = 4;
 /* ======== glyf + loca 表变换 ======== */
 
 /**
- * 优化301: 模块级复用坐标缓冲区，避免每个简单 glyph 分配 xCoords/yCoords Int32Array
+ * 优化301+312: 模块级复用 x 坐标缓冲区（y 已合并进 triplet 循环，不再需要 yCoords）
  * transformGlyfAndLoca 同步单线程调用，复用安全；按需扩容，不释放
  */
 let _reuseXCoords = new Int32Array(256);
-let _reuseYCoords = new Int32Array(256);
 /** 优化301: 复用 encode255UInt16 的 3 字节编码缓冲区 */
 const _reuseEnc255 = [0, 0, 0];
 
@@ -430,15 +429,17 @@ function transformGlyfAndLoca(glyfData, locaData, indexFormat, numGlyphs) {
       }
     }
 
-    /** 优化301: 复用模块级坐标缓冲区，避免每字形分配 Int32Array */
+    /** 优化312: 合并 x 解码、y 解码、triplet 编码。
+     *  原 3 次遍历（x→y→triplet）+ yCoords 数组；现 2 次遍历（x→y+triplet 合并），
+     *  省掉 yCoords 数组分配/写入/读取 + 第三次 numPoints 遍历。
+     *  关键洞察：triplet 的 delta 语义 = TTF 的 delta（都是相对前一点的差），所以
+     *  解码 y 的同时用已存的 xCoords[i] 配对编码 triplet，无需 yCoords 中转。 */
     if (numPoints > _reuseXCoords.length) {
       const cap = _reuseXCoords.length;
       const newCap = cap * 2 > numPoints ? cap * 2 : numPoints;
       _reuseXCoords = new Int32Array(newCap);
-      _reuseYCoords = new Int32Array(newCap);
     }
     const xCoords = _reuseXCoords;
-    const yCoords = _reuseYCoords;
     let px = 0;
     let calcXMin, calcXMax;
     /**
@@ -446,7 +447,6 @@ function transformGlyfAndLoca(glyfData, locaData, indexFormat, numGlyphs) {
      * 中文字体 87% 的点为 short 模式，其中正负各半（50/50），
      * 原三元 `(f & XSAME) ? b : -b` 是 50/50 不可预测分支，被 V8 编译成条件跳转导致流水线冲刷。
      * 改用 sign 位乘法 `(b * 2 - 1)` 消除分支：XSAME=16(bit4)，sign=(f>>4)&1。
-     * 微基准：0.49ms → 0.14ms（3.6x），57168 点场景显著加速 transformGlyfAndLoca。
      */
     for (let xi = 0; xi < numPoints; xi++) {
       const f = flagAccum[flagWriteBase + xi];
@@ -466,30 +466,11 @@ function transformGlyfAndLoca(glyfData, locaData, indexFormat, numGlyphs) {
     }
 
     let py = 0;
-    let calcYMin, calcYMax;
-    for (let yi = 0; yi < numPoints; yi++) {
-      const f = flagAccum[flagWriteBase + yi];
-      if (f & YSHORT_FLAG) {
-        const b = glyfData[dataOff++];
-        py += b * (((f >> 5) & 1) * 2 - 1);
-      } else if (!(f & YSAME_FLAG)) {
-        let dy = (glyfData[dataOff] << 8) | glyfData[dataOff + 1];
-        if (dy > 0x7FFF) dy -= 0x10000;
-        py += dy;
-        dataOff += 2;
-      }
-      yCoords[yi] = py;
-      if (yi === 0) { calcYMin = py; calcYMax = py; }
-      else if (py < calcYMin) calcYMin = py;
-      else if (py > calcYMax) calcYMax = py;
-    }
+    let calcYMin = 0, calcYMax = 0;
 
     if (numberOfContours > 0) {
-      const bboxMatches = calcXMin === xMin && calcYMin === yMin && calcXMax === xMax && calcYMax === yMax;
-      if (!bboxMatches) {
-        bboxBitmap[gi >> 3] |= (0x80 >> (gi & 7));
-        bboxStreamSize += 8;
-      }
+      /** 优化312: bbox bitmap 判定拆分——x 在此先判，y 在合并循环算完后补判 */
+      let bboxSet = !(calcXMin === xMin && calcXMax === xMax);
 
       /**
        * 优化294: triplet 数据直接追加写入 glyphAccum（连续累积），不再分配 per-glyph glyphStreamBuf
@@ -505,26 +486,41 @@ function transformGlyfAndLoca(glyfData, locaData, indexFormat, numGlyphs) {
       const gsBase = glyphAccumLen;
       let gsbi = 0;
       let prevX = 0, prevY = 0;
-      /**
-       * 优化303: calcTripletAndWrite 手动 inline 到主循环（消除 54350 次/call 函数调用开销）。
-       * 千字文 54350 点场景，calcTripletAndWrite 占 transformGlyfAndLoca 31.8% CPU（prof 实测），
-       * 函数调用与无法 inline 的参数装箱是主因。inline 后 V8 可在循环内做寄存器分配 +
-       * 公共子表达式消除（absDx/absDy/curveBit 跨分支复用）。语义与原 calcTripletAndWrite 完全一致。
-       * 分支顺序保持原样（特例 yOnly/xOnly 优先），千字文 78% 命中 1B 双轴分支。
-       */
       const _gs = glyphAccum;
-      for (let pi = 0; pi < numPoints; pi++) {
-        const cx = xCoords[pi];
-        const cy = yCoords[pi];
-        /** 优化302: curveBit 无分支——onCurve(flag&1=1)→0, 控制点(flag&1=0)→128 */
-        const curveBit = ((flagAccum[flagWriteBase + pi] & 1) ^ 1) << 7;
+      const _fa = flagAccum;
+      const _fwb = flagWriteBase;
+      const _gd = glyfData;
+      let dyBboxUnset = true;
+      /**
+       * 优化312: y 解码 + triplet 编码合并为单循环。
+       * py 从 TTF yCoord 字节流解码（累积绝对坐标），cx 从 xCoords 取（x 已在前一循环解好），
+       * triplet delta = cx - prevX / py - prevY，当场编码写入 glyphAccum。
+       * bbox_y 的 min/max 也在本循环同步计算（原在独立 y 循环）。
+       */
+      for (let yi = 0; yi < numPoints; yi++) {
+        const f = _fa[_fwb + yi];
+        if (f & YSHORT_FLAG) {
+          const b = _gd[dataOff++];
+          py += b * (((f >> 5) & 1) * 2 - 1);
+        } else if (!(f & YSAME_FLAG)) {
+          let dy0 = (_gd[dataOff] << 8) | _gd[dataOff + 1];
+          if (dy0 > 0x7FFF) dy0 -= 0x10000;
+          py += dy0;
+          dataOff += 2;
+        }
+        if (dyBboxUnset) { calcYMin = py; calcYMax = py; dyBboxUnset = false; }
+        else if (py < calcYMin) calcYMin = py;
+        else if (py > calcYMax) calcYMax = py;
+
+        /** triplet 编码（与原 calcTripletAndWrite inline 语义一致） */
+        const cx = xCoords[yi];
+        const cy = py;
+        const curveBit = ((f & 1) ^ 1) << 7;
         const dx = cx - prevX;
         const dy = cy - prevY;
         const absDx = dx < 0 ? -dx : dx;
         const absDy = dy < 0 ? -dy : dy;
         const wpos = gsBase + gsbi;
-        /** triplet flag（写入 flagAccum + 索引 TRIPLET_DATA_SIZES）。
-         *  默认值仅占位，每个分支都会覆盖。 */
         let flag;
         if (dx === 0 && absDy < 1280) {
           _gs[wpos] = absDy & 0xFF;
@@ -564,10 +560,16 @@ function transformGlyfAndLoca(glyfData, locaData, indexFormat, numGlyphs) {
           flag = curveBit + 124 + xSignBit + 2 * ySignBit;
         }
         /** triplet flag 回写到 flagAccum（flagStream 存 triplet flag 而非原始 flag） */
-        flagAccum[flagWriteBase + pi] = flag;
+        _fa[_fwb + yi] = flag;
         gsbi += TRIPLET_DATA_SIZES[flag & 0x7F];
         prevX = cx;
         prevY = cy;
+      }
+      /** 优化312: y 的 bbox 匹配补判 */
+      if (calcYMin !== yMin || calcYMax !== yMax) bboxSet = true;
+      if (bboxSet) {
+        bboxBitmap[gi >> 3] |= (0x80 >> (gi & 7));
+        bboxStreamSize += 8;
       }
       glyphAccumLen += gsbi;
       glyphStreamSize += gsbi;
@@ -582,6 +584,16 @@ function transformGlyfAndLoca(glyfData, locaData, indexFormat, numGlyphs) {
       }
       for (let e = 0; e < n; e++) glyphAccum[glyphAccumLen++] = _reuseEnc255[e];
       glyphStreamSize += n;
+    } else {
+      /** numberOfContours === 0 的空字形：仍需消费 yCoord 字节以推进 dataOff（保持原语义） */
+      for (let yi0 = 0; yi0 < numPoints; yi0++) {
+        const f = flagAccum[flagWriteBase + yi0];
+        if (f & YSHORT_FLAG) {
+          dataOff++;
+        } else if (!(f & YSAME_FLAG)) {
+          dataOff += 2;
+        }
+      }
     }
 
     glyphInfos[gi] = numberOfContours > 0
