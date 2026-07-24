@@ -4,6 +4,8 @@ import { subsetGPOS } from "./gpos-subset.js";
 import { subsetGSUB } from "./gsub-subset.js";
 import { collectReachableGsubTargets } from "./gsub-reachable.js";
 import { probeGsubAndCmap } from "./gsub-probe.js";
+import { subsetOTF } from "./otf-subset.js";
+import { encodeTTFToWOFF2 } from "../../vendor/fonteditor-core/woff2/woff2-encode.js";
 
 /** 优化291: TextEncoder 模块级单例 */
 const textEncoder = new TextEncoder();
@@ -128,6 +130,23 @@ export const fontSubset = (
   option: { sourceType: FontEditor.FontType; outType: FontEditor.FontType },
 ): Uint8Array => {
   const codePoints = textToCodePoints(subString);
+
+  /** OTF（CFF）输入走独立 OTF 子集化：fonteditor-core 对含 idRangeOffset 的 CID cmap 解析有 bug，
+   *  会产出 gid 错乱的子集（SSIM 0.93~0.97）。subsetOTF 直接重建 CFF/cmap/hmtx，透传 charstring，
+   *  浏览器渲染与原始 OTF 像素级一致（SSIM ≈1.0）。outType=woff2 用 woff2 编码包裹 OTF 字节
+   *  （WOFF2 编码器对无 glyf/loca 的 CFF 表按普通表 brotli 压缩，合法）。outType=otf/ttf 均返回裸 OTF。
+   *  GSUB/GPOS（思源有）按子集 gid 重映射，保留标点压缩与连字。 */
+  if (option.sourceType === "otf") {
+    const fontU8 = new Uint8Array(fontBuffer);
+    const otfBytes = subsetOTF(fontU8, codePoints, true);
+    if (otfBytes !== null) {
+      if (option.outType === "woff2") {
+        return encodeTTFToWOFF2(otfBytes);
+      }
+      return otfBytes;
+    }
+    /** subsetOTF 不支持（非 CID CFF 等）降级到原 fonteditor 路径 */
+  }
 
   /** GSUB 连字 target glyph 保留：原始字体含 GSUB 时，先做一次 probe，找出子集 codepoint 经
    *  GSUB 替换链可达的 target glyph（多为无 unicode 的纯连字字形，如 FiraCode 的 greater_equal.liga），

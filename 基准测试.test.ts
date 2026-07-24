@@ -79,6 +79,7 @@ function createFontServer(): Promise<{ server: Server; port: number }> {
         if (!buf) buf = fontStore.get(fontKey + ".otf");
         if (!buf) buf = fontStore.get(fontKey + ".woff2");
         if (buf) {
+          console.log(`[fontsrv] GET ${fontKey} -> ${buf.length} bytes`);
           const ext = fontKey.endsWith(".woff2") ? "font/woff2" : fontKey.endsWith(".otf") ? "font/opentype" : "font/ttf";
           res.writeHead(200, { "Content-Type": ext, "Content-Length": buf.length, "Cache-Control": "public, max-age=31536000, immutable" });
           res.end(buf);
@@ -365,7 +366,9 @@ for (const tc of testCases) {
     const t1 = performance.now();
     times.push(t1 - t0);
     lastSize = subsetBuf.byteLength;
-    if (i === 0) lastBuffer = subsetBuf;
+    if (i === 0) {
+      lastBuffer = subsetBuf;
+    }
   }
 
   const avg = times.reduce((a, b) => a + b, 0) / times.length;
@@ -383,9 +386,11 @@ for (const tc of testCases) {
     /**
      * 验证子集字体的 maxp 表中 maxPoints/maxContours 不为 0
      * 这两个值为 0 会导致浏览器跳过渲染（字体加载成功但文字显示空白/fallback）
-     * 之前 OTF→TTF 转换因 optimizettf 中 _flatContours 路径遗漏统计而触发此问题
+     * 之前 OTF→TTF 转换因 optimizettf 中 _flatContours 路径遗漏统计而触发此问题。
+     * OTF（CFF）输入的 maxp 是 version 0.5（仅 numGlyphs，无 maxPoints/maxContours 字段），
+     * 该检查不适用，跳过。
      */
-    if (tc.outType !== "woff2") {
+    if (tc.outType !== "woff2" && tc.sourceType !== "otf") {
       const ttfView = new DataView(lastBuffer.buffer, lastBuffer.byteOffset, lastBuffer.byteLength);
       const numTbl = ttfView.getUint16(4, false);
       for (let ti = 0; ti < numTbl; ti++) {
@@ -403,8 +408,14 @@ for (const tc of testCases) {
       }
     }
 
-    /** 注册子集字体 */
-    const subsetKey = `subset_${safeLabel}.${tc.outType}`;
+    /** 注册子集字体。
+     *  otf 输入经 subsetOTF 产出 CFF 轮廓（无论 outType=ttf/woff2），裸输出必须用 .otf 扩展名，
+     *  否则 HTTP Content-Type 会被判为 font/ttf 而浏览器以 truetype 嗅探 CFF 字节失败。
+     *  woff2 输出仍用 .woff2（其 magic 自描述，扩展名无关）。 */
+    const subsetExt = tc.sourceType === "otf"
+      ? (tc.outType === "woff2" ? "woff2" : "otf")
+      : tc.outType;
+    const subsetKey = `subset_${safeLabel}.${subsetExt}`;
     fontStore.set(subsetKey, Buffer.from(lastBuffer));
 
     /** 完整字体 key */
@@ -417,12 +428,14 @@ for (const tc of testCases) {
     const fullResult = await renderTextViaBrowser(page, baseUrl, fullKey, tc.text, renderSize, tc.fullFormat);
 
     /**
-     * 渲染子集字体：format 必须与 outType 匹配。
-     * woff2 字节若用 format("truetype") 声明，Chrome 嗅探解码时序下可能未及时应用 GPOS
-     * （CJK 全角标点的标点压缩依赖 GPOS lookup），导致连续标点宽度变大、与原始字体人眼不一致。
-     * 改为按实际 outType 声明 format，确保 GPOS 等 layout 表被正确加载。
+     * 渲染子集字体：format 必须与字体实际轮廓类型匹配。
+     * otf 输入经 subsetOTF 保留 CFF 轮廓（无论 outType=otf 还是 woff2 包裹），必须声明 format("opentype")
+     * （或 woff2）让浏览器按 CFF 光栅化，否则用 truetype 声明会嗅探失败。
+     * ttf 输入产出 glyf 轮廓，woff2 输出声明 woff2，裸 ttf 声明 truetype。
      */
-    const subsetFormat = tc.outType === "woff2" ? "woff2" : "truetype";
+    const subsetFormat = tc.sourceType === "otf"
+      ? (tc.outType === "woff2" ? "woff2" : "opentype")
+      : (tc.outType === "woff2" ? "woff2" : "truetype");
     const subsetResult = await renderTextViaBrowser(page, baseUrl, subsetKey, tc.text, renderSize, subsetFormat);
 
     await writeFile(`${BENCHMARK_DIR}/screenshots/${safeLabel}_full.png`, fullResult.screenshot);
