@@ -208,6 +208,10 @@ function sizeof(ttf) {
     } else if (!writeZeroContoursGlyfData && (!glyf.contours || !glyf.contours.length)) {
       glyfSize = 0;
       glyfSupport = EMPTY_GLYF_SUPPORT;
+    } else if (glyf._origGlyfRef) {
+      /** 优化310: simple 字形原始字节快路径，glyfSize 直接用原始字节长度 */
+      glyfSupport = {};
+      glyfSize = glyf._origGlyfRef.length;
     } else {
       glyfSupport = {};
       glyfSize = getFlagsAndSize(glyf, glyfSupport, hinting);

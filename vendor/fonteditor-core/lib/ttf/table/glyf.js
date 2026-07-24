@@ -61,6 +61,23 @@ var _default = exports.default = _table.default.create('glyf', [], {
         }
       }
       var parsedGlyfMap = {};
+      /**
+       * 优化310: simple 字形原始字节快路径。
+       * 子集化场景下，simple 字形经 parse→optimizettf→write 往返后产出的 glyf 字节
+       * 与原始字体 glyf 字节完全一致（实测令东齐伋复刻体千字文 73/73 simple 字节完全相同）。
+       * 因此 simple 字形可直接拷贝原始字节，跳过 parseSimpleGlyf（坐标解码）
+       * + ceilReduceAndSizeFromTypedArrays（flag 重编码）+ write encode 三段往返。
+       * 额外收益：保留原始 instructions（hinting），渲染更精确。
+       * compound 字形因 component glyphIndex 需重映射，仍走原 parse+write 路径。
+       */
+      var view = reader.view;
+      var fullBuf = view.buffer;
+      var fullBufOff = view.byteOffset;
+      /**
+       * compound 引用的 component gid 集合。这些 simple 字形必须走完整 parse
+       *（产出 _xArr/_yArr/_flags 供 transformGlyfContours 仿射变换），不能走快路径。
+       */
+      var componentGids = {};
 
       /* 优化：迭代式广度优先遍历替代递归，消除 isEmptyObject 调用 */
       var queue = subsetGids;
@@ -69,16 +86,54 @@ var _default = exports.default = _table.default.create('glyf', [], {
         for (var qi = 0, ql = queue.length; qi < ql; qi++) {
           var index = queue[qi];
           parsedGlyfMap[index] = true;
-          if (loca[index] === loca[index + 1]) {
+          var gStart = startOffset + loca[index];
+          var gEnd = startOffset + loca[index + 1];
+          if (gStart === gEnd) {
             glyphs[index] = { contours: [] };
           } else {
-            glyphs[index] = (0, _parse.default)(reader, ttf, startOffset + loca[index]);
+            var vOff = fullBufOff + gStart;
+            var numberOfContours = view.getInt16(vOff, false);
+            /** 非(component 引用的) simple 字形走快路径；compound 及 component 走完整 parse */
+            if (numberOfContours >= 0 && !componentGids[index]) {
+              /** 优化310: 快路径——读 header(bbox) + endPtsOfContours(供 metrics)，存原始字节引用，
+               *  跳过 instructions/flags/坐标解码（省 parseSimpleGlyf，glyph.read 第一热点）。 */
+              var glyfObj = {};
+              glyfObj.xMin = view.getInt16(vOff + 2, false);
+              glyfObj.yMin = view.getInt16(vOff + 4, false);
+              glyfObj.xMax = view.getInt16(vOff + 6, false);
+              glyfObj.yMax = view.getInt16(vOff + 8, false);
+              glyfObj._origGlyfRef = { buffer: fullBuf, byteOffset: fullBufOff + gStart, length: gEnd - gStart };
+              if (numberOfContours > 0) {
+                var endPts = new Array(numberOfContours);
+                for (var ei2 = 0; ei2 < numberOfContours; ei2++) {
+                  endPts[ei2] = view.getUint16(vOff + 10 + ei2 * 2, false);
+                }
+                glyfObj.endPtsOfContours = endPts;
+                glyfObj._numContours = numberOfContours;
+                glyfObj._totalPoints = endPts[numberOfContours - 1] + 1;
+              } else {
+                glyfObj._numContours = 0;
+                glyfObj._totalPoints = 0;
+              }
+              glyphs[index] = glyfObj;
+            } else {
+              /* compound 字形：完整 parse（component glyphIndex 后续要重映射） */
+              glyphs[index] = (0, _parse.default)(reader, ttf, gStart);
+            }
           }
           if (glyphs[index].compound) {
             var glyfs = glyphs[index].glyfs;
             for (var gi = 0, gl = glyfs.length; gi < gl; gi++) {
-              if (!parsedGlyfMap[glyfs[gi].glyphIndex]) {
-                nextQueue.push(glyfs[gi].glyphIndex);
+              var compGid = glyfs[gi].glyphIndex;
+              componentGids[compGid] = true;
+              /** 若 component 已被快路径解析（有 _origGlyfRef），需重新完整 parse 产出 _xArr 供变换。
+               *  触发于同一轮中 component 排在 compound 之前的情况。 */
+              if (parsedGlyfMap[compGid] && glyphs[compGid] && glyphs[compGid]._origGlyfRef) {
+                var cgStart = startOffset + loca[compGid];
+                glyphs[compGid] = (0, _parse.default)(reader, ttf, cgStart);
+              }
+              if (!parsedGlyfMap[compGid]) {
+                nextQueue.push(compGid);
               }
             }
           }

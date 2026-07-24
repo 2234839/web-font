@@ -48,8 +48,20 @@ function write(writer, ttf) {
       continue;
     }
 
-    /* 优化31+103: header 直接 view 写入 10 字节，优先使用 _numContours */
     var pos = writer.offset;
+
+    /**
+     * 优化310: simple 字形原始字节快路径——直接 set 原始 glyf 字节段（含 header），
+     * 跳过 header 重写 + endPts/instructions/flags/坐标 编码。
+     */
+    var origRef = glyf._origGlyfRef;
+    if (origRef) {
+      var origBytes = new Uint8Array(origRef.buffer, origRef.byteOffset, origRef.length);
+      fullView.set(origBytes, pos);
+      pos += origRef.length;
+    } else {
+
+    /* 优化31+103: header 直接 view 写入 10 字节，优先使用 _numContours */
     /** 优化284: 避免 || [] 创建临时空数组 */
     var numC = glyf._numContours != null ? glyf._numContours : (glyf.contours ? glyf.contours.length : 0);
     view.setInt16(pos, glyf.compound ? -1 : numC, false);
@@ -192,6 +204,7 @@ function write(writer, ttf) {
         }
       }
     }
+    } /* 优化310: 关闭 _origGlyfRef 的 else 块 */
 
     /* 优化81+171: 4字节对齐使用 fill(0) 替代逐字节写入 */
     var glyfSize = gSupport.glyfSize;

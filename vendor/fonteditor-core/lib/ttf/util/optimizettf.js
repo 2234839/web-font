@@ -311,8 +311,19 @@ function optimizettf(ttf) {
       }
     }
     if (!glyf.compound) {
-      /* 优化94+116+149+150: 优先从 TypedArray 构建 contour + precompute，使用共享 buffer 池 */
-      if (glyf._xArr) {
+      /**
+       * 优化310: simple 字形原始字节快路径。
+       * 有 _origGlyfRef 的字形已跳过坐标解析，_numContours/_totalPoints 已在 parse 阶段算好，
+       * 这里只收集 metrics（maxContours/maxPoints），跳过 ceilReduceAndSizeFromTypedArrays。
+       * contours 设为鸭子类型 {length}，供 sizeof/write 识别为"有内容"的字形。
+       */
+      if (glyf._origGlyfRef) {
+        if (glyf._numContours > 0) {
+          glyf.contours = { length: glyf._numContours };
+          if (glyf._numContours > m_maxContours) m_maxContours = glyf._numContours;
+          if (glyf._totalPoints > m_maxPoints) m_maxPoints = glyf._totalPoints;
+        }
+      } else if (glyf._xArr) {
         ceilReduceAndSizeFromTypedArrays(glyf);
         /* 优化120: 从 _numContours/_totalPoints 收集 metrics */
         if (glyf._numContours > 0) {
