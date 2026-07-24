@@ -837,22 +837,42 @@ function parseChainRuleFormat1or2(
   /** count 异常大（偏移错位读到垃圾值）则放弃该规则，返回 null。实际规则序列长度很小（<256） */
   if (backCount > 255) return null;
   let p = ruleOff + 2;
-  const backRaw: number[] = [];
-  for (let k = 0; k < backCount; k++) backRaw.push(r.u16(p + k * 2));
+  /**
+   * format1（gid 序列）：边读边重映射，遇子集外 gid 立即返回 null——避免先收集 backRaw/inputRaw/lookRaw
+   * 三个临时数组再二次遍历 remap（子集外规则的 raw 数组分配纯浪费，FiraCode 多数 fmt1 规则因 input gid
+   * 不在子集而失效）。format2（class index）：始终有效，原样读取不重映射。
+   */
+  const readSeq = (count: number): number[] | null => {
+    if (count === 0) return [];
+    if (isGidFormat) {
+      const out: number[] = [];
+      for (let k = 0; k < count; k++) {
+        const m = remapGid(origToNew, r.u16(p + k * 2));
+        if (m === null) return null;
+        out.push(m);
+      }
+      return out;
+    }
+    const out2: number[] = [];
+    for (let k = 0; k < count; k++) out2.push(r.u16(p + k * 2));
+    return out2;
+  };
+  const back = readSeq(backCount);
+  if (back === null) return null;
   p += backCount * 2;
   const inputCount = r.u16(p);
   /** inputCount 为 0 是异常（ChainSubRule 至少含第一分量，inputCount>=1），返回 null 跳过该规则 */
   if (inputCount === 0 || inputCount > 255) return null;
   p += 2;
   /** input 序列不含第一分量（第一分量由 coverage/class 决定） */
-  const inputRaw: number[] = [];
-  for (let k = 0; k < inputCount - 1; k++) inputRaw.push(r.u16(p + k * 2));
+  const input = readSeq(inputCount - 1);
+  if (input === null) return null;
   p += (inputCount - 1) * 2;
   const lookCount = r.u16(p);
   if (lookCount > 255) return null;
   p += 2;
-  const lookRaw: number[] = [];
-  for (let k = 0; k < lookCount; k++) lookRaw.push(r.u16(p + k * 2));
+  const look = readSeq(lookCount);
+  if (look === null) return null;
   p += lookCount * 2;
   const seqCount = r.u16(p);
   if (seqCount > 255) return null;
@@ -861,23 +881,6 @@ function parseChainRuleFormat1or2(
   for (let k = 0; k < seqCount; k++) {
     records.push({ seq: r.u16(p + k * 4), lookup: r.u16(p + k * 4 + 2) });
   }
-
-  /** format1：gid 重映射，子集外 gid 则规则失效；format2：class index 原样保留 */
-  const remapSeq = (arr: number[]): number[] | null => {
-    if (!isGidFormat) return arr.slice();
-    const out: number[] = [];
-    for (const v of arr) {
-      const m = remapGid(origToNew, v);
-      if (m === null) return null;
-      out.push(m);
-    }
-    return out;
-  };
-
-  const back = remapSeq(backRaw);
-  const input = remapSeq(inputRaw);
-  const look = remapSeq(lookRaw);
-  if (back === null || input === null || look === null) return null;
   return { back, input, look, records };
 }
 
