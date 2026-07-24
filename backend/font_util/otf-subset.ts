@@ -360,17 +360,23 @@ function passthroughHead(srcDv: DataView, off: number, len: number): Uint8Array 
   return out;
 }
 
-/** 计算表 4 字节对齐后的 checksum（OpenType 规范：表长度按 4 字节边界补齐算 sum） */
+/** 计算表 4 字节对齐后的 checksum（OpenType 规范：表长度按 4 字节边界补齐算 sum）。
+ *  DataView.getUint32 批量读大端 uint32（V8 对 DataView 有专门内联，[[dataview-getuint32-fastest]]
+ *  验证其快于 Uint32Array+swap 与逐字节位拼装），尾部 1~3 字节补 0 单独处理。 */
 function calcTableChecksum(bytes: Uint8Array): number {
   const n = bytes.length;
-  const padded = (n + 3) & ~3;
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, n);
+  const fullQuads = n >>> 2;
   let sum = 0;
-  for (let i = 0; i < padded; i += 4) {
-    const b0 = bytes[i] || 0;
-    const b1 = bytes[i + 1] || 0;
-    const b2 = bytes[i + 2] || 0;
-    const b3 = bytes[i + 3] || 0;
-    sum = (sum + ((b0 << 24) | (b1 << 16) | (b2 << 8) | b3)) >>> 0;
+  for (let i = 0; i < fullQuads; i++) sum = (sum + dv.getUint32(i * 4, false)) >>> 0;
+  /** 尾部 1~3 字节（n 非 4 倍数时），按规范右侧补 0 到 4 字节参与累加 */
+  const tail = n & 3;
+  if (tail) {
+    const base = fullQuads * 4;
+    let last = 0;
+    for (let j = 0; j < tail; j++) last = (last << 8) | bytes[base + j];
+    last = (last << ((4 - tail) * 8)) >>> 0;
+    sum = (sum + last) >>> 0;
   }
   return sum >>> 0;
 }
