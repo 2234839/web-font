@@ -92,28 +92,72 @@ var _default = exports.default = _table.default.create('OS/2', [['version', _str
     return writer;
   },
   read: function read(reader, ttf) {
-    var format = reader.readUint16(this.offset);
     /**
-     * 优化309: 按 format 缓存 os2head 表类。
-     * 原实现每次 read 都 struct.slice + _table.create 动态建类（_createClass + Object.assign prototype），
-     * 是 OS/2 parse 的主开销（prof 实测 ObjectAssign 占稳态 4.2%）。
-     * format 仅 0/1/2+ 三种，struct 切片固定，表类按 format 缓存复用。
-     * 另：去掉 Object.assign(os2Fields, tbl)，直接在 tbl 上补默认字段。
+     * 优化322: 直接 DataView 批量读取 OS/2 全部字段，绕过 struct 通用 read 的逐字段 switch 分发。
+     * 与 write 对称——write 已用直接 view（优化176），read 同样手读。
+     * OS/2 read 是思源/令东 readBuffer 内前列热点（思源 9.4μs），通用 struct read 每字段一次 switch + reader.read 调用，
+     * 直接 view 读 46 个字段省掉全部分发开销。
+     * 字段顺序与 struct 定义严格对应（version → ... → usMaxContext），按 format 决定读到哪。
      */
-    var OS2Head = _os2HeadCache[format];
-    if (!OS2Head) {
-      var struct = this.struct;
-      if (format === 0) {
-        struct = struct.slice(0, 39);
-      } else if (format === 1) {
-        struct = struct.slice(0, 41);
-      }
-      OS2Head = _table.default.create('os2head', struct);
-      _os2HeadCache[format] = OS2Head;
+    var view = reader.view;
+    var p = view.byteOffset + this.offset;
+    var tbl = {};
+    tbl.version = view.getUint16(p, false); p += 2;
+    tbl.xAvgCharWidth = view.getInt16(p, false); p += 2;
+    tbl.usWeightClass = view.getUint16(p, false); p += 2;
+    tbl.usWidthClass = view.getUint16(p, false); p += 2;
+    tbl.fsType = view.getUint16(p, false); p += 2;
+    tbl.ySubscriptXSize = view.getUint16(p, false); p += 2;
+    tbl.ySubscriptYSize = view.getUint16(p, false); p += 2;
+    tbl.ySubscriptXOffset = view.getUint16(p, false); p += 2;
+    tbl.ySubscriptYOffset = view.getUint16(p, false); p += 2;
+    tbl.ySuperscriptXSize = view.getUint16(p, false); p += 2;
+    tbl.ySuperscriptYSize = view.getUint16(p, false); p += 2;
+    tbl.ySuperscriptXOffset = view.getUint16(p, false); p += 2;
+    tbl.ySuperscriptYOffset = view.getUint16(p, false); p += 2;
+    tbl.yStrikeoutSize = view.getUint16(p, false); p += 2;
+    tbl.yStrikeoutPosition = view.getUint16(p, false); p += 2;
+    tbl.sFamilyClass = view.getUint16(p, false); p += 2;
+    /* Panose 10 字节 */
+    tbl.bFamilyType = view.getUint8(p); p += 1;
+    tbl.bSerifStyle = view.getUint8(p); p += 1;
+    tbl.bWeight = view.getUint8(p); p += 1;
+    tbl.bProportion = view.getUint8(p); p += 1;
+    tbl.bContrast = view.getUint8(p); p += 1;
+    tbl.bStrokeVariation = view.getUint8(p); p += 1;
+    tbl.bArmStyle = view.getUint8(p); p += 1;
+    tbl.bLetterform = view.getUint8(p); p += 1;
+    tbl.bMidline = view.getUint8(p); p += 1;
+    tbl.bXHeight = view.getUint8(p); p += 1;
+    /* unicode range 4×Uint32 */
+    tbl.ulUnicodeRange1 = view.getUint32(p, false); p += 4;
+    tbl.ulUnicodeRange2 = view.getUint32(p, false); p += 4;
+    tbl.ulUnicodeRange3 = view.getUint32(p, false); p += 4;
+    tbl.ulUnicodeRange4 = view.getUint32(p, false); p += 4;
+    /* achVendID 4 字节 */
+    tbl.achVendID = String.fromCharCode(view.getUint8(p), view.getUint8(p + 1), view.getUint8(p + 2), view.getUint8(p + 3));
+    p += 4;
+    tbl.fsSelection = view.getUint16(p, false); p += 2;
+    tbl.usFirstCharIndex = view.getUint16(p, false); p += 2;
+    tbl.usLastCharIndex = view.getUint16(p, false); p += 2;
+    tbl.sTypoAscender = view.getInt16(p, false); p += 2;
+    tbl.sTypoDescender = view.getInt16(p, false); p += 2;
+    tbl.sTypoLineGap = view.getInt16(p, false); p += 2;
+    tbl.usWinAscent = view.getUint16(p, false); p += 2;
+    tbl.usWinDescent = view.getUint16(p, false); p += 2;
+    /* version 0 到此（39 字段，p 推进 78 字节）*/
+    if (tbl.version >= 1) {
+      tbl.ulCodePageRange1 = view.getUint32(p, false); p += 4;
+      tbl.ulCodePageRange2 = view.getUint32(p, false); p += 4;
     }
-    var tbl = new OS2Head(this.offset).read(reader, ttf);
-
-    // 补齐其他 version 的字段（直接在 tbl 上赋值，避免 Object.assign 创建 os2Fields 中间对象）
+    if (tbl.version >= 2) {
+      tbl.sxHeight = view.getInt16(p, false); p += 2;
+      tbl.sCapHeight = view.getInt16(p, false); p += 2;
+      tbl.usDefaultChar = view.getUint16(p, false); p += 2;
+      tbl.usBreakChar = view.getUint16(p, false); p += 2;
+      tbl.usMaxContext = view.getUint16(p, false); p += 2;
+    }
+    /* 补齐缺失字段的默认值（与原逻辑一致，供 size/write 使用）*/
     if (tbl.ulCodePageRange1 === undefined) tbl.ulCodePageRange1 = 1;
     if (tbl.ulCodePageRange2 === undefined) tbl.ulCodePageRange2 = 0;
     if (tbl.sxHeight === undefined) tbl.sxHeight = 0;
@@ -121,6 +165,8 @@ var _default = exports.default = _table.default.create('OS/2', [['version', _str
     if (tbl.usDefaultChar === undefined) tbl.usDefaultChar = 0;
     if (tbl.usBreakChar === undefined) tbl.usBreakChar = 32;
     if (tbl.usMaxContext === undefined) tbl.usMaxContext = 0;
+    /* 同步推进 reader.offset（与 struct read 行为一致：read 完最后一个字段后 reader.offset 在表末尾）*/
+    reader.offset = p - view.byteOffset;
     return tbl;
   },
   size: function size(ttf) {
