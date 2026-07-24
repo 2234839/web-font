@@ -1443,9 +1443,14 @@ export function subsetGSUB(
       w.writeUint16(lk.subtableAbsOffs.length);
       const lookupStart = w.length - 6;
       const subtableAbsPositions: number[] = new Array(lk.subtableAbsOffs.length);
+      /**
+       * 优化329（与 subsetGPOS 一致）：subtable 偏移槽用 writeUint16(0) 占位 + 记录 slot 起点，
+       * 序列化后统一 writeInt16At 回填，替代 reserveOffset16 的 per-slot 闭包分配 + patch push。
+       * 思源 GSUB 56 lookup × 323 subtable，闭包消除省去 323 次对象分配。
+       */
+      const subtableSlotsStart = w.length;
       for (let j = 0; j < lk.subtableAbsOffs.length; j++) {
-        const slotIdx = j;
-        w.reserveOffset16(lookupStart, () => subtableAbsPositions[slotIdx]);
+        w.writeUint16(0);
       }
       if (useMarkFilteringSet) {
         w.writeUint16(r.u16(lk.origLookupOff + 6 + lk.subtableAbsOffs.length * 2));
@@ -1457,10 +1462,10 @@ export function subsetGSUB(
         for (let j = 0; j < lk.subtableAbsOffs.length; j++) {
           subtableAbsPositions[j] = w.length;
           writeEmptySubtable(w, lk.effectiveType);
+          w.writeInt16At(subtableSlotsStart + j * 2, subtableAbsPositions[j] - lookupStart);
         }
       } else {
         for (let j = 0; j < lk.subtableAbsOffs.length; j++) {
-          subtableAbsPositions[j] = w.length;
           /** 单个 subtable 重映射失败（coverage gid 全不在子集 / 解析异常）时，
            *  回退已写入字节，改为输出合法的空 subtable（空 coverage，浏览器跳过，不破坏字体）。
            *  不再用 copyBytesBlock 按估算范围拷贝——原始 subtable 数据可能与其他 lookup 物理交错，
@@ -1471,6 +1476,9 @@ export function subsetGSUB(
             w.rollback(before);
             writeEmptySubtable(w, lk.effectiveType);
           }
+          /** 记录实际 subtable 起点（成功=before，失败回退后=before 同值）并回填偏移槽 */
+          subtableAbsPositions[j] = before;
+          w.writeInt16At(subtableSlotsStart + j * 2, before - lookupStart);
         }
       }
     } else {
