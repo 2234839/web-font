@@ -25,51 +25,53 @@ var _default = exports.default = _table.default.create('name', [], {
     nameTbl.count = view.getUint16(vOffset, false); vOffset += 2;
     nameTbl.stringOffset = view.getUint16(vOffset, false); vOffset += 2;
     var count = nameTbl.count;
-    var nameRecordTbl = new Array(count);
-    for (var i = 0; i < count; ++i) {
-      nameRecordTbl[i] = {
-        platform: view.getUint16(vOffset, false),
-        encoding: view.getUint16(vOffset + 2, false),
-        language: view.getUint16(vOffset + 4, false),
-        nameId: view.getUint16(vOffset + 6, false),
-        length: view.getUint16(vOffset + 8, false),
-        offset: view.getUint16(vOffset + 10, false)
-      };
-      vOffset += 12;
-    }
-    reader.offset = vOffset - view.byteOffset;
 
-    var baseOffset = offset + nameTbl.stringOffset;
-    var names = {};
-
+    /**
+     * 优化324: 单遍扫描确定 platform + 直接产出 names，消除全部中间 nameRecord 对象。
+     * 原实现先建 count 个 {platform,encoding,language,nameId,length,offset} 对象（思源 56 个），
+     * 再两遍遍历。改为：
+     *  pass1 只读 platform/encoding/language 三字段比较，确定最终 platform（windows english 优先），
+     *        不读 nameId/length/offset、不建对象；
+     *  pass2 头开始只对匹配 platform+encoding+language 的记录读 nameId/length/offset + readBytes + 解码。
+     * 思源 56 条记录只约 15 条匹配，对象分配 56→0、第二遍 view 读次数减半。
+     */
+    var dirStart = vOffset;
     var platform = _platform.default.Macintosh;
     var encoding = _encoding.mac.Default;
     var language = 0;
-
-    /* 检查是否有 windows english name */
-    /** 优化291: 缓存 nameRecordTbl[k] 避免重复属性查找 */
-    for (var k = 0; k < count; k++) {
-      var nr = nameRecordTbl[k];
-      if (nr.platform === _platform.default.Microsoft && nr.encoding === _encoding.win.UCS2 && nr.language === 1033) {
+    var p = dirStart;
+    for (var i = 0; i < count; ++i) {
+      if (view.getUint16(p, false) === _platform.default.Microsoft
+        && view.getUint16(p + 2, false) === _encoding.win.UCS2
+        && view.getUint16(p + 4, false) === 1033) {
         platform = _platform.default.Microsoft;
         encoding = _encoding.win.UCS2;
         language = 1033;
         break;
       }
+      p += 12;
     }
-    /**
-     * 优化323: 延迟 readBytes——原实现对全部 count 条记录都 readBytes(slice 一份字节)，
-     * 但最终只有匹配 platform+encoding+language 且 nameId 有用的记录才解码字符串，
-     * 其余记录的 .name 字节从不被消费。思源 56 条记录只解码约 15 条，浪费 41 次 slice。
-     * 这里在第三循环里按需对匹配记录 readBytes，把 N 次 slice 降到「有用记录数」次。
-     */
+    reader.offset = dirStart + count * 12 - view.byteOffset;
+
+    var baseOffset = offset + nameTbl.stringOffset;
+    var names = {};
+    /** 优化323: 按需 readBytes，只对匹配记录解码（N 次 slice → 有用记录数次） */
     var isUTF8 = language === 0;
+    var p2 = dirStart;
     for (var m = 0; m < count; ++m) {
-      var nameRecord = nameRecordTbl[m];
-      if (nameRecord.platform === platform && nameRecord.encoding === encoding && nameRecord.language === language && _nameId.default[nameRecord.nameId]) {
-        var nameBytes = reader.readBytes(baseOffset + nameRecord.offset, nameRecord.length);
-        names[_nameId.default[nameRecord.nameId]] = isUTF8 ? _string.default.getUTF8String(nameBytes) : _string.default.getUCS2String(nameBytes);
+      if (view.getUint16(p2, false) === platform
+        && view.getUint16(p2 + 2, false) === encoding
+        && view.getUint16(p2 + 4, false) === language) {
+        var nameId = view.getUint16(p2 + 6, false);
+        var nameKeyId = _nameId.default[nameId];
+        if (nameKeyId) {
+          var len = view.getUint16(p2 + 8, false);
+          var recOff = view.getUint16(p2 + 10, false);
+          var nameBytes = reader.readBytes(baseOffset + recOff, len);
+          names[nameKeyId] = isUTF8 ? _string.default.getUTF8String(nameBytes) : _string.default.getUCS2String(nameBytes);
+        }
       }
+      p2 += 12;
     }
     return names;
   },
