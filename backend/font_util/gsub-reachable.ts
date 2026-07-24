@@ -132,6 +132,89 @@ function coverageFirstExcludedGid(
 }
 
 /**
+ * 在 coverage 中二分查找 gid 的序号（0-based，按 gid 升序），不展开完整 gid 数组。
+ *
+ * SingleSubst format2 / AlternateSubst 的「反转遍历」路径（reachable 小、coverage 大）下，
+ * 原实现 readCoverageGids 先把 coverage 全部 gid 展开到数组（思源 locl lookup coverage 达 8881/12000/11632 gid），
+ * 再遍历 reachable 对数组二分。展开大数组是 reach 阶段 #1 热点（思源 0.060ms / 0.165ms）。
+ * 本函数直接对 coverage 原始字节二分：
+ *   - format1（gid 列表，升序）：标准二分，log2(count) 次 getUint16
+ *   - format2（range 列表）：二分定位含 gid 的 range，序号 = 该 range 之前所有 range 的 gid 累计 + (gid - start)
+ *
+ * @param off coverage 绝对偏移
+ * @param gid 待查 gid
+ * @returns gid 在 coverage 中的序号；不在返回 -1
+ */
+function coverageIndexOf(r: OTReader, off: number, gid: number): number {
+  const dv = r.dv;
+  const format = dv.getUint16(off, false);
+  if (format === 1) {
+    const count = dv.getUint16(off + 2, false);
+    const base = off + 4;
+    let lo = 0, hi = count;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      const mg = dv.getUint16(base + mid * 2, false);
+      if (mg < gid) lo = mid + 1;
+      else if (mg > gid) hi = mid;
+      else return mid;
+    }
+    return -1;
+  } else if (format === 2) {
+    const rangeCount = dv.getUint16(off + 2, false);
+    const base = off + 4;
+    /** 二分找第一个 end >= gid 的 range（range 按 start 升序，故 end 也升序） */
+    let lo = 0, hi = rangeCount;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      const end = dv.getUint16(base + mid * 6 + 2, false);
+      if (end < gid) lo = mid + 1;
+      else hi = mid;
+    }
+    if (lo >= rangeCount) return -1;
+    const rangeOff = base + lo * 6;
+    const start = dv.getUint16(rangeOff, false);
+    const end = dv.getUint16(rangeOff + 2, false);
+    if (gid < start || gid > end) return -1;
+    /** 序号 = 之前所有 range 的 gid 累计 + (gid - start)。range 数通常很少（思源大 coverage 均为 format1），
+     *  线性累计开销可忽略；range 多时退化为 O(rangeCount)，仍优于展开 O(totalGids)。 */
+    let prefix = 0;
+    for (let i = 0; i < lo; i++) {
+      const s = dv.getUint16(base + i * 6, false);
+      const e = dv.getUint16(base + i * 6 + 2, false);
+      prefix += e - s + 1;
+    }
+    return prefix + (gid - start);
+  }
+  return -1;
+}
+
+/**
+ * 返回 coverage 的 gid 总数，不展开到数组。
+ *
+ * 反转遍历路径判断「coverage 是否明显多于 reachable」只需 gid 数，无需展开（思源 locl coverage
+ * 达上万 gid，展开即 #1 热点）。format1 直接读 count；format2 累加各 range 的 (end-start+1)。
+ */
+function coverageCount(r: OTReader, off: number): number {
+  const dv = r.dv;
+  const format = dv.getUint16(off, false);
+  if (format === 1) {
+    return dv.getUint16(off + 2, false);
+  } else if (format === 2) {
+    const rangeCount = dv.getUint16(off + 2, false);
+    const base = off + 4;
+    let total = 0;
+    for (let i = 0; i < rangeCount; i++) {
+      const s = dv.getUint16(base + i * 6, false);
+      const e = dv.getUint16(base + i * 6 + 2, false);
+      total += e - s + 1;
+    }
+    return total;
+  }
+  return 0;
+}
+
+/**
  * 收集从 seedGids 出发、经 GSUB 替换链可达的全部 target gid（不含 seed 本身）。
  *
  * @param gsubBytes 原始 GSUB 表字节
@@ -193,7 +276,6 @@ export function collectReachableGsubTargets(
    *  返回的 reachable 可能含 seed gid——调用方注入 extraSubsetGids 后 Font.create 会去重，无害。 */
   const reachable = new Set<number>(seedGids);
   let changed = true;
-  /** 当前「在子集内」= reachable（已含 seed） */
   const inSubset = (gid: number) => reachable.has(gid);
 
   /** 复用临时 Set，避免每个 type6 subtable 两次 new Set 的 GC 压力（初夏明朝 51 lookup 多轮迭代） */
@@ -287,47 +369,38 @@ function collectSubtableTargets(
     /** SingleSubst: format1 coverage+delta / format2 coverage+gidArray */
     const format = r.u16(off);
     const covOff = off + r.u16(off + 2);
-    const covGids = readCoverageGids(r, covOff, covCache);
     if (format === 1) {
       const delta = r.i16(off + 4);
       /** 条件反转：仅当 covGids 明显多于 reachable 时反转遍历方向（遍历小集合二分查大集合）。
        *  covGids 短（FiraCode type1 avg 5.5）时原 Set.has 路径更快（二分开销 > 遍历）。 */
-      if (covGids.length > reachable.size) {
-        const lim = covGids.length;
+      if (coverageCount(r, covOff) > reachable.size) {
+        /** 反转路径（大 coverage）：coverageIndexOf 直接对 coverage 字节二分，不展开 gid 数组。
+         *  format1 delta 替换：target = (gid + delta) & 0xffff，无需 index 查表。 */
         for (const g of reachable) {
-          let lo = 0, hi = lim;
-          while (lo < hi) {
-            const mid = (lo + hi) >> 1;
-            const mg = covGids[mid];
-            if (mg < g) lo = mid + 1;
-            else if (mg > g) hi = mid;
-            else { targets.push((g + delta) & 0xffff); break; }
-          }
+          if (coverageIndexOf(r, covOff, g) >= 0) targets.push((g + delta) & 0xffff);
         }
       } else {
+        const covGids = readCoverageGids(r, covOff, covCache);
         for (const g of covGids) {
           if (inSubset(g)) targets.push((g + delta) & 0xffff);
         }
       }
     } else if (format === 2) {
       /** 条件反转遍历方向：coverage 命中率低（初夏 fmt2 covLen 9180/round，reachable 53，命中率<4%）。
-       *  仅当 covGids 明显多于 reachable 时遍历 reachable 二分查 covGids 得 index；否则原 Set.has 路径。
-       *  covGids 按 gid 升序（fmt1 list / fmt2 range 展开），可二分。 */
+       *  仅当 covGids 明显多于 reachable 时遍历 reachable 二分查 covGids 得 index；否则原 Set.has 路径。 */
       const count = r.u16(off + 4);
-      const lim = covGids.length < count ? covGids.length : count;
       const gidArrBase = off + 6;
-      if (lim > reachable.size) {
+      if (coverageCount(r, covOff) > reachable.size) {
+        /** 反转路径（大 coverage）：coverageIndexOf 直接对 coverage 字节二分得 index，不展开 gid 数组
+         *  （思源 locl lookup coverage 达 8881/12000/11632 gid，展开是 reach 阶段 #1 热点）。
+         *  命中 index 去 gidArrBase+index*2 读 target。 */
         for (const g of reachable) {
-          let lo = 0, hi = lim;
-          while (lo < hi) {
-            const mid = (lo + hi) >> 1;
-            const mg = covGids[mid];
-            if (mg < g) lo = mid + 1;
-            else if (mg > g) hi = mid;
-            else { targets.push(dv.getUint16(gidArrBase + mid * 2, false)); break; }
-          }
+          const idx = coverageIndexOf(r, covOff, g);
+          if (idx >= 0 && idx < count) targets.push(dv.getUint16(gidArrBase + idx * 2, false));
         }
       } else {
+        const covGids = readCoverageGids(r, covOff, covCache);
+        const lim = covGids.length < count ? covGids.length : count;
         for (let i = 0; i < lim; i++) {
           if (inSubset(covGids[i])) targets.push(dv.getUint16(gidArrBase + i * 2, false));
         }
@@ -474,12 +547,16 @@ function collectChainRefs(
      *  三个 coverage 数组（backtrack/input/lookahead）的 gid 须全在子集才触发。
      *
      *  优化（失败短路，跳过 coverage 展开与 contextGids 收集）：format3 triggerable=false 是常态
-     *  （初夏纯标点 280 个 format3 首轮全 false）。失败时只需找到第一个不在 reachable 的 gid 记入
-     *  failGid 供跨轮跳过——此时 contextGids 的收集无意义：break 前已检查的 gid 都在 reachable
-     *  （inSubset=reachable.has），调用方对其 reachable.add 是 no-op。故失败路径用
-     *  coverageFirstExcludedGid 边读边查（format2 range 不预展开），命中即返回，完全省掉
-     *  readCoverageGids 的完整展开 + 数组分配。仅 triggerable=true 时（coverage 全在子集、量小）
-     *  才 readCoverageGids 收集 contextGids。 */
+     *  （思源黑体 281 个 format3 首轮全 false，初夏纯标点 280 个亦然）。失败时只需找到第一个不在
+     *  reachable 的 gid 记入 failGid 供跨轮跳过——此时 contextGids 的收集无意义：break 前已检查的
+     *  gid 都在 reachable（inSubset=reachable.has），调用方对其 reachable.add 是 no-op。仅
+     *  triggerable=true 时（coverage 全在子集、量小）才 readCoverageGids 收集 contextGids。
+     *
+     *  优化（首 gid 内联快查）：format1/2 coverage 的第一个 gid 在 coverage 头部固定位置
+     *  （format1: off+4；format2: off+4 即首个 range 的 start）。绝大多数 fail 的 fmt3，其某段
+     *  coverage 的首个 gid 就不在 reachable（思源 281/281 命中）。内联读这 2 字节 + 1 次 inSubset
+     *  即可短路，省掉 coverageFirstExcludedGid 的函数调用 + covCache.get Map 查询。仅首 gid 在
+     *  reachable 时才调 coverageFirstExcludedGid 完整检查该 coverage（可能其余 gid 仍不在）。 */
     let p = off + 2;
     let triggerable = true;
     /** 第一遍：逐 coverage 找首个不在子集的 gid，全在子集则 triggerable 保持 true */
@@ -488,6 +565,20 @@ function collectChainRefs(
       p += 2;
       for (let k = 0; k < cnt; k++) {
         const covOff = off + dv.getUint16(p + k * 2, false);
+        /** 内联首 gid 快查：coverage format 在 covOff，首个 gid 在 covOff+4（format1 list[0] 或 format2 range[0].start）。
+         *  count>0 时才有首个 gid；format 非 1/2（损坏表）交由 coverageFirstExcludedGid 兜底返回 -1。
+         *  首 gid 不在 reachable → 该 coverage 必含 excluded，直接短路记 failGid。 */
+        const covFormat = dv.getUint16(covOff, false);
+        const covCount = dv.getUint16(covOff + 2, false);
+        if ((covFormat === 1 || covFormat === 2) && covCount > 0) {
+          const firstGid = dv.getUint16(covOff + 4, false);
+          if (!inSubset(firstGid)) {
+            triggerable = false;
+            failGid.v = firstGid;
+            break;
+          }
+        }
+        /** 首 gid 在 reachable：完整检查该 coverage 的全部 gid（首 gid 之外的可能 excluded） */
         const excluded = coverageFirstExcludedGid(r, covOff, covCache, inSubset);
         if (excluded >= 0) {
           triggerable = false;
