@@ -723,6 +723,13 @@ function replaceDictOffsets(dictBytes: Uint8Array, replacements: Map<number, num
       p += 2;
     } else if (b0 === 29) {
       p += 4;
+    } else if (b0 === 30) {
+      /** BCD 实数：每字节两 nibble，遇 0xf 结束。必须完整跳过，否则 BCD 内 <=21 的字节
+       *  会被误判为 operator 致 operator 边界错乱（Top DICT 的 CIDFontVersion 等用 BCD）。 */
+      while (p < len) {
+        const byte = dictBytes[p++];
+        if ((byte >> 4) === 0xf || (byte & 0xf) === 0xf) break;
+      }
     } else if (b0 >= 247 && b0 <= 254) {
       p += 1;
     }
