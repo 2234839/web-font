@@ -23,6 +23,7 @@
 import { subsetCFF } from "./cff-subset.js";
 import { subsetGSUB } from "./gsub-subset.js";
 import { subsetGPOS } from "./gpos-subset.js";
+import { collectReachableGsubTargets } from "./gsub-reachable.js";
 
 /** sfnt 表目录条目 */
 interface SfntTable {
@@ -469,6 +470,32 @@ export function subsetOTF(fontBuffer: Uint8Array, codePoints: number[], keepGSUB
 
   /** 子集字形集 + codepoint→新gid */
   const { subsetGids, cpToNewGid } = buildSubsetGids(dv, cmap.offset, codePoints);
+
+  /** GSUB 替换链 target 字形保留（locl/calt/liga 等）。
+   *  思源黑体等 CID 字体含 locl feature：浏览器按系统 locale（中文）渲染时，GSUB 把基础字形
+   *  替换为地区变体字形（如"天"gid A → CN 变体 gid A+1）。若子集 subsetGids 不含这些 target，
+   *  子集 GSUB 重映射后 target gid 指向不存在/错误字形，渲染出错误变体（实测思源 9 字 ink 差 75，
+   *  SSIM 0.9530，逐字定位"天玄宇法海"多 ink、"宙"少 ink，正是 locl 变体丢失）。
+   *  复用 ttf 路径同款 collectReachableGsubTargets 收集 seed 经 GSUB 可达的 target gid，合并进 subsetGids。
+   *  仅字体含 GSUB 时收集；无 GSUB（纯汉字无连字/变体）跳过，零开销。 */
+  if (keepGSUB) {
+    const gsub = findTable(tables, "GSUB");
+    if (gsub) {
+      const gsubBytes = new Uint8Array(dv.buffer, dv.byteOffset + gsub.offset, gsub.length);
+      /** seed = 当前 subsetGids（已含 .notdef + 各 codepoint 的 gid） */
+      const seed = new Set<number>(subsetGids);
+      const reachable = collectReachableGsubTargets(gsubBytes, seed);
+      if (reachable.size > 0) {
+        /** 合并去重：新 gid 顺序追加在现有 subsetGids 之后（不破坏 cpToNewGid 已建立的映射） */
+        for (const gid of reachable) {
+          if (gid > 0 && !seed.has(gid)) {
+            seed.add(gid);
+            subsetGids.push(gid);
+          }
+        }
+      }
+    }
+  }
 
   /** 子集 CFF */
   const cffBytes = new Uint8Array(fontBuffer.buffer, fontBuffer.byteOffset + cff.offset, cff.length);
