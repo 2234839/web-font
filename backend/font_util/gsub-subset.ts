@@ -22,7 +22,6 @@
  */
 
 import { OTWriter as Writer, OTReader as Reader, serializeScriptList, serializeFeatureList } from "./ot-bytes.js";
-import { performance } from "perf_hooks";
 
 /** GSUB lookup 类型常量 */
 const LT_SINGLE = 1;
@@ -579,7 +578,6 @@ function serializeLigatureSubst(
 function readClassDefMap(r: Reader, off: number, origToNew: Map<number, number>): Map<number, number> {
   const result = new Map<number, number>();
   if (off === 0) return result;
-  const __f10 = (globalThis).__sp?performance.now():0;
   const format = r.u16(off);
   if (format === 1) {
     const startGid = r.u16(off + 2);
@@ -649,7 +647,6 @@ function serializeChainedContextSubst(
   covCache: CoverageCache,
   gidLookup: GidLookup,
 ): boolean {
-  const __f10 = (globalThis).__sp?performance.now():0;
   const format = r.u16(off);
   if (format === 1) {
     /** coverage(gid) + 子规则数组，每规则含 backtrack/input/lookahead gid 序列 + SubstLookupRecord */
@@ -676,11 +673,10 @@ function serializeChainedContextSubst(
       }
       if (validRules.length > 0) entries.push({ firstGid: firstNew, rules: validRules });
     }
-    if (entries.length === 0) { if((globalThis).__sp){const G=globalThis as any; G.__f1_fail_t=(G.__f1_fail_t||0)+performance.now()-__f10; G.__f1_fail_c=(G.__f1_fail_c||0)+1;} return false; }
+    if (entries.length === 0) return false;
     /** 按 firstGid 升序排序，使 coverage（emitCoverage 强制升序）与 SubRuleSet 数组保持下标配对 */
     entries.sort((a, b) => a.firstGid - b.firstGid);
     writeChainFormat1(w, entries);
-    if((globalThis).__sp){const G=globalThis as any; G.__f1_ok_t=(G.__f1_ok_t||0)+performance.now()-__f10; G.__f1_ok_c=(G.__f1_ok_c||0)+1;}
     return true;
   }
 
@@ -737,12 +733,10 @@ function serializeChainedContextSubst(
   }
 
   if (format === 3) {
-    const __f30 = (globalThis).__sp?performance.now():0;
     /** 显式 coverage 数组 + SubstLookupRecord */
     const parsed = parseChainFormat3(r, off, covCache, gidLookup);
-    if (!parsed) { if((globalThis).__sp){const G=globalThis as any; G.__f3_fail_t=(G.__f3_fail_t||0)+performance.now()-__f30; G.__f3_fail_c=(G.__f3_fail_c||0)+1;} return false; }
+    if (!parsed) return false;
     writeChainFormat3(w, parsed);
-    if((globalThis).__sp){const G=globalThis as any; G.__f3_ok_t=(G.__f3_ok_t||0)+performance.now()-__f30; G.__f3_ok_c=(G.__f3_ok_c||0)+1;}
     return true;
   }
 
