@@ -543,6 +543,8 @@ function collectChainRuleRefs(
   isGidFormat: boolean,
 ): void {
   /** format1/2 rule: backtrackCount + backtrack[] + inputCount + input[] + lookaheadCount + lookahead[] + substCount + substRecords[] */
+  /** 缓存 dv：chain format1 规则密集调用（FiraCode 180 fmt1 规则 × 6+ 次 u16），直接 getUint16 省方法调用+边界检查 */
+  const dv = r.dv;
   let p = ruleOff;
   const backtrackCount = r.u16(p); p += 2;
   const backtrackEnd = p + backtrackCount * 2;
@@ -559,26 +561,26 @@ function collectChainRuleRefs(
     /** 第一遍：校验 backtrack + input + lookahead 全部 gid 在子集（遇子集外即放弃规则） */
     let q = ruleOff + 2;
     for (let k = 0; k < backtrackCount; k++) {
-      if (!inSubset(r.u16(q + k * 2))) return;
+      if (!inSubset(dv.getUint16(q + k * 2, false))) return;
     }
     q += backtrackCount * 2 + 2;
     for (let k = 0; k < inputLen; k++) {
-      if (!inSubset(r.u16(q + k * 2))) return;
+      if (!inSubset(dv.getUint16(q + k * 2, false))) return;
     }
     q += inputLen * 2 + 2;
     for (let k = 0; k < lookaheadCount; k++) {
-      if (!inSubset(r.u16(q + k * 2))) return;
+      if (!inSubset(dv.getUint16(q + k * 2, false))) return;
     }
     /** 第二遍：全部在子集，收集 context gid */
     q = ruleOff + 2;
-    for (let k = 0; k < backtrackCount; k++) contextGids.add(r.u16(q + k * 2));
+    for (let k = 0; k < backtrackCount; k++) contextGids.add(dv.getUint16(q + k * 2, false));
     q += backtrackCount * 2 + 2;
-    for (let k = 0; k < inputLen; k++) contextGids.add(r.u16(q + k * 2));
+    for (let k = 0; k < inputLen; k++) contextGids.add(dv.getUint16(q + k * 2, false));
     q += inputLen * 2 + 2;
-    for (let k = 0; k < lookaheadCount; k++) contextGids.add(r.u16(q + k * 2));
+    for (let k = 0; k < lookaheadCount; k++) contextGids.add(dv.getUint16(q + k * 2, false));
   }
   for (let k = 0; k < substCount; k++) {
     /** SubstLookupRecord: sequenceIndex(2) + lookupListIndex(2) */
-    refs.add(r.u16(p + k * 4 + 2));
+    refs.add(dv.getUint16(p + k * 4 + 2, false));
   }
 }
