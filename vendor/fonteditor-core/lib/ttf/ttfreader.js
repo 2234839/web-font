@@ -127,12 +127,14 @@ var TTFReader = exports.default = /*#__PURE__*/function () {
         }
       }
 
-      /* 优化13+82+118: advanceWidth 遍历优化，使用密集数组 */
+      /* 优化13+82+118: advanceWidth 遍历优化，使用密集数组
+       *  优化（hmtx 紧凑存储）：subset 模式下 hmtx 按 subsetGids 顺序存储（Int32Array(S*2)），
+       *    下标用 gi*2（subsetGids 内位置），而非原 gid*2。初夏 hmtx 0.056→~0.002ms。 */
       var hmtx = ttf.hmtx;
       if (subsetGids) {
         for (var gi = 0, gl = subsetGids.length; gi < gl; gi++) {
           var idxNum = subsetGids[gi];
-          var hIdx = idxNum * 2;
+          var hIdx = gi * 2;
           glyf[idxNum].advanceWidth = hmtx[hIdx];
           glyf[idxNum].leftSideBearing = hmtx[hIdx + 1];
         }

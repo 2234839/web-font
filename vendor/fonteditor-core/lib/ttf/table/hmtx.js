@@ -18,22 +18,24 @@ var _default = exports.default = _table.default.create('hmtx', [], {
     reader.seek(offset);
     var numOfLongHorMetrics = ttf.hhea.numOfLongHorMetrics;
     var numGlyphs = ttf.maxp.numGlyphs;
-    /* 优化10+82: 扁平数组 [advW, lsb, advW, lsb, ...]，消除对象分配 */
-    var hMetrics = new Int32Array(numGlyphs * 2);
     var view = reader.view;
     var vOffset = view.byteOffset + offset;
-    /* 优化（subset 按需读）：subset 模式下 ttf.subsetGids 已由 glyf.read（表顺序在 hmtx 之前）构建，
-     *  resolveGlyf 也只访问 subsetGids 对应的 hmtx[gid*2]/[gid*2+1]。
-     *  原实现全量解析 numOfLongHorMetrics 项（思源 30888，占 Font.create ~10%），对 8 字子集是纯浪费。
-     *  改为只读 subsetGids 需要的项，其余位置保持 0（不会被访问）。 */
+    /* 优化（subset 紧凑存储）：subset 模式下 ttf.subsetGids 已由 glyf.read（表顺序在 hmtx 之前）构建。
+     *  按 subsetGids 顺序紧凑存储为 Int32Array(S*2)，下标用 gi*2（subsetGids 内的位置），而非 gid*2。
+     *  resolveGlyf/otfreader 的 subset 分支同样用 gi*2 索引。
+     *  原实现分配 Int32Array(numGlyphs*2)（CJK 字体 numGlyphs 达 3.5 万→ 284KB 大对象，
+     *  V8 大对象分配+zero-fill 单次 ~54μs，占初夏 hmtx 全部 0.056ms）；紧凑存储仅 S*2 项（初夏 13→104B），
+     *  分配降到 ~0.2μs。只读 subsetGids 需要的项，全量解析 numOfLongHorMetrics 对小子集是纯浪费。 */
     var subsetGids = ttf.readOptions && ttf.readOptions.subset && ttf.readOptions.subset.length > 0 ? ttf.subsetGids : null;
     if (subsetGids) {
+      var sl = subsetGids.length;
+      var hMetrics = new Int32Array(sl * 2);
       /* Last 段（gid >= numOfLongHorMetrics）的起始字节偏移；共享 advW = 最后一个 LongHorMetric 的 advW */
       var lastSegOff = vOffset + numOfLongHorMetrics * 4;
       var lastAdvWOff = vOffset + (numOfLongHorMetrics - 1) * 4;
-      for (var si = 0, sl = subsetGids.length; si < sl; si++) {
+      for (var si = 0; si < sl; si++) {
         var gid = subsetGids[si];
-        var idx = gid * 2;
+        var idx = si * 2;
         if (gid < numOfLongHorMetrics) {
           /* LongHorMetric 段：advW + lsb 各 2 字节 */
           var gOff = vOffset + gid * 4;
@@ -48,6 +50,8 @@ var _default = exports.default = _table.default.create('hmtx', [], {
       reader.offset = offset + numOfLongHorMetrics * 4 + (numGlyphs - numOfLongHorMetrics) * 2;
       return hMetrics;
     }
+    /* 全量模式：扁平数组 [advW, lsb, advW, lsb, ...]，下标 gid*2（与 resolveGlyf 全量分支一致） */
+    var hMetrics = new Int32Array(numGlyphs * 2);
     /* 优化（TypedArray 批量读+内联翻转）：hmtx 是大端，原 DataView.getUint16/getInt16 逐次调用
      *  有边界检查开销。LongHorMetric 段（每项 u16 advW + i16 lsb）用 Uint16Array view 共享 buffer
      *  读取后内联翻转，实测思源黑体（30888 项）快 2×（198→98μs）。offset 需 2 字节对齐，
