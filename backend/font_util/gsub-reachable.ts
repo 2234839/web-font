@@ -224,7 +224,7 @@ export function collectReachableGsubTargets(
             const refLk = lookups[li];
             if (!refLk) continue;
             for (const refSub of refLk.subtableAbsOffs) {
-              const refTargets = collectSubtableTargets(r, refSub, refLk.effectiveType, inSubset, covCache);
+              const refTargets = collectSubtableTargets(r, refSub, refLk.effectiveType, inSubset, covCache, reachable);
               for (const g of refTargets) {
                 if (!reachable.has(g)) { reachable.add(g); changed = true; }
               }
@@ -238,7 +238,7 @@ export function collectReachableGsubTargets(
             failGidMap.set(subAbs, failGidBox.v);
           }
         } else {
-          const newTargets = collectSubtableTargets(r, subAbs, lk.effectiveType, inSubset, covCache);
+          const newTargets = collectSubtableTargets(r, subAbs, lk.effectiveType, inSubset, covCache, reachable);
           for (const g of newTargets) {
             if (!reachable.has(g)) {
               reachable.add(g);
@@ -261,6 +261,7 @@ function collectSubtableTargets(
   type: number,
   inSubset: (gid: number) => boolean,
   covCache: CoverageCache,
+  reachable: Set<number>,
 ): number[] {
   const targets: number[] = [];
   if (type === LT_SINGLE) {
@@ -274,9 +275,22 @@ function collectSubtableTargets(
         if (inSubset(g)) targets.push((g + delta) & 0xffff);
       }
     } else if (format === 2) {
+      /** 反转遍历方向：coverage（avg 103 gid，命中率 <4%）远大于 reachable（初夏标点 53）。
+       *  遍历 covGids 查 reachable 是 9180 次 Set.has/round；改为遍历 reachable 二分查 covGids 得 index。
+       *  covGids 按 gid 升序（fmt1 list / fmt2 range 展开），可二分。 */
       const count = r.u16(off + 4);
-      for (let i = 0; i < covGids.length && i < count; i++) {
-        if (inSubset(covGids[i])) targets.push(r.u16(off + 6 + i * 2));
+      const lim = covGids.length < count ? covGids.length : count;
+      const gidArrBase = off + 6;
+      for (const g of reachable) {
+        /** 二分 covGids[0..lim) 找 g 的 index */
+        let lo = 0, hi = lim;
+        while (lo < hi) {
+          const mid = (lo + hi) >> 1;
+          const mg = covGids[mid];
+          if (mg < g) lo = mid + 1;
+          else if (mg > g) hi = mid;
+          else { targets.push(r.u16(gidArrBase + mid * 2)); break; }
+        }
       }
     }
   } else if (type === LT_MULTIPLE) {
