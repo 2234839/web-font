@@ -271,25 +271,46 @@ function collectSubtableTargets(
     const covGids = readCoverageGids(r, covOff, covCache);
     if (format === 1) {
       const delta = r.i16(off + 4);
-      for (const g of covGids) {
-        if (inSubset(g)) targets.push((g + delta) & 0xffff);
+      /** 条件反转：仅当 covGids 明显多于 reachable 时反转遍历方向（遍历小集合二分查大集合）。
+       *  covGids 短（FiraCode type1 avg 5.5）时原 Set.has 路径更快（二分开销 > 遍历）。 */
+      if (covGids.length > reachable.size) {
+        const lim = covGids.length;
+        for (const g of reachable) {
+          let lo = 0, hi = lim;
+          while (lo < hi) {
+            const mid = (lo + hi) >> 1;
+            const mg = covGids[mid];
+            if (mg < g) lo = mid + 1;
+            else if (mg > g) hi = mid;
+            else { targets.push((g + delta) & 0xffff); break; }
+          }
+        }
+      } else {
+        for (const g of covGids) {
+          if (inSubset(g)) targets.push((g + delta) & 0xffff);
+        }
       }
     } else if (format === 2) {
-      /** 反转遍历方向：coverage（avg 103 gid，命中率 <4%）远大于 reachable（初夏标点 53）。
-       *  遍历 covGids 查 reachable 是 9180 次 Set.has/round；改为遍历 reachable 二分查 covGids 得 index。
+      /** 条件反转遍历方向：coverage 命中率低（初夏 fmt2 covLen 9180/round，reachable 53，命中率<4%）。
+       *  仅当 covGids 明显多于 reachable 时遍历 reachable 二分查 covGids 得 index；否则原 Set.has 路径。
        *  covGids 按 gid 升序（fmt1 list / fmt2 range 展开），可二分。 */
       const count = r.u16(off + 4);
       const lim = covGids.length < count ? covGids.length : count;
       const gidArrBase = off + 6;
-      for (const g of reachable) {
-        /** 二分 covGids[0..lim) 找 g 的 index */
-        let lo = 0, hi = lim;
-        while (lo < hi) {
-          const mid = (lo + hi) >> 1;
-          const mg = covGids[mid];
-          if (mg < g) lo = mid + 1;
-          else if (mg > g) hi = mid;
-          else { targets.push(r.u16(gidArrBase + mid * 2)); break; }
+      if (lim > reachable.size) {
+        for (const g of reachable) {
+          let lo = 0, hi = lim;
+          while (lo < hi) {
+            const mid = (lo + hi) >> 1;
+            const mg = covGids[mid];
+            if (mg < g) lo = mid + 1;
+            else if (mg > g) hi = mid;
+            else { targets.push(r.u16(gidArrBase + mid * 2)); break; }
+          }
+        }
+      } else {
+        for (let i = 0; i < lim; i++) {
+          if (inSubset(covGids[i])) targets.push(r.u16(gidArrBase + i * 2));
         }
       }
     }
@@ -304,14 +325,34 @@ function collectSubtableTargets(
       for (let k = 0; k < glyphCount; k++) targets.push(r.u16(seqOff + 2 + k * 2));
     }
   } else if (type === LT_ALTERNATE) {
+    /** 条件反转：初夏 type3 covLen 987/3 calls（avg 329），命中率 2.3%；covGids 短时走原路径。 */
     const covOff = off + r.u16(off + 2);
     const altCount = r.u16(off + 4);
     const covGids = readCoverageGids(r, covOff, covCache);
-    for (let i = 0; i < covGids.length && i < altCount; i++) {
-      if (!inSubset(covGids[i])) continue;
-      const altOff = off + r.u16(off + 6 + i * 2);
-      const cnt = r.u16(altOff);
-      for (let k = 0; k < cnt; k++) targets.push(r.u16(altOff + 2 + k * 2));
+    const lim = covGids.length < altCount ? covGids.length : altCount;
+    if (covGids.length > reachable.size) {
+      for (const g of reachable) {
+        let lo = 0, hi = lim;
+        while (lo < hi) {
+          const mid = (lo + hi) >> 1;
+          const mg = covGids[mid];
+          if (mg < g) lo = mid + 1;
+          else if (mg > g) hi = mid;
+          else {
+            const altOff = off + r.u16(off + 6 + mid * 2);
+            const cnt = r.u16(altOff);
+            for (let k = 0; k < cnt; k++) targets.push(r.u16(altOff + 2 + k * 2));
+            break;
+          }
+        }
+      }
+    } else {
+      for (let i = 0; i < lim; i++) {
+        if (!inSubset(covGids[i])) continue;
+        const altOff = off + r.u16(off + 6 + i * 2);
+        const cnt = r.u16(altOff);
+        for (let k = 0; k < cnt; k++) targets.push(r.u16(altOff + 2 + k * 2));
+      }
     }
   } else if (type === LT_LIGATURE) {
     /** LigatureSubst: 全部 component 在子集 → target gid */
