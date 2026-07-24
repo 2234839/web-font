@@ -83,13 +83,12 @@ function writeEmptyPosSubtable(w: Writer, effectiveType: number): void {
     return;
   }
 
-  /** coverageOffset 槽（相对 subtable 起始），coverage 紧随本类型头部之后 */
-  const coverageAfter = (() => {
-    if (effectiveType === LT_SINGLE_POS) return subStart + 6;
-    if (effectiveType === LT_PAIR_POS) return subStart + 10;
-    return subStart + 6; /** CursivePos / ContextPos / ChainContextPos */
-  })();
-  w.reserveOffset16(subStart, () => coverageAfter);
+  /** coverageOffset 槽（相对 subtable 起始的常量）：SinglePos 头 6 字节、PairPos 头 10 字节、
+   *  Cursive/Context 头 6 字节后即 coverage。空 subtable 的 coverageOff 是编译期固定常量，
+   *  直接写常量值（6/10）替代 reserveOffset16 + 闭包 + patch push + flush 回填——supported lookup 的
+   *  未命中 subtable 数量大（初夏 577 个），每省一次 patch 对象 + 闭包分配。 */
+  const coverageOffConst = effectiveType === LT_PAIR_POS ? 10 : 6;
+  w.writeUint16(coverageOffConst);
   if (effectiveType === LT_SINGLE_POS) {
     w.writeUint16(0); /** valueFormat = 0 */
   } else if (effectiveType === LT_PAIR_POS) {
