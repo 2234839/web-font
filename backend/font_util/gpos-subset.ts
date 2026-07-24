@@ -124,20 +124,20 @@ export function subsetGPOS(
   const r = new Reader(dv);
 
   /** ---- GPOS Header ---- */
-  const major = r.u16(0);
-  const minor = r.u16(2);
+  const major = dv.getUint16(0, false);
+  const minor = dv.getUint16(2, false);
   /** 仅支持 v1.0 / v1.1；v1.1 的 FeatureVariations 本 MVP 不处理，存在时降级 */
   if (major !== 1 || minor > 1) return null;
-  const scriptListOff = r.u16(4);
-  const featureListOff = r.u16(6);
-  const lookupListOff = r.u16(8);
+  const scriptListOff = dv.getUint16(4, false);
+  const featureListOff = dv.getUint16(6, false);
+  const lookupListOff = dv.getUint16(8, false);
   if (minor === 1 && r.u32(10) !== 0) return null;
 
   /** ---- 解析 LookupList，记录每个 lookup 的类型与 subtable 绝对偏移 ---- */
-  const lookupCount = r.u16(lookupListOff);
+  const lookupCount = dv.getUint16(lookupListOff, false);
   const lookupRelOffs: number[] = [];
   for (let i = 0; i < lookupCount; i++) {
-    lookupRelOffs.push(r.u16(lookupListOff + 2 + i * 2));
+    lookupRelOffs.push(dv.getUint16(lookupListOff + 2 + i * 2, false));
   }
   const lookups: Array<{
     supported: boolean;
@@ -148,19 +148,19 @@ export function subsetGPOS(
 
   for (let i = 0; i < lookupCount; i++) {
     const lOff = lookupListOff + lookupRelOffs[i];
-    const lookupType = r.u16(lOff);
-    const subTableCount = r.u16(lOff + 4);
+    const lookupType = dv.getUint16(lOff, false);
+    const subTableCount = dv.getUint16(lOff + 4, false);
     const subtableAbsOffs: number[] = [];
     let effectiveType = lookupType;
     for (let j = 0; j < subTableCount; j++) {
-      const subOff = lOff + r.u16(lOff + 6 + j * 2);
+      const subOff = lOff + dv.getUint16(lOff + 6 + j * 2, false);
       if (lookupType === LT_EXTENSION) {
-        if (r.u16(subOff) !== 1) {
+        if (dv.getUint16(subOff, false) !== 1) {
           /** 无法解包的 extension，标记为不支持 */
           effectiveType = -1;
           continue;
         }
-        effectiveType = r.u16(subOff + 2);
+        effectiveType = dv.getUint16(subOff + 2, false);
         subtableAbsOffs.push(subOff + r.u32(subOff + 4));
       } else {
         subtableAbsOffs.push(subOff);
@@ -455,19 +455,21 @@ function vrCount(valueFormat: number): number {
 
 /** 读取 coverage 表的原始 gid 列表（按 coverage index 顺序） */
 function readCoverageGids(r: Reader, coverageAbs: number): number[] | null {
-  const fmt = r.u16(coverageAbs);
+  const dv = r.dv;
+  const fmt = dv.getUint16(coverageAbs, false);
   const out: number[] = [];
   if (fmt === 1) {
-    const count = r.u16(coverageAbs + 2);
-    for (let i = 0; i < count; i++) out.push(r.u16(coverageAbs + 4 + i * 2));
+    const count = dv.getUint16(coverageAbs + 2, false);
+    const base = coverageAbs + 4;
+    for (let i = 0; i < count; i++) out.push(dv.getUint16(base + i * 2, false));
     return out;
   }
   if (fmt === 2) {
-    const rangeCount = r.u16(coverageAbs + 2);
+    const rangeCount = dv.getUint16(coverageAbs + 2, false);
     for (let i = 0; i < rangeCount; i++) {
       const recOff = coverageAbs + 4 + i * 6;
-      const start = r.u16(recOff);
-      const end = r.u16(recOff + 2);
+      const start = dv.getUint16(recOff, false);
+      const end = dv.getUint16(recOff + 2, false);
       for (let g = start; g <= end; g++) out.push(g);
     }
     return out;
@@ -581,22 +583,23 @@ function readClassDefMap(
   origToNew: Map<number, number>,
 ): Map<number, number> | null {
   const out = new Map<number, number>();
-  const fmt = r.u16(classDefAbs);
+  const dv = r.dv;
+  const fmt = dv.getUint16(classDefAbs, false);
   if (fmt === 1) {
-    const startGlyph = r.u16(classDefAbs + 2);
-    const glyphCount = r.u16(classDefAbs + 4);
+    const startGlyph = dv.getUint16(classDefAbs + 2, false);
+    const glyphCount = dv.getUint16(classDefAbs + 4, false);
     for (let i = 0; i < glyphCount; i++) {
       const ng = remapGid(startGlyph + i, origToNew);
       if (ng < 0) continue;
-      out.set(ng, r.u16(classDefAbs + 6 + i * 2));
+      out.set(ng, dv.getUint16(classDefAbs + 6 + i * 2, false));
     }
   } else if (fmt === 2) {
-    const rangeCount = r.u16(classDefAbs + 2);
+    const rangeCount = dv.getUint16(classDefAbs + 2, false);
     for (let i = 0; i < rangeCount; i++) {
       const recOff = classDefAbs + 4 + i * 6;
-      const start = r.u16(recOff);
-      const end = r.u16(recOff + 2);
-      const cls = r.u16(recOff + 4);
+      const start = dv.getUint16(recOff, false);
+      const end = dv.getUint16(recOff + 2, false);
+      const cls = dv.getUint16(recOff + 4, false);
       for (let g = start; g <= end; g++) {
         const ng = remapGid(g, origToNew);
         if (ng >= 0) out.set(ng, cls);
@@ -705,7 +708,8 @@ function serializePairPosFormat1(
 ): boolean {
   const firstGids = readCoverageGids(r, subAbs + coverageOff);
   if (!firstGids) return false;
-  const pairSetCount = r.u16(subAbs + 8);
+  const dv = r.dv;
+  const pairSetCount = dv.getUint16(subAbs + 8, false);
   const vr1 = vrCount(valueFormat1);
   const vr2 = vrCount(valueFormat2);
 
@@ -714,13 +718,13 @@ function serializePairPosFormat1(
   for (let idx = 0; idx < pairSetCount; idx++) {
     const newFirstGid = remapGid(firstGids[idx], origToNew);
     if (newFirstGid < 0) continue;
-    const pairSetOff = subAbs + r.u16(subAbs + 10 + idx * 2);
-    const pairValueCount = r.u16(pairSetOff);
+    const pairSetOff = subAbs + dv.getUint16(subAbs + 10 + idx * 2, false);
+    const pairValueCount = dv.getUint16(pairSetOff, false);
     /** 收集 secondGlyph 也在子集中的对 */
     const keptSeconds: Array<{ newSecondGid: number; recAbs: number }> = [];
     for (let p = 0; p < pairValueCount; p++) {
       const recAbs = pairSetOff + 2 + p * (2 + vr1 * 2 + vr2 * 2);
-      const newSecondGid = remapGid(r.u16(recAbs), origToNew);
+      const newSecondGid = remapGid(dv.getUint16(recAbs, false), origToNew);
       if (newSecondGid < 0) continue;
       keptSeconds.push({ newSecondGid, recAbs });
     }
