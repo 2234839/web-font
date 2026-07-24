@@ -360,15 +360,17 @@ function collectSubtableTargets(
     const setCount = r.u16(off + 4);
     const covGids = readCoverageGids(r, covOff, covCache);
     for (let i = 0; i < covGids.length && i < setCount; i++) {
-      const firstInSubset = inSubset(covGids[i]);
+      /** 第一分量（coverage gid）不在子集时整条 ligature 不触发，跳过整个 LigatureSet，
+       *  不展开其内部 ligature（省 ligCount/ligOff/compCount/target 等无谓 u16 读取）。
+       *  初夏明朝 type4 first gid 常全不在子集（首轮覆盖 glyph 多为非子集字形），此短路省掉每条
+       *  ligature 的多次 u16 读 + inSubset 判定。 */
+      if (!inSubset(covGids[i])) continue;
       const setOff = off + r.u16(off + 6 + i * 2);
       const ligCount = r.u16(setOff);
       for (let j = 0; j < ligCount; j++) {
         const ligOff = setOff + r.u16(setOff + 2 + j * 2);
         const compCount = r.u16(ligOff);
         const target = r.u16(ligOff + 2);
-        /** 第一分量需在子集（若 first 不在子集，整条 ligature 不会触发） */
-        if (!firstInSubset) continue;
         let allIn = true;
         for (let k = 0; k < compCount - 1; k++) {
           if (!inSubset(r.u16(ligOff + 4 + k * 2))) {
