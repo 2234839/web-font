@@ -174,15 +174,9 @@ const sizeUIntBase128 = calcUIntBase128Size;
 /* ======== Triplet 编码 ======== */
 
 /**
- * 从 triplet flag 推断数据字节数（避免重复计算）
- * tripletIndex = flag & 0x7F
- * 优化：预计算查找表，消除函数调用和条件分支
+ * 优化313: triplet flag → 数据字节数的映射已内联进 transformGlyfAndLoca 的各编码分支
+ * （字节数由分支确定：case1~3=1、case4=2、case5=3、case6=4），无需独立查表。
  */
-const TRIPLET_DATA_SIZES = new Uint8Array(128);
-for (let i = 0; i < 84; i++) TRIPLET_DATA_SIZES[i] = 1;
-for (let i = 84; i < 120; i++) TRIPLET_DATA_SIZES[i] = 2;
-for (let i = 120; i < 124; i++) TRIPLET_DATA_SIZES[i] = 3;
-for (let i = 124; i < 128; i++) TRIPLET_DATA_SIZES[i] = 4;
 
 /* ======== glyf + loca 表变换 ======== */
 
@@ -522,12 +516,16 @@ function transformGlyfAndLoca(glyfData, locaData, indexFormat, numGlyphs) {
         const absDy = dy < 0 ? -dy : dy;
         const wpos = gsBase + gsbi;
         let flag;
+        /** 优化313: 各分支内直接累加 gsbi（字节数由分支确定：1/1/1/2/3/4），消除 TRIPLET_DATA_SIZES 查表 */
+        let adv;
         if (dx === 0 && absDy < 1280) {
           _gs[wpos] = absDy & 0xFF;
           flag = curveBit + ((absDy & 0xF00) >> 7) + (dy >= 0 ? 1 : 0);
+          adv = 1;
         } else if (dy === 0 && dx !== 0 && absDx < 1280) {
           _gs[wpos] = absDx & 0xFF;
           flag = curveBit + 10 + ((absDx & 0xF00) >> 7) + (dx >= 0 ? 1 : 0);
+          adv = 1;
         } else if (dx !== 0 && dy !== 0 && absDx < 65 && absDy < 65) {
           const ax = absDx - 1;
           const ay = absDy - 1;
@@ -535,6 +533,7 @@ function transformGlyfAndLoca(glyfData, locaData, indexFormat, numGlyphs) {
           const xSignBit = dx >= 0 ? 1 : 0;
           const ySignBit = dy >= 0 ? 1 : 0;
           flag = curveBit + 20 + (ax & 0x30) + ((ay & 0x30) >> 2) + xSignBit + 2 * ySignBit;
+          adv = 1;
         } else if (dx !== 0 && dy !== 0 && absDx < 769 && absDy < 769) {
           const ax = absDx - 1;
           const ay = absDy - 1;
@@ -543,6 +542,7 @@ function transformGlyfAndLoca(glyfData, locaData, indexFormat, numGlyphs) {
           const xSignBit = dx >= 0 ? 1 : 0;
           const ySignBit = dy >= 0 ? 1 : 0;
           flag = curveBit + 84 + 12 * ((ax & 0x300) >> 8) + ((ay & 0x300) >> 6) + xSignBit + 2 * ySignBit;
+          adv = 2;
         } else if (absDx < 4096 && absDy < 4096) {
           _gs[wpos] = absDx >> 4;
           _gs[wpos + 1] = ((absDx & 0xF) << 4) | (absDy >> 8);
@@ -550,6 +550,7 @@ function transformGlyfAndLoca(glyfData, locaData, indexFormat, numGlyphs) {
           const xSignBit = dx >= 0 ? 1 : 0;
           const ySignBit = dy >= 0 ? 1 : 0;
           flag = curveBit + 120 + xSignBit + 2 * ySignBit;
+          adv = 3;
         } else {
           _gs[wpos] = (absDx >> 8) & 0xFF;
           _gs[wpos + 1] = absDx & 0xFF;
@@ -558,10 +559,11 @@ function transformGlyfAndLoca(glyfData, locaData, indexFormat, numGlyphs) {
           const xSignBit = dx >= 0 ? 1 : 0;
           const ySignBit = dy >= 0 ? 1 : 0;
           flag = curveBit + 124 + xSignBit + 2 * ySignBit;
+          adv = 4;
         }
         /** triplet flag 回写到 flagAccum（flagStream 存 triplet flag 而非原始 flag） */
         _fa[_fwb + yi] = flag;
-        gsbi += TRIPLET_DATA_SIZES[flag & 0x7F];
+        gsbi += adv;
         prevX = cx;
         prevY = cy;
       }
