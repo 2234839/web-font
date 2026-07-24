@@ -1178,13 +1178,14 @@ function parseChainFormat3(
   const readCovArr = (): number[][] | null => {
     const count = r.u16(p);
     p += 2;
-    const arr: number[][] = [];
+    /** 按 count 预分配容量，消除 push 触发的 GrowFast（fmt3 高频，每 subtable 三组 coverage） */
+    const arr: number[][] = new Array<number[]>(count);
     for (let k = 0; k < count; k++) {
       const covOff = off + dv.getUint16(p + k * 2, false);
       const newGids = readCoverageRemapped(r, covOff, gidLookup, covCache);
       /** coverage 全部 gid 落在子集外（原非空）→ 规则失效 */
       if (newGids === null) return null;
-      arr.push(newGids);
+      arr[k] = newGids;
     }
     p += count * 2;
     return arr;
@@ -1196,9 +1197,10 @@ function parseChainFormat3(
 
   const seqCount = r.u16(p);
   p += 2;
-  const records: Array<{ seq: number; lookup: number }> = [];
+  /** 按 seqCount 预分配，消除 records 对象数组 grow */
+  const records: Array<{ seq: number; lookup: number }> = new Array<{ seq: number; lookup: number }>(seqCount);
   for (let k = 0; k < seqCount; k++) {
-    records.push({ seq: dv.getUint16(p + k * 4, false), lookup: dv.getUint16(p + k * 4 + 2, false) });
+    records[k] = { seq: dv.getUint16(p + k * 4, false), lookup: dv.getUint16(p + k * 4 + 2, false) };
   }
   return { backCovs, inputCovs, lookCovs, records };
 }
