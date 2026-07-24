@@ -123,6 +123,17 @@ export function subsetGPOS(
   const dv = new DataView(gposBytes.buffer, gposBytes.byteOffset, gposBytes.byteLength);
   const r = new Reader(dv);
 
+  /**
+   * 优化335：原gid → 新gid 的 Int32Array 查找表（下标=原gid，值=新gid，-1=不在子集），
+   * 替代全模块的 origToNew.get/has（Map 查询 ~9ns vs 数组索引 ~1ns）。
+   * coverage/ClassDef/PairPos 序列化每字形都查，CJK 标点字体调用密集。
+   * 容量按 subsetGids 的最大原 gid 分配（远小于 65536，避免大数组 fill 抵消收益——
+   * GPOS coverage 常引用大于子集 maxGid 的 gid，remapGid 内做越界判定返回 -1）。 */
+  let maxOrigGid = 0;
+  for (const g of origToNew.keys()) if (g > maxOrigGid) maxOrigGid = g;
+  const gidLookup: GidLookup = new Int32Array(maxOrigGid + 1).fill(-1);
+  for (const [g, n] of origToNew) gidLookup[g] = n;
+
   /** ---- GPOS Header ---- */
   const major = dv.getUint16(0, false);
   const minor = dv.getUint16(2, false);
@@ -185,7 +196,7 @@ export function subsetGPOS(
     const hits: boolean[] = [];
     if (lk.supported) {
       for (let j = 0; j < lk.subtableAbsOffs.length; j++) {
-        hits.push(subtableCoverageHits(r, lk.subtableAbsOffs[j], origToNew));
+        hits.push(subtableCoverageHits(r, lk.subtableAbsOffs[j], gidLookup));
       }
     }
     subtableHits.push(hits);
@@ -315,7 +326,7 @@ export function subsetGPOS(
         for (let j = 0; j < lk.subtableAbsOffs.length; j++) {
           subtableAbsPositions[j] = w.length;
           r.clearError();
-          const ok = serializeSubtable(w, r, lk.subtableAbsOffs[j], lk.effectiveType, origToNew, hits[j]);
+          const ok = serializeSubtable(w, r, lk.subtableAbsOffs[j], lk.effectiveType, gidLookup, hits[j]);
           /** 越界读取（异常表）也降级为保留原始 GPOS 字节（调用方安全降级） */
           if (!ok || r.errorFlag) return null;
           w.writeInt16At(subtableSlotsStart + j * 2, subtableAbsPositions[j] - lookupStart);
@@ -359,7 +370,7 @@ function serializeSubtable(
   r: Reader,
   subAbs: number,
   type: number,
-  origToNew: Map<number, number>,
+  gidLookup: GidLookup,
   /** 预扫描结果：该 subtable coverage 是否含任意子集字形。false 时 coverage 必空，直接写空 subtable 跳过全量解析 */
   coverageHit: boolean,
 ): boolean {
@@ -370,15 +381,22 @@ function serializeSubtable(
     writeEmptyPosSubtable(w, type);
     return true;
   }
-  if (type === LT_SINGLE_POS) return serializeSinglePos(w, r, subAbs, origToNew);
-  if (type === LT_PAIR_POS) return serializePairPos(w, r, subAbs, origToNew);
+  if (type === LT_SINGLE_POS) return serializeSinglePos(w, r, subAbs, gidLookup);
+  if (type === LT_PAIR_POS) return serializePairPos(w, r, subAbs, gidLookup);
   return false;
 }
 
-/** 重映射原 gid；不在子集中返回 -1 */
-function remapGid(origGid: number, origToNew: Map<number, number>): number {
-  const ng = origToNew.get(origGid);
-  return ng === undefined ? -1 : ng;
+/** 原gid → 新gid 数组查找表（下标=原gid，值=新gid，-1=不在子集）。数组索引比 Map.get 快数倍，
+ *  GPOS coverage/ClassDef/PairPos 序列化热路径每字形都查，CJK 标点字体调用密集。 */
+type GidLookup = Int32Array;
+
+/** 重映射原 gid；不在子集中返回 -1。
+ *  优化335：gidLookup（Int32Array 索引，~1ns）替代 origToNew.get（Map.get ~9ns），
+ *  语义等价：gidLookup[g] >= 0 ⟺ origToNew.has(g) 且值相同。对越界 gid（g >= length，GPOS coverage
+ *  常引用大于子集 maxGid 的 gid）显式返回 -1——gidLookup[越界] 返回 undefined，`undefined < 0` 为 false
+ *  会被误判为有效（[[gsub-serialize-type234-no-hotspot]] 同类 undefined bug）。 */
+function remapGid(origGid: number, gidLookup: GidLookup): number {
+  return origGid < gidLookup.length ? gidLookup[origGid] : -1;
 }
 
 /**
@@ -386,7 +404,7 @@ function remapGid(origGid: number, origToNew: Map<number, number>): number {
  * 用于 lookup 折叠预扫描——subtable 头的 coverageOff 在偏移 +2（SinglePos/PairPos format 一致）。
  * 读 coverage 逐 gid 查 origToNew，命中即返回 true，避免 readCoverageGids 的全量展开 + 数组分配。
  */
-function subtableCoverageHits(r: Reader, subAbs: number, origToNew: Map<number, number>): boolean {
+function subtableCoverageHits(r: Reader, subAbs: number, gidLookup: GidLookup): boolean {
   const dv = r.dv;
   const len = dv.byteLength;
   const coverageOff = r.u16(subAbs + 2);
@@ -398,7 +416,7 @@ function subtableCoverageHits(r: Reader, subAbs: number, origToNew: Map<number, 
     const base = covAbs + 4;
     if (base + count * 2 > len) return false;
     for (let i = 0; i < count; i++) {
-      if (origToNew.has(dv.getUint16(base + i * 2, false))) return true;
+      if (gidLookup[dv.getUint16(base + i * 2, false)] >= 0) return true;
     }
     return false;
   }
@@ -411,7 +429,7 @@ function subtableCoverageHits(r: Reader, subAbs: number, origToNew: Map<number, 
       const end = dv.getUint16(p + 2, false);
       /** range 内逐 gid 查子集；range 通常很短（CJK 标点压缩覆盖分散），逐个可接受且命中即退出 */
       for (let g = start; g <= end; g++) {
-        if (origToNew.has(g)) return true;
+        if (gidLookup[g] >= 0) return true;
       }
       p += 6;
     }
@@ -583,7 +601,7 @@ function emitClassDefFromClassMap(w: Writer, classMap: Map<number, number>): boo
 function readClassDefMap(
   r: Reader,
   classDefAbs: number,
-  origToNew: Map<number, number>,
+  gidLookup: GidLookup,
 ): Map<number, number> | null {
   const out = new Map<number, number>();
   const dv = r.dv;
@@ -592,7 +610,7 @@ function readClassDefMap(
     const startGlyph = dv.getUint16(classDefAbs + 2, false);
     const glyphCount = dv.getUint16(classDefAbs + 4, false);
     for (let i = 0; i < glyphCount; i++) {
-      const ng = remapGid(startGlyph + i, origToNew);
+      const ng = remapGid(startGlyph + i, gidLookup);
       if (ng < 0) continue;
       out.set(ng, dv.getUint16(classDefAbs + 6 + i * 2, false));
     }
@@ -604,7 +622,7 @@ function readClassDefMap(
       const end = dv.getUint16(recOff + 2, false);
       const cls = dv.getUint16(recOff + 4, false);
       for (let g = start; g <= end; g++) {
-        const ng = remapGid(g, origToNew);
+        const ng = remapGid(g, gidLookup);
         if (ng >= 0) out.set(ng, cls);
       }
     }
@@ -623,7 +641,7 @@ function serializeSinglePos(
   w: Writer,
   r: Reader,
   subAbs: number,
-  origToNew: Map<number, number>,
+  gidLookup: GidLookup,
 ): boolean {
   const fmt = r.u16(subAbs);
   const coverageOff = r.u16(subAbs + 2);
@@ -637,7 +655,7 @@ function serializeSinglePos(
   const sz = vrCount(valueFormat);
   const kept: Array<{ newGid: number; valueAbs: number }> = [];
   for (let idx = 0; idx < origGids.length; idx++) {
-    const ng = remapGid(origGids[idx], origToNew);
+    const ng = remapGid(origGids[idx], gidLookup);
     if (ng < 0) continue;
     if (fmt === 1) {
       /** format1 所有 glyph 共用 subAbs + 6 处的 ValueRecord */
@@ -681,17 +699,17 @@ function serializePairPos(
   w: Writer,
   r: Reader,
   subAbs: number,
-  origToNew: Map<number, number>,
+  gidLookup: GidLookup,
 ): boolean {
   const fmt = r.u16(subAbs);
   const coverageOff = r.u16(subAbs + 2);
   const valueFormat1 = r.u16(subAbs + 4);
   const valueFormat2 = r.u16(subAbs + 6);
   if (fmt === 1) {
-    return serializePairPosFormat1(w, r, subAbs, coverageOff, valueFormat1, valueFormat2, origToNew);
+    return serializePairPosFormat1(w, r, subAbs, coverageOff, valueFormat1, valueFormat2, gidLookup);
   }
   if (fmt === 2) {
-    return serializePairPosFormat2(w, r, subAbs, coverageOff, valueFormat1, valueFormat2, origToNew);
+    return serializePairPosFormat2(w, r, subAbs, coverageOff, valueFormat1, valueFormat2, gidLookup);
   }
   return false;
 }
@@ -707,7 +725,7 @@ function serializePairPosFormat1(
   coverageOff: number,
   valueFormat1: number,
   valueFormat2: number,
-  origToNew: Map<number, number>,
+  gidLookup: GidLookup,
 ): boolean {
   const firstGids = readCoverageGids(r, subAbs + coverageOff);
   if (!firstGids) return false;
@@ -719,7 +737,7 @@ function serializePairPosFormat1(
   /** 重建每个保留 firstGlyph 的 PairSet */
   const rebuilt: Array<{ newFirstGid: number; pairSetBytes: Uint8Array }> = [];
   for (let idx = 0; idx < pairSetCount; idx++) {
-    const newFirstGid = remapGid(firstGids[idx], origToNew);
+    const newFirstGid = remapGid(firstGids[idx], gidLookup);
     if (newFirstGid < 0) continue;
     const pairSetOff = subAbs + dv.getUint16(subAbs + 10 + idx * 2, false);
     const pairValueCount = dv.getUint16(pairSetOff, false);
@@ -727,7 +745,7 @@ function serializePairPosFormat1(
     const keptSeconds: Array<{ newSecondGid: number; recAbs: number }> = [];
     for (let p = 0; p < pairValueCount; p++) {
       const recAbs = pairSetOff + 2 + p * (2 + vr1 * 2 + vr2 * 2);
-      const newSecondGid = remapGid(dv.getUint16(recAbs, false), origToNew);
+      const newSecondGid = remapGid(dv.getUint16(recAbs, false), gidLookup);
       if (newSecondGid < 0) continue;
       keptSeconds.push({ newSecondGid, recAbs });
     }
@@ -785,15 +803,15 @@ function serializePairPosFormat2(
   coverageOff: number,
   valueFormat1: number,
   valueFormat2: number,
-  origToNew: Map<number, number>,
+  gidLookup: GidLookup,
 ): boolean {
   const classDef1Off = r.u16(subAbs + 8);
   const classDef2Off = r.u16(subAbs + 10);
   const class2Count = r.u16(subAbs + 14);
 
   /** 解析原始 classDef → 新gid -> 原class（classDef 未出现的 gid 默认 class 0） */
-  const gidToClass1 = readClassDefMap(r, subAbs + classDef1Off, origToNew);
-  const gidToClass2 = readClassDefMap(r, subAbs + classDef2Off, origToNew);
+  const gidToClass1 = readClassDefMap(r, subAbs + classDef1Off, gidLookup);
+  const gidToClass2 = readClassDefMap(r, subAbs + classDef2Off, gidLookup);
   if (!gidToClass1 || !gidToClass2) return false;
 
   /** 收集实际命中的 class（class 0 永远保留） */
@@ -827,7 +845,7 @@ function serializePairPosFormat2(
   if (!covGids) return false;
   const newCovGids: number[] = [];
   for (const g of covGids) {
-    const ng = remapGid(g, origToNew);
+    const ng = remapGid(g, gidLookup);
     if (ng >= 0) newCovGids.push(ng);
   }
   newCovGids.sort((a, b) => a - b);
