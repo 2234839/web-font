@@ -59,6 +59,23 @@ function readIndex(b: Uint8Array, pos: number): CffIndex {
 function getIndexBytes(b: Uint8Array, idx: CffIndex): Uint8Array {
   return b.subarray(idx.start, idx.end);
 }
+/** 只取 INDEX 的字节范围 [start, end)，不解析中间 offset 数组。
+ *  Local/Global Subr INDEX 透传时只需整体字节切片，全量解析 count+1 个 offset 是纯浪费
+ *  （思源等大字体的 Local Subr 可达数千 subr，readIndex 全量解析占 subsetCFF 主要耗时）。
+ *  end = dataStart + offsets[count] - 1，仅读第 count 个 offset（位于 pos+3+count*offSize）即可。 */
+function indexByteRange(b: Uint8Array, pos: number): { start: number; end: number } {
+  const count = (b[pos] << 8) | b[pos + 1];
+  /** count=0 的 INDEX 仅 2 字节 */
+  if (count === 0) return { start: pos, end: pos + 2 };
+  const offSize = b[pos + 2];
+  /** dataStart = pos + 3（count+offSize 头）+ (count+1)*offSize（offset 数组） */
+  const dataStart = pos + 3 + (count + 1) * offSize;
+  /** 第 count 个 offset 位于 offset 数组末尾（pos+3 + count*offSize），读 offSize 字节大端 */
+  let lastOff = 0;
+  const lp = pos + 3 + count * offSize;
+  for (let j = 0; j < offSize; j++) lastOff = (lastOff << 8) | b[lp + j];
+  return { start: pos, end: dataStart + lastOff - 1 };
+}
 
 /** CFF Top/Private DICT 解析结果：操作码键 → 操作数数组。双字节操作码 12,n 存为 (12<<8)|n */
 type CffDict = Map<number, number[]>;
@@ -358,13 +375,16 @@ export function subsetCFF(cffBytes: Uint8Array, subsetGids: number[]): Uint8Arra
   }
   const newCharset = encodeCharsetFormat0(newCharsetBody);
 
-  /** FDSelect：按需查每个 subsetGid 的原 FD（lookupFDSelect 二分 range），不全量展开 numGlyphs。 */
-
-  /** 收集命中的 FD（保持首次出现顺序），构建 原FD→新FD 映射 */
+  /** FDSelect：按需查每个 subsetGid 的原 FD（lookupFDSelect 二分 range），不全量展开 numGlyphs。
+   *  单次遍历同时构建：原FD→新FD 映射（fdRemap/usedFds）+ 每 gid 的原 FD 数组（gidOrigFds），
+   *  后者供 newGidToFd 直接复用，避免对 newSubsetGids 第二次 lookupFDSelect 遍历。 */
   const fdRemap = new Map<number, number>();
   const usedFds: number[] = [];
-  for (const gid of newSubsetGids) {
+  const gidOrigFds: number[] = new Array(newSubsetNumGlyphs);
+  for (let i = 0; i < newSubsetNumGlyphs; i++) {
+    const gid = newSubsetGids[i];
     const fd = lookupFDSelect(b, fdSelectOff, gid);
+    gidOrigFds[i] = fd;
     if (!fdRemap.has(fd)) {
       fdRemap.set(fd, usedFds.length);
       usedFds.push(fd);
@@ -411,8 +431,9 @@ export function subsetCFF(cffBytes: Uint8Array, subsetGids: number[]): Uint8Arra
       let localSubr: Uint8Array | null = null;
       if (subrRel !== undefined) {
         /** Local Subr INDEX 紧接 Private DICT 字节之后（绝对偏移 = privOrigOff + subrRel） */
-        const subrIdx = readIndex(b, privOrigOff + subrRel);
-        localSubr = b.subarray(subrIdx.start, subrIdx.end);
+        /** Local Subr INDEX 仅需整体字节切片透传，不全量解析 offset（思源 Local Subr 可达数千 subr） */
+        const subrRange = indexByteRange(b, privOrigOff + subrRel);
+        localSubr = b.subarray(subrRange.start, subrRange.end);
       }
       info = { origOff: privOrigOff, len: privLen, localSubr };
       privSegCache.set(privOrigOff, info);
@@ -420,12 +441,11 @@ export function subsetCFF(cffBytes: Uint8Array, subsetGids: number[]): Uint8Arra
     fdInfos.push({ dictBytes, priv: info });
   }
 
-  /** 新 FDSelect：每个新 gid → 新 FD 编号。单 FD 用格式 0（最省，1+numGlyphs 字节）；
-   *  多 FD 用格式 3 ranges（与原始 CID 字体一致，兼容 OTS 严格校验）。 */
+  /** 新 FDSelect：每个新 gid → 新 FD 编号（复用首次遍历的 gidOrigFds，无需第二次 lookupFDSelect）。
+   *  单 FD 用格式 0（最省，1+numGlyphs 字节）；多 FD 用格式 3 ranges（与原始 CID 字体一致，兼容 OTS 严格校验）。 */
   const newGidToFd: number[] = new Array(newSubsetNumGlyphs);
   for (let i = 0; i < newSubsetNumGlyphs; i++) {
-    const origFd = lookupFDSelect(b, fdSelectOff, newSubsetGids[i]);
-    newGidToFd[i] = fdRemap.get(origFd) ?? 0;
+    newGidToFd[i] = fdRemap.get(gidOrigFds[i]) ?? 0;
   }
   const newFdSelectBody = encodeFDSelect(newGidToFd);
 
