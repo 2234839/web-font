@@ -254,13 +254,15 @@ function transformGlyfAndLoca(glyfData, locaData, indexFormat, numGlyphs) {
     }
 
     const numberOfContours = readI16(glyfData, glyphStart);
-    const xMin = readI16(glyfData, glyphStart + 2);
-    const yMin = readI16(glyfData, glyphStart + 4);
-    const xMax = readI16(glyfData, glyphStart + 6);
-    const yMax = readI16(glyfData, glyphStart + 8);
 
     if (numberOfContours < 0) {
-      /* 复合 glyph */
+      /* 复合 glyph：bbox 需显式存入 bboxStream（raw 组件数据剥离 glyph 头，解码端无法重建），
+       *  故仅复合 glyph 读取 xMin/yMin/xMax/yMax。simple glyph 的 bbox 由解码端从轮廓点重建
+       *  （优化314，bboxBitmap 位恒为 0），读取纯属浪费——移到复合分支内避免每 simple glyph 4 次 readI16 */
+      const xMin = readI16(glyfData, glyphStart + 2);
+      const yMin = readI16(glyfData, glyphStart + 4);
+      const xMax = readI16(glyfData, glyphStart + 6);
+      const yMax = readI16(glyfData, glyphStart + 8);
       let compOff = glyphStart + 10;
       let haveInstructions = false;
       let instrLength = 0;
