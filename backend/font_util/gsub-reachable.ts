@@ -136,6 +136,15 @@ export function collectReachableGsubTargets(
    * reachable 扩展可能使缺失的 coverage gid 进入、令其转为触发。
    */
   const settledChain: Set<number> = new Set<number>();
+  /**
+   * 优化（format3 失败 gid 跨轮跳过）：format3 triggerable=false 的 subtable，记录使其失败的第一个
+   *  coverage gid。下一轮若该 gid 仍未进 reachable，本 subtable 必定仍 false，直接跳过重扫。
+   *  初夏纯标点 280 个 format3 全 false，原 3 轮 × 280 = 840 次 collectChainRefs，改后第 2 轮起全部跳过。
+   *  失败 gid 进 reachable 时重扫（可能仍 false 则更新失败 gid；可能变 true 则走 settledChain 记忆）。
+   */
+  const failGidMap: Map<number, number> = new Map<number, number>();
+  /** 复用对象，避免每次调用 collectChainRefs 分配 */
+  const failGidBox: { v: number } = { v: -1 };
 
   while (changed) {
     changed = false;
@@ -144,10 +153,14 @@ export function collectReachableGsubTargets(
       for (const subAbs of lk.subtableAbsOffs) {
         if (lk.effectiveType === LT_CHAIN) {
           if (settledChain.has(subAbs)) continue;
+          /** 已知失败 gid 仍未进 reachable → 必定仍 triggerable=false，跳过重扫 */
+          const knownFail = failGidMap.get(subAbs);
+          if (knownFail !== undefined && !reachable.has(knownFail)) continue;
           /** type6：收集可触发规则引用的 lookup index 与所需 context gid */
           refsReuse.clear();
           ctxGidsReuse.clear();
-          const stable = collectChainRefs(r, subAbs, refsReuse, ctxGidsReuse, inSubset, covCache);
+          failGidBox.v = -1;
+          const stable = collectChainRefs(r, subAbs, refsReuse, ctxGidsReuse, inSubset, covCache, failGidBox);
           for (const g of ctxGidsReuse) {
             if (!reachable.has(g)) { reachable.add(g); changed = true; }
           }
@@ -161,7 +174,13 @@ export function collectReachableGsubTargets(
               }
             }
           }
-          if (stable) settledChain.add(subAbs);
+          if (stable) {
+            settledChain.add(subAbs);
+            failGidMap.delete(subAbs);
+          } else if (failGidBox.v >= 0) {
+            /** triggerable=false：记录失败 gid，下轮据此跳过 */
+            failGidMap.set(subAbs, failGidBox.v);
+          }
         } else {
           const newTargets = collectSubtableTargets(r, subAbs, lk.effectiveType, inSubset, covCache);
           for (const g of newTargets) {
@@ -274,6 +293,8 @@ function collectChainRefs(
   contextGids: Set<number>,
   inSubset: (gid: number) => boolean,
   covCache: CoverageCache,
+  /** out: triggerable=false 时记录第一个不在 reachable 的 coverage gid（跨轮跳过判定用） */
+  failGid: { v: number },
 ): boolean {
   const format = r.u16(off);
   if (format === 1) {
@@ -333,6 +354,9 @@ function collectChainRefs(
         for (const g of covGids) {
           if (!inSubset(g)) {
             triggerable = false;
+            /** 记录第一个不在 reachable 的 gid，供调用方跨轮跳过：该 gid 未进 reachable 前，
+             *  本 subtable 必定仍 triggerable=false，无需重扫。 */
+            failGid.v = g;
             break;
           }
           contextGids.add(g);
