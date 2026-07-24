@@ -174,7 +174,29 @@ function readCoverageRemapped(
 ): number[] | null {
   let entry = cache.get(off);
   if (entry !== undefined) {
-    /** 已缓存：失效返回 null，否则返回重映射数组（remapped 已在首次计算时填好） */
+    /** readCoverageRemapped 自己填的 entry：gids===EMPTY_GIDS（占位），remapped 已算好可直接返回。
+     *  readCoverageGids 填的 entry：gids 是原始 gid 数组、remapped=null、outOfSubset=false（默认）。
+     *  命中后者时不能直接返回 entry.remapped（null 会被当 outOfSubset 语义，错判 coverage 失效，
+     *  改变 fmt3 预检结果致 FiraCode calt 输出变化）——须从已缓存的原始 gids 现场重映射。
+     *  此分支仅在 covOff 跨 readCoverageGids/readCoverageRemapped 共享时命中（罕见），正常路径走自己的 entry。 */
+    if (entry.gids !== EMPTY_GIDS) {
+      const ogids = entry.gids;
+      const m = new Array<number>(ogids.length);
+      let w2 = 0;
+      for (let i = 0; i < ogids.length; i++) {
+        const ng = gidLookup[ogids[i]];
+        if (ng >= 0) m[w2++] = ng;
+      }
+      m.length = w2;
+      /** 与首次计算一致：空且原非空→outOfSubset。entry 由 readCoverageGids 填时 outOfSubset 恒 false，
+       *  无法区分「原 coverage 空」与「全子集外」——保守按 ogids.length>0 判 origNonEmpty。 */
+      const oos = w2 === 0 && ogids.length > 0;
+      /** 回填 remapped/outOfSubset 供后续 readCoverageRemapped 命中（保留 gids 不动供 readCoverageGids） */
+      entry.remapped = m;
+      entry.outOfSubset = oos;
+      return oos ? null : m;
+    }
+    /** readCoverageRemapped 自己的 entry：失效返回 null，否则返回重映射数组 */
     return entry.outOfSubset ? null : (entry.remapped as number[]);
   }
   const dv = r.dv;
