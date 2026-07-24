@@ -57,38 +57,74 @@ function lookupFormat12(format12, unicode) {
 /**
  * 优化114: format4 二分查找 segment，替代线性扫描
  * 优化293: 接受预计算的 graphIdArrayIndexOffset 参数，避免每次调用重复计算
+ * 优化（subset 延迟）：_lazySegs 模式下各段未展开为数组，二分时按需从 view 读取
  */
 function lookupFormat4(format4, unicode, _graphIdArrayIndexOffset) {
+  var segCount = format4.segCount || (format4.segCountX2 / 2);
+
+  /* 延迟模式：各段在 view 中连续，按 mid*2 偏移读取。命中后再读 idDelta/idRangeOffset */
+  if (format4._lazySegs) {
+    var view = format4._cmapView;
+    var endOff = format4._endCodeOff;
+    var startOff = format4._startCodeOff;
+    var deltaOff = format4._idDeltaOff;
+    var rangeOff = format4._idRangeOffsetOff;
+    var lo = 0, hi = segCount - 1;
+    while (lo <= hi) {
+      var mid = (lo + hi) >> 1;
+      var m2 = mid * 2;
+      var sCode = view.getUint16(startOff + m2, false);
+      if (unicode < sCode) {
+        hi = mid - 1;
+      } else if (unicode > view.getUint16(endOff + m2, false)) {
+        lo = mid + 1;
+      } else {
+        var idR = view.getUint16(rangeOff + m2, false);
+        if (idR === 0) {
+          /* idDelta 用 getUint16 读（与原急切模式一致），依赖 % 0x10000 处理符号 */
+          return (unicode + view.getUint16(deltaOff + m2, false)) % 0x10000;
+        }
+        var graphIdArrayIndexOffset = _graphIdArrayIndexOffset != null ? _graphIdArrayIndexOffset : (format4.glyphIdArrayOffset - format4.idRangeOffsetOffset) / 2;
+        var index = mid + (idR >> 1) + (unicode - sCode) - graphIdArrayIndexOffset;
+        var graphId = view.getUint16(format4.glyphIdArrayOffset + index * 2, false);
+        if (graphId !== 0) {
+          return (graphId + view.getUint16(deltaOff + m2, false)) % 0x10000;
+        }
+        return 0;
+      }
+    }
+    return -1;
+  }
+
   var startCode = format4.startCode;
   var endCode = format4.endCode;
   var idDelta = format4.idDelta;
   var idRangeOffset = format4.idRangeOffset;
-  var segCount = format4.segCount || (format4.segCountX2 / 2);
 
-  var lo = 0, hi = segCount - 1;
-  while (lo <= hi) {
-    var mid = (lo + hi) >> 1;
-    if (unicode < startCode[mid]) {
-      hi = mid - 1;
-    } else if (unicode > endCode[mid]) {
-      lo = mid + 1;
+  var lo2 = 0, hi2 = segCount - 1;
+  while (lo2 <= hi2) {
+    var mid2 = (lo2 + hi2) >> 1;
+    if (unicode < startCode[mid2]) {
+      hi2 = mid2 - 1;
+    } else if (unicode > endCode[mid2]) {
+      lo2 = mid2 + 1;
     } else {
-      var i = mid;
+      var i = mid2;
       if (idRangeOffset[i] === 0) {
         return (unicode + idDelta[i]) % 0x10000;
       }
-      var graphIdArrayIndexOffset = _graphIdArrayIndexOffset != null ? _graphIdArrayIndexOffset : (format4.glyphIdArrayOffset - format4.idRangeOffsetOffset) / 2;
-      var index = i + (idRangeOffset[i] >> 1) + (unicode - startCode[i]) - graphIdArrayIndexOffset;
-      var graphId;
+      var graphIdArrayIndexOffset2 = _graphIdArrayIndexOffset != null ? _graphIdArrayIndexOffset : (format4.glyphIdArrayOffset - format4.idRangeOffsetOffset) / 2;
+      var index2 = i + (idRangeOffset[i] >> 1) + (unicode - startCode[i]) - graphIdArrayIndexOffset2;
+      var graphId2;
       if (format4.glyphIdArray) {
-        graphId = format4.glyphIdArray[index];
+        graphId2 = format4.glyphIdArray[index2];
       } else if (format4._cmapView) {
-        graphId = format4._cmapView.getUint16(format4.glyphIdArrayOffset + index * 2, false);
+        graphId2 = format4._cmapView.getUint16(format4.glyphIdArrayOffset + index2 * 2, false);
       } else {
         return 0;
       }
-      if (graphId !== 0) {
-        return (graphId + idDelta[i]) % 0x10000;
+      if (graphId2 !== 0) {
+        return (graphId2 + idDelta[i]) % 0x10000;
       }
       return 0;
     }

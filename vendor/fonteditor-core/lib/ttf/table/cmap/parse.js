@@ -88,44 +88,64 @@ function readSubTable(reader, ttf, subTable, cmapOffset) {
     format4.entrySelector = view.getUint16(vOffset, false); vOffset += 2;
     format4.rangeShift = view.getUint16(vOffset, false); vOffset += 2;
     var segCount = format4.segCountX2 / 2;
-
-    var endCode = new Array(segCount);
-    for (var e = 0; e < segCount; e++) {
-      endCode[e] = view.getUint16(vOffset, false);
-      vOffset += 2;
-    }
-    format4.endCode = endCode;
-    format4.reservedPad = view.getUint16(vOffset, false); vOffset += 2;
-
-    var startCode = new Array(segCount);
-    for (var s = 0; s < segCount; s++) {
-      startCode[s] = view.getUint16(vOffset, false);
-      vOffset += 2;
-    }
-    format4.startCode = startCode;
-
-    var idDelta = new Array(segCount);
-    for (var d = 0; d < segCount; d++) {
-      idDelta[d] = view.getUint16(vOffset, false);
-      vOffset += 2;
-    }
-    format4.idDelta = idDelta;
-    format4.idRangeOffsetOffset = vOffset - view.byteOffset;
-
-    var idRangeOffset = new Array(segCount);
-    for (var r = 0; r < segCount; r++) {
-      idRangeOffset[r] = view.getUint16(vOffset, false);
-      vOffset += 2;
-    }
-    format4.idRangeOffset = idRangeOffset;
     format4.segCount = segCount;
 
-    /* 优化101: subset 模式下跳过 glyphIdArray 解析，直接从 view 按需读取 */
+    /* 优化（format4 subset 延迟解析）：subset 模式下不展开 4 个 segCount 数组，
+     *  只记录各段在 view 的偏移，lookupFormat4 二分时按需从 view 读。
+     *  原 subset 模式仍构建 endCode/startCode/idDelta/idRangeOffset 共 4×segCount 次 getUint16，
+     *  得意黑 segCount=3929 → 1.5 万次读 + 4 个数组分配，占 readSubTable 0.101ms。
+     *  subset 仅查找少数 cp，延迟后 view 读次数 = O(S × log(segCount))，远小于 4×segCount。
+     *  非 subset 模式仍需全量遍历 segments，保持急切构建数组。 */
     var isSubset4 = ttf.readOptions && ttf.readOptions.subset;
     if (isSubset4) {
-      format4.glyphIdArrayOffset = vOffset - view.byteOffset;
+      /* endCode 段起始（相对 view.byteOffset），紧接 14B header */
+      var endCodeOff = vOffset;
+      /* startCode 段 = endCode 段后 + reservedPad(2) */
+      var startCodeOff = endCodeOff + segCount * 2 + 2;
+      var idDeltaOff = startCodeOff + segCount * 2;
+      var idRangeOffsetOff = idDeltaOff + segCount * 2;
+      var glyphIdArrayOff = idRangeOffsetOff + segCount * 2;
       format4._cmapView = view;
+      format4._lazySegs = true;
+      format4._endCodeOff = endCodeOff;
+      format4._startCodeOff = startCodeOff;
+      format4._idDeltaOff = idDeltaOff;
+      format4._idRangeOffsetOff = idRangeOffsetOff;
+      format4.idRangeOffsetOffset = idRangeOffsetOff - view.byteOffset;
+      format4.glyphIdArrayOffset = glyphIdArrayOff - view.byteOffset;
+      /* 优化177: 预计算 glyphIdArrayIndexOffset，消除 lookupFormat4 中的重复除法 */
+      format4.glyphIdArrayIndexOffset = (format4.glyphIdArrayOffset - format4.idRangeOffsetOffset) / 2;
     } else {
+      var endCode = new Array(segCount);
+      for (var e = 0; e < segCount; e++) {
+        endCode[e] = view.getUint16(vOffset, false);
+        vOffset += 2;
+      }
+      format4.endCode = endCode;
+      format4.reservedPad = view.getUint16(vOffset, false); vOffset += 2;
+
+      var startCode = new Array(segCount);
+      for (var s = 0; s < segCount; s++) {
+        startCode[s] = view.getUint16(vOffset, false);
+        vOffset += 2;
+      }
+      format4.startCode = startCode;
+
+      var idDelta = new Array(segCount);
+      for (var d = 0; d < segCount; d++) {
+        idDelta[d] = view.getUint16(vOffset, false);
+        vOffset += 2;
+      }
+      format4.idDelta = idDelta;
+      format4.idRangeOffsetOffset = vOffset - view.byteOffset;
+
+      var idRangeOffset = new Array(segCount);
+      for (var r = 0; r < segCount; r++) {
+        idRangeOffset[r] = view.getUint16(vOffset, false);
+        vOffset += 2;
+      }
+      format4.idRangeOffset = idRangeOffset;
+
       var glyphCount4 = (format4.length - (vOffset - view.byteOffset - startOffset)) / 2;
       format4.glyphIdArrayOffset = vOffset - view.byteOffset;
 
@@ -135,9 +155,9 @@ function readSubTable(reader, ttf, subTable, cmapOffset) {
         vOffset += 2;
       }
       format4.glyphIdArray = glyphIdArray4;
+      /* 优化177: 预计算 glyphIdArrayIndexOffset */
+      format4.glyphIdArrayIndexOffset = (format4.glyphIdArrayOffset - format4.idRangeOffsetOffset) / 2;
     }
-    /* 优化177: 预计算 glyphIdArrayIndexOffset，消除 lookupFormat4 中的重复除法 */
-    format4.glyphIdArrayIndexOffset = (format4.glyphIdArrayOffset - format4.idRangeOffsetOffset) / 2;
   } else if (subTable.format === 6) {
     var format6 = subTable;
     format6.length = view.getUint16(vOffset, false); vOffset += 2;
