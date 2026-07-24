@@ -327,78 +327,89 @@ export function rewriteCharstring(
   const cap = ((end - start) << 1) + 16;
   const out = new Uint8Array(cap);
   let wp = 0;
-  /** 栈：记录每个 operand 在输出中的起始 wp（便于截断重写）。值为原始解析值。 */
-  const stackStart: number[] = [];
-  const stackVal: number[] = [];
+  /**
+   * 优化：用 stackLen 计数器 + lastVal（栈顶值）+ lastStart（栈顶 operand 在 out 的起始 wp）
+   *  替代 stackStart[]/stackVal[] 两个数组。
+   *  对栈的所有读取仅需栈顶：HSTEM 用 stackLen 算 stemCount；CALLSUBR 用 lastVal 取调用编号、
+   *  用 lastStart 截断回栈顶 operand 起始处重写。其余 operand 的值/位置从不被读取。
+   *  与 collectSubrRefs 同构（消除每 operand 的 push 装箱 + length=0 重置）。
+   *  lastVal/lastStart 仅在 stackLen>0 时有效（CALLSUBR 前必有 operand push）。
+   */
+  let stackLen = 0;
+  /** 栈顶 operand 的原始解析值（NaN=fixed point 坐标，不可作调用编号） */
+  let lastVal = NaN;
+  /** 栈顶 operand 在 out 中的起始写指针（CALLSUBR 截断回退到此） */
+  let lastStart = 0;
   let stemCount = 0;
   let p = start;
   while (p < end) {
     const b0 = b[p++];
     if (b0 === 255) {
-      stackStart.push(wp);
-      stackVal.push(NaN);
+      lastStart = wp; lastVal = NaN;
       out[wp] = 255; out[wp + 1] = b[p]; out[wp + 2] = b[p + 1]; out[wp + 3] = b[p + 2]; out[wp + 4] = b[p + 3];
       wp += 5;
       p += 4;
+      stackLen++;
     } else if (b0 === 28) {
-      stackStart.push(wp);
-      stackVal.push(((b[p] << 24) | (b[p + 1] << 16)) >> 16);
+      lastStart = wp;
+      lastVal = ((b[p] << 24) | (b[p + 1] << 16)) >> 16;
       out[wp] = 28; out[wp + 1] = b[p]; out[wp + 2] = b[p + 1];
       wp += 3;
       p += 2;
+      stackLen++;
     } else if (b0 === 29) {
-      stackStart.push(wp);
-      stackVal.push(((b[p] << 24) | (b[p + 1] << 16) | (b[p + 2] << 8) | b[p + 3]) | 0);
+      lastStart = wp;
+      lastVal = ((b[p] << 24) | (b[p + 1] << 16) | (b[p + 2] << 8) | b[p + 3]) | 0;
       out[wp] = 29; out[wp + 1] = b[p]; out[wp + 2] = b[p + 1]; out[wp + 3] = b[p + 2]; out[wp + 4] = b[p + 3];
       wp += 5;
       p += 4;
+      stackLen++;
     } else if (b0 >= 32 && b0 <= 246) {
-      stackStart.push(wp);
-      stackVal.push(b0 - 139);
+      lastStart = wp;
+      lastVal = b0 - 139;
       out[wp++] = b0;
+      stackLen++;
     } else if (b0 >= 247 && b0 <= 250) {
-      stackStart.push(wp);
-      stackVal.push((b0 - 247) * 256 + b[p] + 108);
+      lastStart = wp;
+      lastVal = (b0 - 247) * 256 + b[p] + 108;
       out[wp] = b0; out[wp + 1] = b[p];
       wp += 2;
       p += 1;
+      stackLen++;
     } else if (b0 >= 251 && b0 <= 254) {
-      stackStart.push(wp);
-      stackVal.push(-(b0 - 251) * 256 - b[p] - 108);
+      lastStart = wp;
+      lastVal = -(b0 - 251) * 256 - b[p] - 108;
       out[wp] = b0; out[wp + 1] = b[p];
       wp += 2;
       p += 1;
+      stackLen++;
     } else {
       /** 操作码 */
       if (b0 === 12) {
         out[wp] = 12; out[wp + 1] = b[p];
         wp += 2;
         p += 1;
-        stackStart.length = 0;
-        stackVal.length = 0;
+        stackLen = 0;
       } else if (b0 === T2_HSTEM || b0 === T2_VSTEM || b0 === T2_HSTEMHM || b0 === T2_VSTEMHM) {
-        stemCount += stackVal.length >> 1;
+        stemCount += stackLen >> 1;
         out[wp++] = b0;
-        stackStart.length = 0;
-        stackVal.length = 0;
+        stackLen = 0;
       } else if (b0 === T2_HINTMASK || b0 === T2_CNTRMASK) {
         out[wp++] = b0;
         const maskBytes = (stemCount + 7) >>> 3;
         out.set(b.subarray(p, p + maskBytes), wp);
         wp += maskBytes;
         p += maskBytes;
-        stackStart.length = 0;
-        stackVal.length = 0;
+        stackLen = 0;
       } else if (b0 === T2_CALLSUBR) {
-        const arg = stackVal[stackVal.length - 1];
-        const oldSn = Number.isInteger(arg) ? arg + localBias : -1;
+        const oldSn = Number.isInteger(lastVal) ? lastVal + localBias : -1;
         const newSn = localRemap.get(oldSn);
         if (newSn === undefined) {
           /** subr 未保留（理论上引用 charstring 必命中）——保留原 operand 保底 */
           out[wp++] = T2_CALLSUBR;
         } else {
           /** 截断到栈顶 operand 起始，写入新编号编码（直接写 Uint8Array，不分配临时数组） */
-          wp = stackStart[stackStart.length - 1];
+          wp = lastStart;
           const delta = newSn - newLocalBias;
           if (delta >= -107 && delta <= 107) {
             out[wp++] = delta + 139;
@@ -419,20 +430,17 @@ export function rewriteCharstring(
           }
           out[wp++] = T2_CALLSUBR;
         }
-        stackStart.length = 0;
-        stackVal.length = 0;
+        stackLen = 0;
       } else if (b0 === T2_CALLGSUBR) {
         /** global subr 不子集化：operand（调用编号）原样保留，bias 不变 */
         out[wp++] = T2_CALLGSUBR;
-        stackStart.length = 0;
-        stackVal.length = 0;
+        stackLen = 0;
       } else if (b0 === T2_ENDCHAR) {
         out[wp++] = b0;
         break;
       } else {
         out[wp++] = b0;
-        stackStart.length = 0;
-        stackVal.length = 0;
+        stackLen = 0;
       }
     }
   }
