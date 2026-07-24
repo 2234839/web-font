@@ -386,11 +386,15 @@ function serializeSingleSubst(
  * 按间距/边界估算拷贝会破坏字体。
  */
 function writeEmptySubtable(w: Writer, effectiveType: number): void {
-  const subStart = w.length;
   /** SingleSubst 用 format2，其余类型用 format1（避免 LigatureSubst 等报 unknown format:2） */
   const format = effectiveType === LT_SINGLE ? 2 : 1;
   w.writeUint16(format);
-  w.reserveOffset16(subStart, () => subStart + 6);
+  /**
+   * 空 subtable 布局固定：format(2) + coverageOffset(2) + count(2) + coverage(format1 + count0 共 4 字节)。
+   * coverageOffset 相对 subtable 起始恒为 6（指向紧随 count 之后的 coverage），可直接写常量，
+   * 无需 reserveOffset16 的 patches push + 闭包分配（FiraCode 259 次/call 空 subtable）。
+   */
+  w.writeUint16(6);
   w.writeUint16(0);
   /** 空 coverage：format1 + count0 */
   w.writeUint16(1);
@@ -1019,6 +1023,7 @@ function isSubtableSkipableByCoverage(
   off: number,
   type: number,
   gidLookup: GidLookup,
+  covCache: CoverageCache,
 ): boolean {
   const dv = r.dv;
   const len = dv.byteLength;
@@ -1030,14 +1035,16 @@ function isSubtableSkipableByCoverage(
     if (chainFmt === 2) return false; /** format2 class 驱动，不预检 */
     if (chainFmt === 3) {
       /**
-       * 优化317：format3 预检判定修正。
+       * 优化317+318：format3 预检判定。
        * format3 规则触发需 backtrack/input/lookahead 三组 coverage 的 gid 全部在子集内。
        * 故只要【任一 coverage】原非空且全子集外，规则就不可能触发，可跳过深度解析。
        *
-       * 旧实现的判定为「整组 coverage 全部子集外」(grpOrigNonEmpty && !grpHasInSubset)，
-       * 语义过强：当一组内部分 coverage 全子集外、部分含子集内 gid时，预检不跳过，
-       * 但 parseChainFormat3 遇到那个全子集外的 coverage 即返回 null 失败。
-       * FiraCode 实测 16 个 format3 因此误入深度解析（0.094ms/次，占 GSUB 69%）。
+       * 优化318：预检改用 readCoverageRemapped（与 parseChainFormat3 同一判定函数 + 共享 covCache），
+       * 保证预检「跳过」⟺ 深度解析「失败」，输出完全一致（都是空 subtable）。
+       * 旧 coverageAllOutOfSubset 内联判定的 COV_RANGE 累积超限逻辑与 readCoverageRemapped 不一致，
+       * 导致 FiraCode 13 个 format3 预检未跳过却深度解析失败（0.328ms/call 浪费）。
+       * readCoverageRemapped 触碰 covCache 无副作用：其 entry 的 gids 字段留 EMPTY_GIDS 占位，
+       * readCoverageGids 命中时按 miss 重算（已有逻辑）。
        */
       let p = off + 2;
       for (let grp = 0; grp < 3; grp++) {
@@ -1047,7 +1054,7 @@ function isSubtableSkipableByCoverage(
         for (let k = 0; k < cnt; k++) {
           if (p + 2 > len) return false;
           const covOff = off + dv.getUint16(p + k * 2, false);
-          if (coverageAllOutOfSubset(dv, covOff, len, gidLookup) === true) return true;
+          if (readCoverageRemapped(r, covOff, gidLookup, covCache) === null) return true;
         }
         p += cnt * 2;
       }
@@ -1124,7 +1131,7 @@ function serializeSubtable(
   /** 预检：主 coverage（或 fmt3 的三组 coverage）全子集外则直接判失败（输出空 subtable），
    *  跳过昂贵的深度解析。FiraCode 403 lookup 中 ~330 个可预检跳过（type1-4 + fmt1 + fmt3 失效），
    *  format2 不预检（class 驱动，主 coverage 非充分条件）。 */
-  if (isSubtableSkipableByCoverage(r, off, type, gidLookup)) return false;
+  if (isSubtableSkipableByCoverage(r, off, type, gidLookup, covCache)) return false;
   let ok: boolean;
   switch (type) {
     case LT_SINGLE:
