@@ -257,6 +257,17 @@ function readSubTable(reader, ttf, subTable, cmapOffset) {
 }
 
 function parse(reader, ttf) {
+  /**
+   * 优化316: presetCmap 模式下（subset 复用 probeGsubAndCmap 的 codepoint→gid，见 readWindowsAllCodes 优化315），
+   * 直接返回 presetCmap 跳过整个 cmap 解析（目录扫描 + readSubTable 建 format4._lazySegs/format12._lazyGroups +
+   * readWindowsAllCodes 二分）。presetCmap 模式下 subTables 的 _lazySegs/_lazyGroups 不再被 lookupFormat4/12 使用
+   * （readWindowsAllCodes 已跳过），cmap.write/sizeof 用 ttf.cmap 的 keys 重建不依赖 subTables，
+   * 故 format4/12 subtable 的 header 解析纯粹是无用功。presetCmap 由 fontSubset 每次新建（{}），单次 create 内只读，引用安全。
+   */
+  if (ttf.readOptions && ttf.readOptions.presetCmap) {
+    return ttf.readOptions.presetCmap;
+  }
+
   var tcmap = {};
   var cmapOffset = this.offset;
   reader.seek(cmapOffset);
