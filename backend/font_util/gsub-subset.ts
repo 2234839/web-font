@@ -582,7 +582,7 @@ function serializeLigatureSubst(
  * format1: 逐 gid 赋 class；format2: 区间赋 class。
  */
 /** 读取 ClassDef 表为 (新gid → classIndex) map，class index 原样保留（不紧致重编号） */
-function readClassDefMap(r: Reader, off: number, origToNew: Map<number, number>): Map<number, number> {
+function readClassDefMap(r: Reader, off: number, gidLookup: GidLookup): Map<number, number> {
   const result = new Map<number, number>();
   if (off === 0) return result;
   const format = r.u16(off);
@@ -591,8 +591,11 @@ function readClassDefMap(r: Reader, off: number, origToNew: Map<number, number>)
     const count = r.u16(off + 4);
     for (let i = 0; i < count; i++) {
       const origGid = startGid + i;
-      const newGid = origToNew.get(origGid);
-      if (newGid !== undefined) result.set(newGid, r.u16(off + 6 + i * 2));
+      /** 优化333：gidLookup（Int32Array 索引，~1ns）替代 origToNew.get（Map.get ~9ns）。
+       *  FiraCode fmt2 ClassDef 展开后 9699 个 gid 逐个 Map.get 是 fmt2 路径主热点（86μs/11 子表）。
+       *  语义等价：gidLookup[g] >= 0 ⟺ origToNew.has(g) 且值相同。 */
+      const newGid = gidLookup[origGid];
+      if (newGid >= 0) result.set(newGid, r.u16(off + 6 + i * 2));
     }
   } else if (format === 2) {
     const rangeCount = r.u16(off + 2);
@@ -602,8 +605,9 @@ function readClassDefMap(r: Reader, off: number, origToNew: Map<number, number>)
       const end = r.u16(p + 2);
       const cls = r.u16(p + 4);
       for (let g = start; g <= end; g++) {
-        const newGid = origToNew.get(g);
-        if (newGid !== undefined) result.set(newGid, cls);
+        /** 同上，gidLookup 数组索引替代 Map.get */
+        const newGid = gidLookup[g];
+        if (newGid >= 0) result.set(newGid, cls);
       }
       p += 6;
     }
@@ -735,7 +739,7 @@ function serializeChainedContextSubst(
       }
     }
     if (classToRules.size === 0) return false;
-    writeChainFormat2(w, r, coverageOff, backtrackCDOff, inputCDOff, lookaheadCDOff, origToNew, classToRules, covCache, gidLookup);
+    writeChainFormat2(w, r, coverageOff, backtrackCDOff, inputCDOff, lookaheadCDOff, classToRules, covCache, gidLookup);
     return true;
   }
 
@@ -864,7 +868,6 @@ function writeChainFormat2(
   backtrackCDOff: number,
   inputCDOff: number,
   lookaheadCDOff: number,
-  origToNew: Map<number, number>,
   classToRules: Map<number, Array<{ back: number[]; input: number[]; look: number[]; records: Array<{ seq: number; lookup: number }> }>>,
   covCache: CoverageCache,
   gidLookup: GidLookup,
@@ -905,9 +908,9 @@ function writeChainFormat2(
   coverageHolder[0] = emitCoverage(w, newCovGids);
 
   /** 重映射三个 ClassDef 的 gid（class index 不变） */
-  const backMap = readClassDefMap(r, backtrackCDOff, origToNew);
-  const inputMap = readClassDefMap(r, inputCDOff, origToNew);
-  const lookMap = readClassDefMap(r, lookaheadCDOff, origToNew);
+  const backMap = readClassDefMap(r, backtrackCDOff, gidLookup);
+  const inputMap = readClassDefMap(r, inputCDOff, gidLookup);
+  const lookMap = readClassDefMap(r, lookaheadCDOff, gidLookup);
   backHolder[0] = writeClassDefFromMap(w, backMap);
   inputHolder[0] = writeClassDefFromMap(w, inputMap);
   lookHolder[0] = writeClassDefFromMap(w, lookMap);
