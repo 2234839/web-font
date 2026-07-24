@@ -358,6 +358,11 @@ function collectChainRefs(
  * @param isGidFormat true=format1（元素为 gid，需 inSubset 判断且收集 gid）；
  *                    false=format2（元素为 class index，原样保留，不判断不收集）。
  * 规则全部 context gid 在子集时才收集 refs（format1）；format2 class index 始终收集。
+ *
+ * 优化（消除中间数组）：原实现先读全部 backtrack/input/lookahead 到 3 个临时数组再判断，
+ * format1 每 rule 分配 3 个 number[]（FiraCode 424 次/call × 3 = 1272 次数组分配）。
+ * 改为两遍扫描：第一遍仅用 inSubset 校验全部 gid（不分配数组，遇子集外 gid 即 return）；
+ * 通过校验后再第二遍收集 context gid 并读 subst records。format1 规则触发是少数，第二遍开销可忽略。
  */
 function collectChainRuleRefs(
   r: OTReader,
@@ -370,27 +375,37 @@ function collectChainRuleRefs(
   /** format1/2 rule: backtrackCount + backtrack[] + inputCount + input[] + lookaheadCount + lookahead[] + substCount + substRecords[] */
   let p = ruleOff;
   const backtrackCount = r.u16(p); p += 2;
-  const backRaw: number[] = [];
-  for (let k = 0; k < backtrackCount; k++) backRaw.push(r.u16(p + k * 2));
-  p += backtrackCount * 2;
-  const inputCount = r.u16(p); p += 2;
-  const inputRaw: number[] = [];
-  for (let k = 0; k < inputCount - 1; k++) inputRaw.push(r.u16(p + k * 2));
-  p += (inputCount - 1) * 2;
-  const lookaheadCount = r.u16(p); p += 2;
-  const lookRaw: number[] = [];
-  for (let k = 0; k < lookaheadCount; k++) lookRaw.push(r.u16(p + k * 2));
-  p += lookaheadCount * 2;
-  const substCount = r.u16(p); p += 2;
+  const backtrackEnd = p + backtrackCount * 2;
+  const inputCount = r.u16(backtrackEnd); p = backtrackEnd + 2;
+  /** input 数组长度 = inputCount - 1（第一分量在 coverage，rule 内只存后续分量） */
+  const inputLen = inputCount > 0 ? inputCount - 1 : 0;
+  const inputEnd = p + inputLen * 2;
+  const lookaheadCount = r.u16(inputEnd); p = inputEnd + 2;
+  const lookaheadEnd = p + lookaheadCount * 2;
+  const substCount = r.u16(lookaheadEnd); p = lookaheadEnd + 2;
 
-  /** format1：全部 context gid 在子集才触发；format2：class index 始终「可触发」（保守） */
+  /** format1：全部 context gid 在子集才触发（先校验再收集，避免中间数组）；format2：class index 始终「可触发」（保守） */
   if (isGidFormat) {
-    for (const arr of [backRaw, inputRaw, lookRaw]) {
-      for (const g of arr) {
-        if (!inSubset(g)) return; /** 含子集外 gid，规则不触发 */
-      }
-      for (const g of arr) contextGids.add(g);
+    /** 第一遍：校验 backtrack + input + lookahead 全部 gid 在子集（遇子集外即放弃规则） */
+    let q = ruleOff + 2;
+    for (let k = 0; k < backtrackCount; k++) {
+      if (!inSubset(r.u16(q + k * 2))) return;
     }
+    q += backtrackCount * 2 + 2;
+    for (let k = 0; k < inputLen; k++) {
+      if (!inSubset(r.u16(q + k * 2))) return;
+    }
+    q += inputLen * 2 + 2;
+    for (let k = 0; k < lookaheadCount; k++) {
+      if (!inSubset(r.u16(q + k * 2))) return;
+    }
+    /** 第二遍：全部在子集，收集 context gid */
+    q = ruleOff + 2;
+    for (let k = 0; k < backtrackCount; k++) contextGids.add(r.u16(q + k * 2));
+    q += backtrackCount * 2 + 2;
+    for (let k = 0; k < inputLen; k++) contextGids.add(r.u16(q + k * 2));
+    q += inputLen * 2 + 2;
+    for (let k = 0; k < lookaheadCount; k++) contextGids.add(r.u16(q + k * 2));
   }
   for (let k = 0; k < substCount; k++) {
     /** SubstLookupRecord: sequenceIndex(2) + lookupListIndex(2) */
