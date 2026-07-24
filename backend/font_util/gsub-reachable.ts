@@ -38,17 +38,30 @@ type CoverageCache = Map<number, number[]>;
 function readCoverageGids(r: OTReader, off: number, cache: CoverageCache): number[] {
   const hit = cache.get(off);
   if (hit !== undefined) return hit;
-  const format = r.u16(off);
+  const dv = r.dv;
+  const format = dv.getUint16(off, false);
   const gids: number[] = [];
   if (format === 1) {
-    const count = r.u16(off + 2);
-    for (let i = 0; i < count; i++) gids.push(r.u16(off + 4 + i * 2));
+    const count = dv.getUint16(off + 2, false);
+    /** format1 gid 列表是连续 count 个大端 u16。若 2 字节对齐，用 Uint16Array view 共享 buffer
+     *  读取 + 内联翻转（与 readCoverageRemapped/hmtx/loca 同思路），比逐次 dv.getUint16 的边界检查 + 大端组装更快 */
+    const base = off + 4;
+    const byteOff = dv.byteOffset + base;
+    if (count > 8 && (byteOff & 1) === 0) {
+      const src16 = new Uint16Array(dv.buffer, byteOff, count);
+      for (let i = 0; i < count; i++) {
+        const raw = src16[i];
+        gids.push(((raw & 0xff) << 8) | (raw >> 8));
+      }
+    } else {
+      for (let i = 0; i < count; i++) gids.push(dv.getUint16(base + i * 2, false));
+    }
   } else if (format === 2) {
-    const rangeCount = r.u16(off + 2);
+    const rangeCount = dv.getUint16(off + 2, false);
     let p = off + 4;
     for (let i = 0; i < rangeCount; i++) {
-      const start = r.u16(p);
-      const end = r.u16(p + 2);
+      const start = dv.getUint16(p, false);
+      const end = dv.getUint16(p + 2, false);
       for (let g = start; g <= end; g++) gids.push(g);
       p += 6;
     }
@@ -92,20 +105,22 @@ function coverageFirstExcludedGid(
     return -1;
   }
   /** cache miss：边解析边查，不分配数组、不填 cache */
-  const format = r.u16(off);
+  const dv = r.dv;
+  const format = dv.getUint16(off, false);
   if (format === 1) {
-    const count = r.u16(off + 2);
+    const count = dv.getUint16(off + 2, false);
+    const base = off + 4;
     for (let i = 0; i < count; i++) {
-      const g = r.u16(off + 4 + i * 2);
+      const g = dv.getUint16(base + i * 2, false);
       if (!inSubset(g)) return g;
     }
     return -1;
   } else if (format === 2) {
-    const rangeCount = r.u16(off + 2);
+    const rangeCount = dv.getUint16(off + 2, false);
     let p = off + 4;
     for (let i = 0; i < rangeCount; i++) {
-      const start = r.u16(p);
-      const end = r.u16(p + 2);
+      const start = dv.getUint16(p, false);
+      const end = dv.getUint16(p + 2, false);
       for (let g = start; g <= end; g++) {
         if (!inSubset(g)) return g;
       }
@@ -146,19 +161,19 @@ export function collectReachableGsubTargets(
   }
   const lookups: LookupParsed[] = [];
   for (let i = 0; i < lookupCount; i++) {
-    const lOff = lookupListOff + r.u16(lookupListOff + 2 + i * 2);
-    const lookupType = r.u16(lOff);
-    const subTableCount = r.u16(lOff + 4);
+    const lOff = lookupListOff + dv.getUint16(lookupListOff + 2 + i * 2, false);
+    const lookupType = dv.getUint16(lOff, false);
+    const subTableCount = dv.getUint16(lOff + 4, false);
     const subtableAbsOffs: number[] = [];
     let effectiveType = lookupType;
     for (let j = 0; j < subTableCount; j++) {
-      const subOff = lOff + r.u16(lOff + 6 + j * 2);
+      const subOff = lOff + dv.getUint16(lOff + 6 + j * 2, false);
       if (lookupType === LT_EXTENSION) {
-        if (r.u16(subOff) !== 1) {
+        if (dv.getUint16(subOff, false) !== 1) {
           effectiveType = -1;
           continue;
         }
-        effectiveType = r.u16(subOff + 2);
+        effectiveType = dv.getUint16(subOff + 2, false);
         subtableAbsOffs.push(subOff + r.u32(subOff + 4));
       } else {
         subtableAbsOffs.push(subOff);
@@ -264,6 +279,10 @@ function collectSubtableTargets(
   reachable: Set<number>,
 ): number[] {
   const targets: number[] = [];
+  /** 缓存 dv 供内层循环连续 u16 读取直接调用 getUint16，省去 r.u16 的方法调用 + 边界检查开销
+   *  （collectReachableGsubTargets 是 FiraCode 等 GSUB 重字体的 #1 热点，循环内 u16 调用密集）。
+   *  offset 均为 GSUB 表内有效偏移，getUint16 与 u16 行为一致；format/count 等结构判定仍用 r.u16 保持 errorFlag 安全网 */
+  const dv = r.dv;
   if (type === LT_SINGLE) {
     /** SingleSubst: format1 coverage+delta / format2 coverage+gidArray */
     const format = r.u16(off);
@@ -305,12 +324,12 @@ function collectSubtableTargets(
             const mg = covGids[mid];
             if (mg < g) lo = mid + 1;
             else if (mg > g) hi = mid;
-            else { targets.push(r.u16(gidArrBase + mid * 2)); break; }
+            else { targets.push(dv.getUint16(gidArrBase + mid * 2, false)); break; }
           }
         }
       } else {
         for (let i = 0; i < lim; i++) {
-          if (inSubset(covGids[i])) targets.push(r.u16(gidArrBase + i * 2));
+          if (inSubset(covGids[i])) targets.push(dv.getUint16(gidArrBase + i * 2, false));
         }
       }
     }
@@ -320,9 +339,9 @@ function collectSubtableTargets(
     const covGids = readCoverageGids(r, covOff, covCache);
     for (let i = 0; i < covGids.length && i < seqCount; i++) {
       if (!inSubset(covGids[i])) continue;
-      const seqOff = off + r.u16(off + 6 + i * 2);
-      const glyphCount = r.u16(seqOff);
-      for (let k = 0; k < glyphCount; k++) targets.push(r.u16(seqOff + 2 + k * 2));
+      const seqOff = off + dv.getUint16(off + 6 + i * 2, false);
+      const glyphCount = dv.getUint16(seqOff, false);
+      for (let k = 0; k < glyphCount; k++) targets.push(dv.getUint16(seqOff + 2 + k * 2, false));
     }
   } else if (type === LT_ALTERNATE) {
     /** 条件反转：初夏 type3 covLen 987/3 calls（avg 329），命中率 2.3%；covGids 短时走原路径。 */
@@ -339,9 +358,9 @@ function collectSubtableTargets(
           if (mg < g) lo = mid + 1;
           else if (mg > g) hi = mid;
           else {
-            const altOff = off + r.u16(off + 6 + mid * 2);
-            const cnt = r.u16(altOff);
-            for (let k = 0; k < cnt; k++) targets.push(r.u16(altOff + 2 + k * 2));
+            const altOff = off + dv.getUint16(off + 6 + mid * 2, false);
+            const cnt = dv.getUint16(altOff, false);
+            for (let k = 0; k < cnt; k++) targets.push(dv.getUint16(altOff + 2 + k * 2, false));
             break;
           }
         }
@@ -349,9 +368,9 @@ function collectSubtableTargets(
     } else {
       for (let i = 0; i < lim; i++) {
         if (!inSubset(covGids[i])) continue;
-        const altOff = off + r.u16(off + 6 + i * 2);
-        const cnt = r.u16(altOff);
-        for (let k = 0; k < cnt; k++) targets.push(r.u16(altOff + 2 + k * 2));
+        const altOff = off + dv.getUint16(off + 6 + i * 2, false);
+        const cnt = dv.getUint16(altOff, false);
+        for (let k = 0; k < cnt; k++) targets.push(dv.getUint16(altOff + 2 + k * 2, false));
       }
     }
   } else if (type === LT_LIGATURE) {
@@ -365,15 +384,15 @@ function collectSubtableTargets(
        *  初夏明朝 type4 first gid 常全不在子集（首轮覆盖 glyph 多为非子集字形），此短路省掉每条
        *  ligature 的多次 u16 读 + inSubset 判定。 */
       if (!inSubset(covGids[i])) continue;
-      const setOff = off + r.u16(off + 6 + i * 2);
-      const ligCount = r.u16(setOff);
+      const setOff = off + dv.getUint16(off + 6 + i * 2, false);
+      const ligCount = dv.getUint16(setOff, false);
       for (let j = 0; j < ligCount; j++) {
-        const ligOff = setOff + r.u16(setOff + 2 + j * 2);
-        const compCount = r.u16(ligOff);
-        const target = r.u16(ligOff + 2);
+        const ligOff = setOff + dv.getUint16(setOff + 2 + j * 2, false);
+        const compCount = dv.getUint16(ligOff, false);
+        const target = dv.getUint16(ligOff + 2, false);
         let allIn = true;
         for (let k = 0; k < compCount - 1; k++) {
-          if (!inSubset(r.u16(ligOff + 4 + k * 2))) {
+          if (!inSubset(dv.getUint16(ligOff + 4 + k * 2, false))) {
             allIn = false;
             break;
           }
@@ -410,6 +429,8 @@ function collectChainRefs(
   failGid: { v: number },
 ): boolean {
   const format = r.u16(off);
+  /** 缓存 dv 供循环内连续 u16 读取直接调用 getUint16（format3 是 FiraCode 最多 subtable 类型，循环密集） */
+  const dv = r.dv;
   if (format === 1) {
     /** format1: coverage(gid) + SubRuleSet 数组，按 coverage gid 索引 */
     const covOff = off + r.u16(off + 2);
@@ -419,12 +440,12 @@ function collectChainRefs(
       /** 第一分量（coverage gid）须在子集，否则该 SubRuleSet 不触发 */
       if (!inSubset(covGids[i])) continue;
       contextGids.add(covGids[i]);
-      const setOffRel = r.u16(off + 6 + i * 2);
+      const setOffRel = dv.getUint16(off + 6 + i * 2, false);
       if (setOffRel === 0) continue;
       const setOff = off + setOffRel;
-      const ruleCount = r.u16(setOff);
+      const ruleCount = dv.getUint16(setOff, false);
       for (let j = 0; j < ruleCount; j++) {
-        const ruleOff = setOff + r.u16(setOff + 2 + j * 2);
+        const ruleOff = setOff + dv.getUint16(setOff + 2 + j * 2, false);
         collectChainRuleRefs(r, ruleOff, refs, contextGids, inSubset, true);
       }
     }
@@ -437,12 +458,12 @@ function collectChainRefs(
      *  无法直接用 inSubset 判断（class 可含任意 gid）。保守收集被引用 lookup 与 ClassDef gid。 */
     const classSetCount = r.u16(off + 10);
     for (let i = 0; i < classSetCount; i++) {
-      const setOffRel = r.u16(off + 12 + i * 2);
+      const setOffRel = dv.getUint16(off + 12 + i * 2, false);
       if (setOffRel === 0) continue;
       const setOff = off + setOffRel;
-      const ruleCount = r.u16(setOff);
+      const ruleCount = dv.getUint16(setOff, false);
       for (let j = 0; j < ruleCount; j++) {
-        const ruleOff = setOff + r.u16(setOff + 2 + j * 2);
+        const ruleOff = setOff + dv.getUint16(setOff + 2 + j * 2, false);
         collectChainRuleRefs(r, ruleOff, refs, contextGids, inSubset, false);
       }
     }
@@ -466,7 +487,7 @@ function collectChainRefs(
       const cnt = r.u16(p);
       p += 2;
       for (let k = 0; k < cnt; k++) {
-        const covOff = off + r.u16(p + k * 2);
+        const covOff = off + dv.getUint16(p + k * 2, false);
         const excluded = coverageFirstExcludedGid(r, covOff, covCache, inSubset);
         if (excluded >= 0) {
           triggerable = false;
@@ -485,13 +506,13 @@ function collectChainRefs(
         const cnt = r.u16(p2);
         p2 += 2;
         for (let k = 0; k < cnt; k++) {
-          const covGids = readCoverageGids(r, off + r.u16(p2 + k * 2), covCache);
+          const covGids = readCoverageGids(r, off + dv.getUint16(p2 + k * 2, false), covCache);
           for (const g of covGids) contextGids.add(g);
         }
         p2 += cnt * 2;
       }
       const substCount = r.u16(p2);
-      for (let k = 0; k < substCount; k++) refs.add(r.u16(p2 + 2 + k * 4 + 2));
+      for (let k = 0; k < substCount; k++) refs.add(dv.getUint16(p2 + 2 + k * 4 + 2, false));
       /** triggerable=true：三段 coverage gid 全在 reachable（reachable 单调，后续仍全在），
        *  refs/contextGids 已确定，不随 reachable 扩展变化 → 稳定，可跨轮跳过。 */
       return true;
