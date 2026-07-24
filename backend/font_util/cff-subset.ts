@@ -225,17 +225,22 @@ export function collectSubrRefs(
   localCount: number,
   localRefs: Set<number>,
   gsubrRefs: Set<number>,
-): void {
+): boolean {
   /**
    * 优化：用 stackLen 计数器 + lastVal 替代 stack: number[]。
    *  仅需栈长度（HSTEM 算 stemCount）与栈顶值（CALLSUBR/CALLGSUBR 取调用编号），
    *  无需完整栈数组。消除每 operand 的 push（含装箱）与 stack.length=0 重置。
    *  lastVal 仅在 stackLen>0 时有效（CALLSUBR 前必有 operand push）。
+   *  返回值：是否含 CALLSUBR（local subr 调用）。仅含 CALLSUBR 的 charstring 需重写——
+   *  CALLGSUBR 的 operand 不重映射（global subr 不子集化），rewrite 对其只是原样复制操作码，
+   *  与透传等价。故含 gsubr 无 subr 的 charstring 可直接透传省一遍 rewriteCharstring 扫描。
    */
   let p = start;
   let stackLen = 0;
   let lastVal = NaN;
   let stemCount = 0;
+  /** 是否遇到 CALLSUBR（决定该 charstring 是否需 rewriteCharstring） */
+  let hasSubr = false;
   while (p < end) {
     const b0 = b[p++];
     if (b0 === 255) {
@@ -274,6 +279,7 @@ export function collectSubrRefs(
         p += (stemCount + 7) >>> 3;
         stackLen = 0;
       } else if (b0 === T2_CALLSUBR) {
+        hasSubr = true;
         if (Number.isInteger(lastVal)) {
           const sn = lastVal + localBias;
           if (sn >= 0 && sn < localCount) localRefs.add(sn);
@@ -290,6 +296,7 @@ export function collectSubrRefs(
       }
     }
   }
+  return hasSubr;
 }
 
 /**
@@ -668,6 +675,12 @@ export function subsetCFF(cffBytes: Uint8Array, subsetGids: number[]): Uint8Arra
     charStringRanges[gi] = { start: csDataStart + o0 - 1, end: csDataStart + o1 - 1 };
   }
 
+  /** 标记每个子集字形的 charstring 是否含 CALLSUBR（local subr 调用）。
+   *  仅含 CALLSUBR 的字形需 rewriteCharstring（重映射 local subr 编号）；含 CALLGSUBR 但无
+   *  CALLSUBR 的可透传（global subr 不子集化，operand 原样）。第一遍 collectSubrRefs 填充，
+   *  重建 CharStrings 时据此跳过无 CALLSUBR 字形的 rewrite（思源千字文 73% 字形无 callsubr）。 */
+  const gidHasSubr: Uint8Array = new Uint8Array(newSubsetNumGlyphs);
+
   /** 重建 charset：CID-keyed 字体的 charset 是 gid→CID 映射。格式 0/1/2，按 newSubsetGids 取 CID。
    *  CID 0 固定留给 .notdef（gid 0），其余按原 charset 顺序。新 charset 用格式 0 最简单：
    *  format(1) + (numGlyphs-1)×CID(u16)（charset 不含 gid 0，它隐式为 CID 0）。
@@ -771,7 +784,10 @@ export function subsetCFF(cffBytes: Uint8Array, subsetGids: number[]): Uint8Arra
       for (let i = 0; i < newSubsetNumGlyphs; i++) {
         if (gidOrigFds[i] !== fd) continue;
         const r = charStringRanges[i];
-        collectSubrRefs(b, r.start, r.end, info.localBias, idx.count, refs, dummyGsubrRefs);
+        /** 记录该字形 charstring 是否含 CALLSUBR（决定后续是否 rewrite） */
+        if (collectSubrRefs(b, r.start, r.end, info.localBias, idx.count, refs, dummyGsubrRefs)) {
+          gidHasSubr[i] = 1;
+        }
       }
     }
   }
@@ -840,7 +856,7 @@ export function subsetCFF(cffBytes: Uint8Array, subsetGids: number[]): Uint8Arra
     for (let fi = 0; fi < usedFds.length; fi++) {
       if (usedFds[fi] === origFd) { privInfo = fdInfos[fi].priv; break; }
     }
-    if (privInfo && privInfo.localRemap) {
+    if (privInfo && privInfo.localRemap && gidHasSubr[gi]) {
       const rewritten = rewriteCharstring(b, r.start, r.end, privInfo.localBias, privInfo.localRemap, privInfo.newLocalCount);
       newCharStringObjects.push({ bytes: rewritten, start: 0, len: rewritten.length });
     } else {
