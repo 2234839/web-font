@@ -271,6 +271,9 @@ const testCases = [
   { label: "otf-五个汉字", fontPath: "font/temp/BaiHuOTFJiaoYuHanZi-2.otf", fontName: "白狐教育汉字", text: "天地黄宇宙法海波", sourceType: "otf" as const, outType: "woff2" as const, fullFormat: "opentype" },
   { label: "otf-思源黑体", fontPath: "font/temp/SourceHanSans-Regular.otf", fontName: "思源黑体", text: "天地玄黄宇宙洪法海波", sourceType: "otf" as const, outType: "ttf" as const, fullFormat: "opentype" },
   { label: "otf-思源黑体", fontPath: "font/temp/SourceHanSans-Regular.otf", fontName: "思源黑体", text: "天地玄黄宇宙洪法海波", sourceType: "otf" as const, outType: "woff2" as const, fullFormat: "opentype" },
+  /** 白狐千字文长文本：触发 type3 AlternateSubst 大 coverage（千 gid）反转路径 + 守护
+   *  serializeAlternateSubst 越界 coverage gid 正确性（白狐含损坏 coverage，原 undefined 漏网 bug） */
+  { label: "otf-白狐千字文", fontPath: "font/temp/BaiHuOTFJiaoYuHanZi-2.otf", fontName: "白狐教育汉字", text: "天地玄黄宇宙洪荒日月盈昃辰宿列张寒来暑往秋收冬藏闰余成岁律吕调阳", sourceType: "otf" as const, outType: "woff2" as const, fullFormat: "opentype" },
 
   /** ===== 小字号渲染（size=24，守护 SSIM 在小字号下不退化） ===== */
   { label: "小字号-8字", fontPath: "font/令东齐伋复刻体.ttf", fontName: "令东齐伋复刻体", text: "天地玄黄宇宙洪荒", sourceType: "ttf" as const, outType: "woff2" as const, fullFormat: "truetype", fontSize: 24 },

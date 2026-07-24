@@ -528,22 +528,48 @@ function serializeMultipleSubst(
   const dv = r.dv;
   const covOff = off + r.u16(off + 2);
   const seqCount = r.u16(off + 4);
-  const covGids = readCoverageGids(r, covOff);
 
   /** 逐 coverage 字形读取其 sequence，重映射后保留有效项 */
   const entries: Array<{ from: number; seq: number[] }> = [];
-  for (let i = 0; i < covGids.length && i < seqCount; i++) {
-    const fromNew = gidLookup[covGids[i]];
-    if (fromNew < 0) continue;
-    const seqOff = off + dv.getUint16(off + 6 + i * 2, false);
-    const glyphCount = dv.getUint16(seqOff, false);
-    const newSeq: number[] = [];
-    for (let k = 0; k < glyphCount; k++) {
-      const g = gidLookup[dv.getUint16(seqOff + 2 + k * 2, false)];
-      if (g >= 0) newSeq.push(g);
+
+  /** 反转遍历快路径（同 serializeLigatureSubst / serializeSingleSubst）：coverage 远大于子集时
+   *  遍历子集 gid 二分定位 coverage 下标 idx（即 SequenceTable 偏移数组下标），替代全量展开。 */
+  const subsetGids = currentSortedSubsetGids;
+  const covGidCount = coverageCount(r, covOff);
+  const useReverse = covGidCount > subsetGids.length * 4 && covGidCount > 16;
+
+  if (useReverse) {
+    for (const g of subsetGids) {
+      const idx = coverageIndexOf(r, covOff, g);
+      if (idx < 0 || idx >= seqCount) continue;
+      const fromNew = gidLookup[g];
+      if (!(fromNew >= 0)) continue;
+      const seqOff = off + dv.getUint16(off + 6 + idx * 2, false);
+      const glyphCount = dv.getUint16(seqOff, false);
+      const newSeq: number[] = [];
+      for (let k = 0; k < glyphCount; k++) {
+        const gg = gidLookup[dv.getUint16(seqOff + 2 + k * 2, false)];
+        if (gg >= 0) newSeq.push(gg);
+      }
+      /** 序列至少 1 个目标 gid 才有意义 */
+      if (newSeq.length > 0) entries.push({ from: fromNew, seq: newSeq });
     }
-    /** 序列至少 1 个目标 gid 才有意义 */
-    if (newSeq.length > 0) entries.push({ from: fromNew, seq: newSeq });
+  } else {
+    const covGids = readCoverageGids(r, covOff);
+    for (let i = 0; i < covGids.length && i < seqCount; i++) {
+      const fromNew = gidLookup[covGids[i]];
+      /** fromNew === undefined（covGids[i] 越界，损坏 coverage）也跳过，与反转路径行为一致 */
+      if (!(fromNew >= 0)) continue;
+      const seqOff = off + dv.getUint16(off + 6 + i * 2, false);
+      const glyphCount = dv.getUint16(seqOff, false);
+      const newSeq: number[] = [];
+      for (let k = 0; k < glyphCount; k++) {
+        const g = gidLookup[dv.getUint16(seqOff + 2 + k * 2, false)];
+        if (g >= 0) newSeq.push(g);
+      }
+      /** 序列至少 1 个目标 gid 才有意义 */
+      if (newSeq.length > 0) entries.push({ from: fromNew, seq: newSeq });
+    }
   }
   if (entries.length === 0) return false;
   /** 按 from gid 升序排序，使 coverage（emitCoverage 强制升序）与 sequence 数组保持下标配对 */
@@ -579,20 +605,46 @@ function serializeAlternateSubst(
   const dv = r.dv;
   const covOff = off + r.u16(off + 2);
   const altCount = r.u16(off + 4);
-  const covGids = readCoverageGids(r, covOff);
 
   const entries: Array<{ from: number; alts: number[] }> = [];
-  for (let i = 0; i < covGids.length && i < altCount; i++) {
-    const fromNew = gidLookup[covGids[i]];
-    if (fromNew < 0) continue;
-    const altOff = off + dv.getUint16(off + 6 + i * 2, false);
-    const cnt = dv.getUint16(altOff, false);
-    const newAlts: number[] = [];
-    for (let k = 0; k < cnt; k++) {
-      const g = gidLookup[dv.getUint16(altOff + 2 + k * 2, false)];
-      if (g >= 0) newAlts.push(g);
+
+  /** 反转遍历快路径（同 serializeMultipleSubst / serializeLigatureSubst）：coverage 远大于子集时
+   *  遍历子集 gid 二分定位 coverage 下标 idx（即 AlternateSet 偏移数组下标），替代全量展开。 */
+  const subsetGids = currentSortedSubsetGids;
+  const covGidCount = coverageCount(r, covOff);
+  const useReverse = covGidCount > subsetGids.length * 4 && covGidCount > 16;
+
+  if (useReverse) {
+    for (const g of subsetGids) {
+      const idx = coverageIndexOf(r, covOff, g);
+      if (idx < 0 || idx >= altCount) continue;
+      const fromNew = gidLookup[g];
+      if (!(fromNew >= 0)) continue;
+      const altOff = off + dv.getUint16(off + 6 + idx * 2, false);
+      const cnt = dv.getUint16(altOff, false);
+      const newAlts: number[] = [];
+      for (let k = 0; k < cnt; k++) {
+        const gg = gidLookup[dv.getUint16(altOff + 2 + k * 2, false)];
+        if (gg >= 0) newAlts.push(gg);
+      }
+      if (newAlts.length > 0) entries.push({ from: fromNew, alts: newAlts });
     }
-    if (newAlts.length > 0) entries.push({ from: fromNew, alts: newAlts });
+  } else {
+    const covGids = readCoverageGids(r, covOff);
+    for (let i = 0; i < covGids.length && i < altCount; i++) {
+      const fromNew = gidLookup[covGids[i]];
+      /** fromNew === undefined（covGids[i] 越界，损坏 coverage 的 gid 超 numGlyphs）也跳过，
+       *  与反转路径（subsetGids 必在范围内）行为一致。原 `fromNew < 0` 漏过 undefined（NaN 比较 false）。 */
+      if (!(fromNew >= 0)) continue;
+      const altOff = off + dv.getUint16(off + 6 + i * 2, false);
+      const cnt = dv.getUint16(altOff, false);
+      const newAlts: number[] = [];
+      for (let k = 0; k < cnt; k++) {
+        const g = gidLookup[dv.getUint16(altOff + 2 + k * 2, false)];
+        if (g >= 0) newAlts.push(g);
+      }
+      if (newAlts.length > 0) entries.push({ from: fromNew, alts: newAlts });
+    }
   }
   if (entries.length === 0) return false;
   /** 按 from gid 升序排序，使 coverage（emitCoverage 强制升序）与 alternate 数组保持下标配对 */
@@ -629,37 +681,81 @@ function serializeLigatureSubst(
   const dv = r.dv;
   const covOff = off + r.u16(off + 2);
   const setCount = r.u16(off + 4);
-  const covGids = readCoverageGids(r, covOff);
 
   /** 每个 coverage 字形收集有效 ligature 列表 */
   const entries: Array<{ from: number; ligs: Array<{ comp: number[]; lig: number }> }> = [];
-  for (let i = 0; i < covGids.length && i < setCount; i++) {
-    /** gidLookup[origGid] = 新gid 或 -1（不在子集）。数组索引比 Map.get 快 ~2×，
-     *  serializeLigatureSubst 对每条 ligature 的全部分量密集 remapGid，是 CJK ligature 子集热点。 */
-    const fromNew = gidLookup[covGids[i]];
-    if (fromNew < 0) continue;
-    const setOff = off + dv.getUint16(off + 6 + i * 2, false);
-    const ligCount = dv.getUint16(setOff, false);
-    const newLigs: Array<{ comp: number[]; lig: number }> = [];
-    for (let j = 0; j < ligCount; j++) {
-      const ligOff = setOff + dv.getUint16(setOff + 2 + j * 2, false);
-      const compCount = dv.getUint16(ligOff, false);
-      const ligNew = gidLookup[dv.getUint16(ligOff + 2, false)];
-      if (ligNew < 0) continue;
-      /** components 从第 2 字形开始（第 1 字形即 coverage 字形），compCount 含第 1 字形 */
-      const compNew: number[] = [fromNew];
-      let ok = true;
-      for (let k = 0; k < compCount - 1; k++) {
-        const c = gidLookup[dv.getUint16(ligOff + 4 + k * 2, false)];
-        if (c < 0) {
-          ok = false;
-          break;
+
+  /** 反转遍历快路径：LigatureSubst 的 coverage 可达数百~上千 gid（霞鹜文楷/初夏明朝 type4），
+   *  但子集仅命中个位数。原 readCoverageGids 全量展开再逐个查 gidLookup 浪费。
+   *  改为遍历子集原始 gid（currentSortedSubsetGids），用 coverageIndexOf 二分定位 coverage 下标 idx，
+   *  idx 即 LigatureSet 偏移数组的下标（off + 6 + idx * 2）。与 serializeSingleSubst 反转同思路
+   *  （[[gsub-serialize-single-bigcov-reverse]]）。仅当 coverage 明显多于子集时启用。 */
+  const subsetGids = currentSortedSubsetGids;
+  const covGidCount = coverageCount(r, covOff);
+  const useReverse = covGidCount > subsetGids.length * 4 && covGidCount > 16;
+
+  if (useReverse) {
+    for (const g of subsetGids) {
+      const idx = coverageIndexOf(r, covOff, g);
+      if (idx < 0 || idx >= setCount) continue;
+      /** gidLookup[origGid] = 新gid 或 -1（不在子集）。数组索引比 Map.get 快 ~2×，
+       *  serializeLigatureSubst 对每条 ligature 的全部分量密集 remapGid，是 CJK ligature 子集热点。 */
+      const fromNew = gidLookup[g];
+      if (!(fromNew >= 0)) continue;
+      const setOff = off + dv.getUint16(off + 6 + idx * 2, false);
+      const ligCount = dv.getUint16(setOff, false);
+      const newLigs: Array<{ comp: number[]; lig: number }> = [];
+      for (let j = 0; j < ligCount; j++) {
+        const ligOff = setOff + dv.getUint16(setOff + 2 + j * 2, false);
+        const compCount = dv.getUint16(ligOff, false);
+        const ligNew = gidLookup[dv.getUint16(ligOff + 2, false)];
+        if (ligNew < 0) continue;
+        /** components 从第 2 字形开始（第 1 字形即 coverage 字形），compCount 含第 1 字形 */
+        const compNew: number[] = [fromNew];
+        let ok = true;
+        for (let k = 0; k < compCount - 1; k++) {
+          const c = gidLookup[dv.getUint16(ligOff + 4 + k * 2, false)];
+          if (c < 0) {
+            ok = false;
+            break;
+          }
+          compNew.push(c);
         }
-        compNew.push(c);
+        if (ok) newLigs.push({ comp: compNew, lig: ligNew });
       }
-      if (ok) newLigs.push({ comp: compNew, lig: ligNew });
+      if (newLigs.length > 0) entries.push({ from: fromNew, ligs: newLigs });
     }
-    if (newLigs.length > 0) entries.push({ from: fromNew, ligs: newLigs });
+  } else {
+    const covGids = readCoverageGids(r, covOff);
+    for (let i = 0; i < covGids.length && i < setCount; i++) {
+      /** gidLookup[origGid] = 新gid 或 -1（不在子集）。数组索引比 Map.get 快 ~2×，
+       *  serializeLigatureSubst 对每条 ligature 的全部分量密集 remapGid，是 CJK ligature 子集热点。 */
+      const fromNew = gidLookup[covGids[i]];
+      /** fromNew === undefined（covGids[i] 越界，损坏 coverage）也跳过，与反转路径行为一致 */
+      if (!(fromNew >= 0)) continue;
+      const setOff = off + dv.getUint16(off + 6 + i * 2, false);
+      const ligCount = dv.getUint16(setOff, false);
+      const newLigs: Array<{ comp: number[]; lig: number }> = [];
+      for (let j = 0; j < ligCount; j++) {
+        const ligOff = setOff + dv.getUint16(setOff + 2 + j * 2, false);
+        const compCount = dv.getUint16(ligOff, false);
+        const ligNew = gidLookup[dv.getUint16(ligOff + 2, false)];
+        if (ligNew < 0) continue;
+        /** components 从第 2 字形开始（第 1 字形即 coverage 字形），compCount 含第 1 字形 */
+        const compNew: number[] = [fromNew];
+        let ok = true;
+        for (let k = 0; k < compCount - 1; k++) {
+          const c = gidLookup[dv.getUint16(ligOff + 4 + k * 2, false)];
+          if (c < 0) {
+            ok = false;
+            break;
+          }
+          compNew.push(c);
+        }
+        if (ok) newLigs.push({ comp: compNew, lig: ligNew });
+      }
+      if (newLigs.length > 0) entries.push({ from: fromNew, ligs: newLigs });
+    }
   }
   if (entries.length === 0) return false;
   /** 按 from gid 升序排序，使 coverage（emitCoverage 强制升序）与 ligature set 数组保持下标配对 */
