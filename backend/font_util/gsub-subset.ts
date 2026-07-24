@@ -1442,7 +1442,6 @@ export function subsetGSUB(
       w.writeUint16(lookupFlag);
       w.writeUint16(lk.subtableAbsOffs.length);
       const lookupStart = w.length - 6;
-      const subtableAbsPositions: number[] = new Array(lk.subtableAbsOffs.length);
       /**
        * 优化329（与 subsetGPOS 一致）：subtable 偏移槽用 writeUint16(0) 占位 + 记录 slot 起点，
        * 序列化后统一 writeInt16At 回填，替代 reserveOffset16 的 per-slot 闭包分配 + patch push。
@@ -1460,9 +1459,9 @@ export function subsetGSUB(
          *  输出与逐子表路径逐字节相同（每个子表都是 writeEmptySubtable），仅省去 N 次
          *  函数调用 + 预检 + rollback 的开销。subCount 不变，lookup 仍存在。 */
         for (let j = 0; j < lk.subtableAbsOffs.length; j++) {
-          subtableAbsPositions[j] = w.length;
+          /** subtable 起点（writeEmpty 前）回填到偏移槽（相对 lookupStart） */
+          w.writeInt16At(subtableSlotsStart + j * 2, w.length - lookupStart);
           writeEmptySubtable(w, lk.effectiveType);
-          w.writeInt16At(subtableSlotsStart + j * 2, subtableAbsPositions[j] - lookupStart);
         }
       } else {
         for (let j = 0; j < lk.subtableAbsOffs.length; j++) {
@@ -1476,8 +1475,7 @@ export function subsetGSUB(
             w.rollback(before);
             writeEmptySubtable(w, lk.effectiveType);
           }
-          /** 记录实际 subtable 起点（成功=before，失败回退后=before 同值）并回填偏移槽 */
-          subtableAbsPositions[j] = before;
+          /** 回填偏移槽：subtable 起点为 before（成功=serializeSubtable 起点，失败=rollback 后空 subtable 起点，两者同值） */
           w.writeInt16At(subtableSlotsStart + j * 2, before - lookupStart);
         }
       }
