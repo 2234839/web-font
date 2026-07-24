@@ -361,12 +361,35 @@ export function rewriteCharstring(
   let p = start;
   while (p < end) {
     const b0 = b[p++];
-    if (b0 === 255) {
-      lastStart = wp; lastVal = NaN;
-      out[wp] = 255; out[wp + 1] = b[p]; out[wp + 2] = b[p + 1]; out[wp + 3] = b[p + 2]; out[wp + 4] = b[p + 3];
-      wp += 5;
-      p += 4;
-      stackLen++;
+    /** 分支按热度重排：operand（b0>=32）占绝大多数字节，首判定（与 collectSubrRefs 同构）。 */
+    if (b0 >= 32) {
+      if (b0 <= 246) {
+        /** 单字节 operand，最热 */
+        lastStart = wp;
+        lastVal = b0 - 139;
+        out[wp++] = b0;
+        stackLen++;
+      } else if (b0 === 255) {
+        lastStart = wp; lastVal = NaN;
+        out[wp] = 255; out[wp + 1] = b[p]; out[wp + 2] = b[p + 1]; out[wp + 3] = b[p + 2]; out[wp + 4] = b[p + 3];
+        wp += 5;
+        p += 4;
+        stackLen++;
+      } else if (b0 <= 250) {
+        lastStart = wp;
+        lastVal = (b0 - 247) * 256 + b[p] + 108;
+        out[wp] = b0; out[wp + 1] = b[p];
+        wp += 2;
+        p += 1;
+        stackLen++;
+      } else {
+        lastStart = wp;
+        lastVal = -(b0 - 251) * 256 - b[p] - 108;
+        out[wp] = b0; out[wp + 1] = b[p];
+        wp += 2;
+        p += 1;
+        stackLen++;
+      }
     } else if (b0 === 28) {
       lastStart = wp;
       lastVal = ((b[p] << 24) | (b[p + 1] << 16)) >> 16;
@@ -380,25 +403,6 @@ export function rewriteCharstring(
       out[wp] = 29; out[wp + 1] = b[p]; out[wp + 2] = b[p + 1]; out[wp + 3] = b[p + 2]; out[wp + 4] = b[p + 3];
       wp += 5;
       p += 4;
-      stackLen++;
-    } else if (b0 >= 32 && b0 <= 246) {
-      lastStart = wp;
-      lastVal = b0 - 139;
-      out[wp++] = b0;
-      stackLen++;
-    } else if (b0 >= 247 && b0 <= 250) {
-      lastStart = wp;
-      lastVal = (b0 - 247) * 256 + b[p] + 108;
-      out[wp] = b0; out[wp + 1] = b[p];
-      wp += 2;
-      p += 1;
-      stackLen++;
-    } else if (b0 >= 251 && b0 <= 254) {
-      lastStart = wp;
-      lastVal = -(b0 - 251) * 256 - b[p] - 108;
-      out[wp] = b0; out[wp + 1] = b[p];
-      wp += 2;
-      p += 1;
       stackLen++;
     } else {
       /** 操作码 */
