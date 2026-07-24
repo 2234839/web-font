@@ -1349,10 +1349,14 @@ function coverageAllOutOfSubset(
   }
   if (format === COV_RANGE) {
     const rangeCount = dv.getUint16(covOff + 2, false);
-    /** 与 readCoverageRemapped 一致：end clamp 到 numGlyphs-1，start>=numGlyphs 的 range 跳过 gid 展开
-     *  （gidLookup[g] 对 g>=numGlyphs 必然不在子集，逐 gid 展开全越界是浪费）。保证 fmt3 预检「全子集外」
-     *  判定与 readCoverageRemapped 完全一致，避免 [[gsub-subset-fmt3-prefetch-consistency]] 类不一致。 */
-    const numGlyphs = gidLookup.length;
+    /** 排序子集 gid 数组（currentSortedSubsetGids，模块级，subsetGSUB 入口已设）。
+     *  range 相交判定改二分（O(log n) per range）替代逐 gid 展开（O(range length)）。
+     *  初夏 fmt3 range 展开总 20388 gid、300 range、12 子集 gid，逐 gid 0.012ms vs 二分 0.001ms（10×）。
+     *  等价性：range [start,end] 含 gidLookup[g]>=0 的 g ⟺ 排序子集 gid 数组存在 gid ∈ [start,end]
+     *  （gidLookup[g]>=0 ⟺ g 是子集 gid ⟺ g 在排序子集数组）。end clamp/越界语义不变：
+     *  sortedGids 全部 < numGlyphs，二分天然只在子集 gid 范围查，end>=numGlyphs 时子集 gid 仍可能 <= end。 */
+    const sortedGids = currentSortedSubsetGids;
+    const subsetN = sortedGids.length;
     let p = covOff + 4;
     let origNonEmpty = false;
     for (let i = 0; i < rangeCount; i++) {
@@ -1360,15 +1364,19 @@ function coverageAllOutOfSubset(
       const start = dv.getUint16(p, false);
       const end = dv.getUint16(p + 2, false);
       if (end >= start && end - start < COVERAGE_MAX_EXPAND) {
-        if (start >= numGlyphs) {
-          /** 整 range 越界：gid 全不在子集，但 range 非空（origNonEmpty），不短路 return false */
-          origNonEmpty = true;
-        } else {
-          const e = end < numGlyphs ? end : numGlyphs - 1;
-          for (let g = start; g <= e; g++) {
-            origNonEmpty = true;
-            if (gidLookup[g] >= 0) return false;
+        /** range 非空（无论是否含子集 gid），标记 origNonEmpty */
+        origNonEmpty = true;
+        /** 二分判定 range 是否含任一子集 gid。subsetN=0（空子集，理论上不进 GSUB）或 range 全在
+         *  sortedGids 范围外时 lo 落到边界，sortedGids[lo] > end → 无交集，与逐 gid 全 <0 一致。 */
+        if (subsetN > 0 && start <= sortedGids[subsetN - 1] && end >= sortedGids[0]) {
+          let lo = 0, hi = subsetN;
+          while (lo < hi) {
+            const mid = (lo + hi) >>> 1;
+            if (sortedGids[mid] < start) lo = mid + 1;
+            else hi = mid;
           }
+          /** lo = 第一个 >= start 的子集 gid 下标；若该 gid <= end 则 range 含子集 gid → 非 outOfSubset */
+          if (lo < subsetN && sortedGids[lo] <= end) return false;
         }
       }
       p += 6;
