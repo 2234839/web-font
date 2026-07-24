@@ -435,8 +435,14 @@ function transformGlyfAndLoca(glyfData, locaData, indexFormat, numGlyphs) {
     }
     const xCoords = _reuseXCoords;
     let px = 0;
-    let calcXMin, calcXMax;
     /**
+     * 优化314: 移除 simple glyph 的 bbox 计算。
+     * WOFF2 规范：bboxBitmap bit=0 时解码端从轮廓点重建 bbox（= 点坐标 min/max），
+     * bit=1 时读 bboxStream 显式存储值。原编码对 simple glyph 计算 calcBbox 并与原始 bbox
+     * 比对——无论置 0/1，解码端最终都得到 calcBbox（置1存的也是 calcBbox），故该计算与
+     * 比对无功能意义。移除后 simple 永远置 0（解码端自算），输出更小且 transform 更快。
+     * 复合 glyph 仍必须显式存 bbox（raw 组件数据剥离了 glyph 头，解码端无法重建），保留其逻辑。
+     *
      * 优化302: 坐标解码用无分支取负
      * 中文字体 87% 的点为 short 模式，其中正负各半（50/50），
      * 原三元 `(f & XSAME) ? b : -b` 是 50/50 不可预测分支，被 V8 编译成条件跳转导致流水线冲刷。
@@ -454,17 +460,11 @@ function transformGlyfAndLoca(glyfData, locaData, indexFormat, numGlyphs) {
         dataOff += 2;
       }
       xCoords[xi] = px;
-      if (xi === 0) { calcXMin = px; calcXMax = px; }
-      else if (px < calcXMin) calcXMin = px;
-      else if (px > calcXMax) calcXMax = px;
     }
 
     let py = 0;
-    let calcYMin = 0, calcYMax = 0;
 
     if (numberOfContours > 0) {
-      /** 优化312: bbox bitmap 判定拆分——x 在此先判，y 在合并循环算完后补判 */
-      let bboxSet = !(calcXMin === xMin && calcXMax === xMax);
 
       /**
        * 优化294: triplet 数据直接追加写入 glyphAccum（连续累积），不再分配 per-glyph glyphStreamBuf
@@ -484,12 +484,10 @@ function transformGlyfAndLoca(glyfData, locaData, indexFormat, numGlyphs) {
       const _fa = flagAccum;
       const _fwb = flagWriteBase;
       const _gd = glyfData;
-      let dyBboxUnset = true;
       /**
        * 优化312: y 解码 + triplet 编码合并为单循环。
        * py 从 TTF yCoord 字节流解码（累积绝对坐标），cx 从 xCoords 取（x 已在前一循环解好），
        * triplet delta = cx - prevX / py - prevY，当场编码写入 glyphAccum。
-       * bbox_y 的 min/max 也在本循环同步计算（原在独立 y 循环）。
        */
       for (let yi = 0; yi < numPoints; yi++) {
         const f = _fa[_fwb + yi];
@@ -502,9 +500,6 @@ function transformGlyfAndLoca(glyfData, locaData, indexFormat, numGlyphs) {
           py += dy0;
           dataOff += 2;
         }
-        if (dyBboxUnset) { calcYMin = py; calcYMax = py; dyBboxUnset = false; }
-        else if (py < calcYMin) calcYMin = py;
-        else if (py > calcYMax) calcYMax = py;
 
         /** triplet 编码（与原 calcTripletAndWrite inline 语义一致） */
         const cx = xCoords[yi];
@@ -567,12 +562,6 @@ function transformGlyfAndLoca(glyfData, locaData, indexFormat, numGlyphs) {
         prevX = cx;
         prevY = cy;
       }
-      /** 优化312: y 的 bbox 匹配补判 */
-      if (calcYMin !== yMin || calcYMax !== yMax) bboxSet = true;
-      if (bboxSet) {
-        bboxBitmap[gi >> 3] |= (0x80 >> (gi & 7));
-        bboxStreamSize += 8;
-      }
       glyphAccumLen += gsbi;
       glyphStreamSize += gsbi;
 
@@ -603,7 +592,6 @@ function transformGlyfAndLoca(glyfData, locaData, indexFormat, numGlyphs) {
           composite: false,
           numberOfContours,
           nPointsDeltas,
-          calcXMin, calcYMin, calcXMax, calcYMax,
         }
       : {
           composite: false,
@@ -693,14 +681,7 @@ function transformGlyfAndLoca(glyfData, locaData, indexFormat, numGlyphs) {
     for (let c = 0; c < nc; c++) {
       nPointsPos += encode255UInt16(deltas[c], result, nPointsPos);
     }
-
-    if (bboxBitmap[gi >> 3] & (0x80 >> (gi & 7))) {
-      result[bboxPos] = g.calcXMin >> 8; result[bboxPos + 1] = g.calcXMin & 0xFF;
-      result[bboxPos + 2] = g.calcYMin >> 8; result[bboxPos + 3] = g.calcYMin & 0xFF;
-      result[bboxPos + 4] = g.calcXMax >> 8; result[bboxPos + 5] = g.calcXMax & 0xFF;
-      result[bboxPos + 6] = g.calcYMax >> 8; result[bboxPos + 7] = g.calcYMax & 0xFF;
-      bboxPos += 8;
-    }
+    /** 优化314: simple glyph 的 bbox 由解码端从轮廓点重建（bboxBitmap 位恒为 0），无需在此写入 */
   }
 
   /** 优化294: 三个累积缓冲区整体拷贝到 result 对应区域（单次 set 替代 per-glyph set） */
