@@ -194,35 +194,31 @@ interface FdSelectRange {
 }
 
 /**
- * 解析原 FDSelect，返回每个原始 gid 的 FD index 数组。
- * 格式 0：format(1) + numGlyphs×uint8（标准无 count 字段）
- * 格式 3：format(1) + nRanges(u16) + ranges[3]×nRanges + sentinel(u16)
+ * 按需查询单个原始 gid 的 FD index（替代全量 parseFDSelect）。
+ * 子集只需 newSubsetGids 对应的 FD，全量展开 numGlyphs(思源 65535) 是浪费。
+ * 格式 0：format(1) + numGlyphs×uint8，直接按 gid 取字节。
+ * 格式 3：format(1) + nRanges(u16) + ranges[first(u16),fd(u8)]×nRanges + sentinel(u16)，
+ *  二分找最后一个 first<=gid 的 range（range 覆盖 [first, 下一range.first) ）。
  * @param b CFF 字节
  * @param fdSelectOff FDSelect 表起始偏移
- * @param numGlyphs 字形总数
+ * @param gid 原始 gid
  */
-function parseFDSelect(b: Uint8Array, fdSelectOff: number, numGlyphs: number): number[] {
+function lookupFDSelect(b: Uint8Array, fdSelectOff: number, gid: number): number {
   const fmt = b[fdSelectOff];
-  const fds = new Array<number>(numGlyphs).fill(0);
-  if (fmt === 0) {
-    for (let i = 0; i < numGlyphs; i++) fds[i] = b[fdSelectOff + 1 + i];
-    return fds;
-  }
-  /** format 3 */
+  if (fmt === 0) return b[fdSelectOff + 1 + gid];
+  /** format 3：ranges 起始 = fdSelectOff + 3，每 range 3 字节 */
   const nRanges = (b[fdSelectOff + 1] << 8) | b[fdSelectOff + 2];
-  const ranges: FdSelectRange[] = [];
-  let p = fdSelectOff + 3;
-  for (let i = 0; i < nRanges; i++) {
-    const first = (b[p] << 8) | b[p + 1];
-    const fd = b[p + 2];
-    ranges.push({ first, fd });
-    p += 3;
+  const rangesStart = fdSelectOff + 3;
+  /** 二分：找最大 i 使 ranges[i].first <= gid，返回该 range 的 fd */
+  let lo = 0;
+  let hi = nRanges - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    const first = (b[rangesStart + mid * 3] << 8) | b[rangesStart + mid * 3 + 1];
+    if (first <= gid) lo = mid;
+    else hi = mid - 1;
   }
-  for (let i = 0; i < nRanges; i++) {
-    const next = i + 1 < nRanges ? ranges[i + 1].first : numGlyphs;
-    for (let g = ranges[i].first; g < next; g++) fds[g] = ranges[i].fd;
-  }
-  return fds;
+  return b[rangesStart + lo * 3 + 2];
 }
 
 /**
@@ -321,43 +317,54 @@ export function subsetCFF(cffBytes: Uint8Array, subsetGids: number[]): Uint8Arra
     return null;
   }
 
-  const charStringsIndex = readIndex(b, charStringsOff);
-  /** 子集字形数 = CharStrings 数（含 .notdef） */
-  const numGlyphs = charStringsIndex.count;
+  /** CharStrings INDEX 头部（count + offSize），不全量解析 65535 个 offset（思源等大字体会浪费 0.4ms）。
+   *  子集只需 newSubsetGids 对应的字节区间，按 gid 随机读 offset 即可。 */
+  const csCount = (b[charStringsOff] << 8) | b[charStringsOff + 1];
+  const csOffSize = b[charStringsOff + 2];
+  /** offset 数组起始（紧跟 count+offSize 3 字节）；dataStart = 偏移数组尾 + 1 */
+  const csOffArrStart = charStringsOff + 3;
+  const csDataStart = csOffArrStart + (csCount + 1) * csOffSize;
   if (subsetGids.length === 0) return null;
 
   /** .notdef（gid 0）必须保留，且 subsetGids[0] 应为 0 */
   const newSubsetGids = subsetGids[0] === 0 ? subsetGids : [0, ...subsetGids];
 
-  /** 重建 CharStrings INDEX：按 newSubsetGids 顺序透传原 charstring 字节 */
+  /** 重建 CharStrings INDEX：按 newSubsetGids 顺序透传原 charstring 字节。
+   *  按 gid 随机读 2 个 offset 取区间，跳过全量 offset 遍历。 */
   const newCharStringObjects: { bytes: Uint8Array; start: number; len: number }[] = [];
   for (const gid of newSubsetGids) {
-    const s = charStringsIndex.dataStart + charStringsIndex.offsets[gid] - 1;
-    const e = charStringsIndex.dataStart + charStringsIndex.offsets[gid + 1] - 1;
+    /** 读 offset[gid] 与 offset[gid+1]（offSize 字节大端） */
+    let o0 = 0;
+    let o1 = 0;
+    const p0 = csOffArrStart + gid * csOffSize;
+    const p1 = csOffArrStart + (gid + 1) * csOffSize;
+    for (let j = 0; j < csOffSize; j++) o0 = (o0 << 8) | b[p0 + j];
+    for (let j = 0; j < csOffSize; j++) o1 = (o1 << 8) | b[p1 + j];
+    const s = csDataStart + o0 - 1;
+    const e = csDataStart + o1 - 1;
     newCharStringObjects.push({ bytes: b, start: s, len: e - s });
   }
   const newCharStrings = writeIndex(newCharStringObjects);
 
   /** 重建 charset：CID-keyed 字体的 charset 是 gid→CID 映射。格式 0/1/2，按 newSubsetGids 取 CID。
    *  CID 0 固定留给 .notdef（gid 0），其余按原 charset 顺序。新 charset 用格式 0 最简单：
-   *  format(1) + (numGlyphs-1)×CID(u16)（charset 不含 gid 0，它隐式为 CID 0）。 */
-  const origCids = readCharsetCIDs(b, charsetOff, numGlyphs);
+   *  format(1) + (numGlyphs-1)×CID(u16)（charset 不含 gid 0，它隐式为 CID 0）。
+   *  按需查 CID（lookupCharsetCID 遍历 range 查单个 gid），不全量展开 65535 项。 */
   const newSubsetNumGlyphs = newSubsetGids.length;
   const newCharsetBody: number[] = [];
   for (let i = 1; i < newSubsetNumGlyphs; i++) {
     /** newSubsetGids[i] 是原始 gid，取其原 CID */
-    newCharsetBody.push(origCids[newSubsetGids[i]] ?? 0);
+    newCharsetBody.push(lookupCharsetCID(b, charsetOff, newSubsetGids[i]));
   }
   const newCharset = encodeCharsetFormat0(newCharsetBody);
 
-  /** FDSelect：原始 gid→FD index，重映射为新 gid→新 FD index */
-  const origFds = parseFDSelect(b, fdSelectOff, numGlyphs);
+  /** FDSelect：按需查每个 subsetGid 的原 FD（lookupFDSelect 二分 range），不全量展开 numGlyphs。 */
 
   /** 收集命中的 FD（保持首次出现顺序），构建 原FD→新FD 映射 */
   const fdRemap = new Map<number, number>();
   const usedFds: number[] = [];
   for (const gid of newSubsetGids) {
-    const fd = origFds[gid] ?? 0;
+    const fd = lookupFDSelect(b, fdSelectOff, gid);
     if (!fdRemap.has(fd)) {
       fdRemap.set(fd, usedFds.length);
       usedFds.push(fd);
@@ -417,7 +424,7 @@ export function subsetCFF(cffBytes: Uint8Array, subsetGids: number[]): Uint8Arra
    *  多 FD 用格式 3 ranges（与原始 CID 字体一致，兼容 OTS 严格校验）。 */
   const newGidToFd: number[] = new Array(newSubsetNumGlyphs);
   for (let i = 0; i < newSubsetNumGlyphs; i++) {
-    const origFd = origFds[newSubsetGids[i]] ?? 0;
+    const origFd = lookupFDSelect(b, fdSelectOff, newSubsetGids[i]);
     newGidToFd[i] = fdRemap.get(origFd) ?? 0;
   }
   const newFdSelectBody = encodeFDSelect(newGidToFd);
@@ -630,41 +637,46 @@ function combineBytes(parts: Uint8Array[]): Uint8Array {
 }
 
 /**
- * 读 charset 取每个 gid 的 CID（gid 0 的 CID 固定为 0，不入表）。
- * 格式 0：format(1) + (numGlyphs-1)×CID(u16)
- * 格式 1：format(1) + ranges[first(2), nLeft(1)]
- * 格式 2：format(1) + ranges[first(2), nLeft(2)]
+ * 按需查询单个原始 gid 的 CID（替代全量 readCharsetCIDs）。
+ * 子集只需 newSubsetGids 对应的 CID，全量展开 numGlyphs(思源 65535) 是浪费。
+ * gid 0 的 CID 固定为 0（.notdef 不入表）。
+ * 格式 0：format(1) + (numGlyphs-1)×CID(u16)，按 gid 直接取（charset 表不含 gid 0）。
+ * 格式 1/2：遍历 range 找覆盖 gid 的（range first 是 gid，CID = first 的 CID + (gid - range.first)）。
+ *  range 数量远小于 numGlyphs（思源 format2 约 6 千 range vs 65535 gid），遍历省去 65535 项填充。
  * @param b CFF 字节
  * @param charsetOff charset 起始偏移
- * @param numGlyphs 字形总数
+ * @param gid 原始 gid（>0，gid 0 调用方自行返回 0）
  */
-function readCharsetCIDs(b: Uint8Array, charsetOff: number, numGlyphs: number): number[] {
-  const cids = new Array<number>(numGlyphs).fill(0);
-  cids[0] = 0; /** .notdef */
+function lookupCharsetCID(b: Uint8Array, charsetOff: number, gid: number): number {
+  if (gid === 0) return 0;
   const fmt = b[charsetOff];
-  let p = charsetOff + 1;
-  let gid = 1;
+  /** 格式 0：format(1) + (numGlyphs-1)×CID(u16) 紧排，gid i(>0) 的 CID 在 (i-1)*2 */
   if (fmt === 0) {
-    while (gid < numGlyphs) {
-      cids[gid++] = (b[p] << 8) | b[p + 1];
-      p += 2;
-    }
-  } else if (fmt === 1) {
-    while (gid < numGlyphs) {
-      const first = (b[p] << 8) | b[p + 1];
+    const o = charsetOff + 1 + (gid - 1) * 2;
+    return (b[o] << 8) | b[o + 1];
+  }
+  /** 格式 1/2：range[ firstCID, nLeft ]，range 依次覆盖连续 gid（从 gid 1 起），
+   *  range 内 nLeft+1 个 gid 的 CID = firstCID + 偏移。遍历累积 gid 起点找覆盖 gid 的 range。
+   *  range 数远小于 numGlyphs（思源 format2 约 6 千 range vs 65535 gid），省去 65535 项填充。 */
+  let p = charsetOff + 1;
+  let rangeFirstGid = 1;
+  if (fmt === 1) {
+    for (;;) {
+      const firstCID = (b[p] << 8) | b[p + 1];
       const nLeft = b[p + 2];
+      if (gid >= rangeFirstGid && gid <= rangeFirstGid + nLeft) return firstCID + (gid - rangeFirstGid);
+      rangeFirstGid += nLeft + 1;
       p += 3;
-      for (let i = 0; i <= nLeft && gid < numGlyphs; i++) cids[gid++] = first + i;
-    }
-  } else if (fmt === 2) {
-    while (gid < numGlyphs) {
-      const first = (b[p] << 8) | b[p + 1];
-      const nLeft = (b[p + 2] << 8) | b[p + 3];
-      p += 4;
-      for (let i = 0; i <= nLeft && gid < numGlyphs; i++) cids[gid++] = first + i;
     }
   }
-  return cids;
+  /** fmt === 2 */
+  for (;;) {
+    const firstCID = (b[p] << 8) | b[p + 1];
+    const nLeft = (b[p + 2] << 8) | b[p + 3];
+    if (gid >= rangeFirstGid && gid <= rangeFirstGid + nLeft) return firstCID + (gid - rangeFirstGid);
+    rangeFirstGid += nLeft + 1;
+    p += 4;
+  }
 }
 
 /** 编码 charset 格式 0：format(1) + CIDs.length×CID(u16) */
