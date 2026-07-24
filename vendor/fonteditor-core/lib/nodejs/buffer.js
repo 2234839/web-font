@@ -30,16 +30,15 @@ var _default = exports.default = {
    * @param {ArrayBuffer} arrayBuffer 缓冲数组
    * @return {Buffer}
    */
+  /**
+   * 优化311: ArrayBuffer→Buffer 用 Buffer.from 共享底层内存（零拷贝），
+   * 替代逐字节 view.getUint8 循环（千字文 ttf 162KB 输出时为 toBuffer 9% 热点）。
+   * write 产出的 ArrayBuffer 后续不再修改，共享安全。
+   */
   toBuffer: function toBuffer(arrayBuffer) {
     if (Array.isArray(arrayBuffer)) {
       return Buffer.from(arrayBuffer);
     }
-    var length = arrayBuffer.byteLength;
-    var view = new DataView(arrayBuffer, 0, length);
-    var buffer = Buffer.alloc(length);
-    for (var i = 0, l = length; i < l; i++) {
-      buffer[i] = view.getUint8(i, false);
-    }
-    return buffer;
+    return Buffer.from(arrayBuffer);
   }
 };
