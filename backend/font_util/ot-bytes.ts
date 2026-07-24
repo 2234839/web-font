@@ -25,8 +25,15 @@ export class OTWriter {
   /** 优化（Uint8Array 底层缓冲）：原用 number[] + push 累积字节，每个 writeUint8/16 触发
    *  数字装箱与数组扩容；gsub-subset 逐字节 writeUint8 复制 ScriptList/FeatureList 字节块
    *  极慢。改用 Uint8Array 容量缓冲 + size 指针：writeUint8/16 索引写入（无装箱），
-   *  writeBytes 用 TypedArray.set 批量复制，toUint8Array 零拷贝 subarray。 */
-  private buf: Uint8Array = new Uint8Array(256);
+   *  writeBytes 用 TypedArray.set 批量复制，toUint8Array 零拷贝 subarray。
+   *
+   *  优化327: 初始容量 256→2048，并让 writeUint16/writeInt16/reserveOffset16 内联容量检查。
+   *  GPOS/GSUB 输出常达数 KB（思源 GPOS 978B、令东 GSUB 数十 KB），256 起步触发多次 2× 扩容
+   *  （每次扩容 new Uint8Array + set 全拷贝）。更关键的是 writeUint16 是序列化第一热点
+   *  （思源 subsetGPOS 207 次/call 占 ~58%），原实现每次调 private ensure()——V8 对 class
+   *  private method 内联不充分，per-call 函数调用开销在百次累计下显著。改为内联容量判断
+   *  （够用直接写，不够才调 grow），消除热路径上的函数调用。 */
+  private buf: Uint8Array = new Uint8Array(2048);
   private size: number = 0;
   private patches: Array<{ pos: number; base: number; targetGetter: () => number }> = [];
 
@@ -34,10 +41,8 @@ export class OTWriter {
     return this.size;
   }
 
-  /** 确保剩余容量 >= need，不足则按 2× 扩容 */
-  private ensure(need: number): void {
-    const required = this.size + need;
-    if (required <= this.buf.byteLength) return;
+  /** 容量不足时扩容（仅在 write 路径内联判断发现不够时调用） */
+  private grow(required: number): void {
     let cap = this.buf.byteLength;
     while (cap < required) cap *= 2;
     const grown = new Uint8Array(cap);
@@ -55,13 +60,15 @@ export class OTWriter {
   }
 
   writeUint8(v: number): void {
-    this.ensure(1);
-    this.buf[this.size++] = v & 0xff;
+    const s = this.size;
+    if (s + 1 > this.buf.byteLength) this.grow(s + 1);
+    this.buf[s] = v & 0xff;
+    this.size = s + 1;
   }
 
   writeUint16(v: number): void {
-    this.ensure(2);
     const s = this.size;
+    if (s + 2 > this.buf.byteLength) this.grow(s + 2);
     this.buf[s] = (v >>> 8) & 0xff;
     this.buf[s + 1] = v & 0xff;
     this.size = s + 2;
@@ -70,16 +77,18 @@ export class OTWriter {
   /** 批量写入字节块（TypedArray.set，远快于逐字节 writeUint8 循环） */
   writeBytes(arr: Uint8Array): void {
     const n = arr.byteLength;
-    this.ensure(n);
-    this.buf.set(arr, this.size);
-    this.size += n;
+    const s = this.size;
+    const required = s + n;
+    if (required > this.buf.byteLength) this.grow(required);
+    this.buf.set(arr, s);
+    this.size = required;
   }
 
   /** 在当前末尾写入 int16（大端，支持负数；如 SingleSubst format1 的 deltaGlyphID）。
    *  原实现依赖 number[] 索引赋值到 length 位置隐式扩展数组，Uint8Array 版需显式 ensure + 推进 size。 */
   writeInt16(v: number): void {
-    this.ensure(2);
     const s = this.size;
+    if (s + 2 > this.buf.byteLength) this.grow(s + 2);
     const u16 = v < 0 ? 0x10000 + (v & 0xffff) : v & 0xffff;
     this.buf[s] = (u16 >>> 8) & 0xff;
     this.buf[s + 1] = u16 & 0xff;
@@ -96,9 +105,9 @@ export class OTWriter {
 
   /** 预留一个 uint16 偏移量槽位，flush 时写入 (targetGetter() - base) */
   reserveOffset16(base: number, targetGetter: () => number): void {
-    this.ensure(2);
     const pos = this.size;
-    this.size += 2;
+    if (pos + 2 > this.buf.byteLength) this.grow(pos + 2);
+    this.size = pos + 2;
     this.patches.push({ pos, base, targetGetter });
   }
 
