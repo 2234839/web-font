@@ -55,6 +55,49 @@ function readIndex(b: Uint8Array, pos: number): CffIndex {
   return { start: pos, count, offSize, offsets, dataStart, end: dataStart + offsets[count] - 1 };
 }
 
+/** INDEX 轻量头部：只解析 count/offSize/dataStart，不解析 (count+1) 个 offset 数组。
+ *  Local Subr INDEX 引用收集只需按 subr 编号读个别 offset（思源 FD12 26550 subr 仅引用十几个），
+ *  全量 readIndex 解析 26551 个 offset 占 subsetCFF 一半耗时，按需读消除之。 */
+interface IndexHeader {
+  /** INDEX 起始偏移 */
+  start: number;
+  /** INDEX 内对象数量 */
+  count: number;
+  /** 偏移量字节宽度（1~4） */
+  offSize: number;
+  /** 偏移量数组起始（紧接 count/offSize 之后） */
+  offBase: number;
+  /** 数据区起始（紧接偏移量数组之后 = offBase + (count+1)*offSize） */
+  dataStart: number;
+  /** INDEX 结束位置（= 最后一个 object 的尾） */
+  end: number;
+}
+
+/** 只读 INDEX 头部（count + offSize + dataStart + end），不解析 offset 数组。
+ *  end 需读第 count 个 offset（位于 offBase + count*offSize）。 */
+function readIndexHeader(b: Uint8Array, pos: number): IndexHeader {
+  const count = (b[pos] << 8) | b[pos + 1];
+  /** count=0 的 INDEX 仅 2 字节 */
+  if (count === 0) return { start: pos, count: 0, offSize: 0, offBase: pos + 2, dataStart: pos + 2, end: pos + 2 };
+  const offSize = b[pos + 2];
+  const offBase = pos + 3;
+  const dataStart = offBase + (count + 1) * offSize;
+  /** 读第 count 个 offset（哨兵，= 总数据长 + 1）算 end */
+  let lastOff = 0;
+  let op = offBase + count * offSize;
+  for (let j = 0; j < offSize; j++) lastOff = (lastOff << 8) | b[op++];
+  return { start: pos, count, offSize, offBase, dataStart, end: dataStart + lastOff - 1 };
+}
+
+/** 按 object 编号 i 读取 INDEX 的第 i 个 offset（1-based，大端 offSize 字节）。
+ *  object i 的数据区间 = [dataStart + offset(i) - 1, dataStart + offset(i+1) - 1)。 */
+function readIndexOffset(b: Uint8Array, h: IndexHeader, i: number): number {
+  let v = 0;
+  let op = h.offBase + i * h.offSize;
+  for (let j = 0; j < h.offSize; j++) v = (v << 8) | b[op++];
+  return v;
+}
+
 /** 只取 INDEX 的字节范围 [start, end)，不解析中间 offset 数组。
  *  Local/Global Subr INDEX 透传时只需整体字节切片，全量解析 count+1 个 offset 是纯浪费
  *  （思源等大字体的 Local Subr 可达数千 subr，readIndex 全量解析占 subsetCFF 主要耗时）。
@@ -613,8 +656,8 @@ export function subsetCFF(cffBytes: Uint8Array, subsetGids: number[]): Uint8Arra
     len: number;
     /** Local Subr INDEX 原始字节（无则 null）。思源等 CID 字体字形通过 callsubr 引用本地 subr */
     localSubr: Uint8Array | null;
-    /** Local Subr INDEX 全量解析（off→字节区间），供引用收集与重建；null 表示无 local subr */
-    localSubrIdx: CffIndex | null;
+    /** Local Subr INDEX 轻量头部（按需读 offset），供引用收集与重建；null 表示无 local subr */
+    localSubrIdx: IndexHeader | null;
     /** 原 local subr bias（localSubrIdx.count 决定） */
     localBias: number;
     /** 子集 local subr 旧索引→新索引映射（引用收集后填充）；null 表示无需重映射（无 subr 或全保留） */
@@ -651,14 +694,15 @@ export function subsetCFF(cffBytes: Uint8Array, subsetGids: number[]): Uint8Arra
       const privDict = parseDict(b, privOrigOff, privOrigOff + privLen);
       const subrRel = privDict.get(OP_LocalSubr)?.[0];
       let localSubr: Uint8Array | null = null;
-      let localSubrIdx: CffIndex | null = null;
+      let localSubrIdx: IndexHeader | null = null;
       let localBias = 0;
       if (subrRel !== undefined) {
         /** Local Subr INDEX 紧接 Private DICT 字节之后（绝对偏移 = privOrigOff + subrRel） */
         const subrAbs = privOrigOff + subrRel;
-        /** 全量解析 INDEX（含所有 offset）：引用收集需按 subr 编号读字节区间，
-         *  子集重建需重排 offset。仅命中的 Private 才解析（思源仅 1-2 个 FD 有 subr）。 */
-        localSubrIdx = readIndex(b, subrAbs);
+        /** 轻量头部：只读 count/offSize/dataStart，不解析 (count+1) 个 offset。
+         *  引用收集/重建只按 subr 编号读个别 offset（思源 26550 subr 仅引用十几个），
+         *  全量 readIndex 占 subsetCFF 一半耗时，按需读消除之。 */
+        localSubrIdx = readIndexHeader(b, subrAbs);
         localBias = subrBias(localSubrIdx.count);
         localSubr = b.subarray(localSubrIdx.start, localSubrIdx.end);
       }
@@ -693,8 +737,9 @@ export function subsetCFF(cffBytes: Uint8Array, subsetGids: number[]): Uint8Arra
         if (!idx) continue;
         const before = refs.size;
         for (const sn of [...refs]) {
-          const ss = idx.dataStart + idx.offsets[sn] - 1;
-          const se = idx.dataStart + idx.offsets[sn + 1] - 1;
+          /** 按需读 offset（避免全量解析 INDEX） */
+          const ss = idx.dataStart + readIndexOffset(b, idx, sn) - 1;
+          const se = idx.dataStart + readIndexOffset(b, idx, sn + 1) - 1;
           collectSubrRefs(b, ss, se, info.localBias, idx.count, refs, dummyGsubrRefs);
         }
         if (refs.size > before) changed = true;
@@ -719,8 +764,9 @@ export function subsetCFF(cffBytes: Uint8Array, subsetGids: number[]): Uint8Arra
       /** 重建 INDEX：按新顺序写出被引用的 subr 字节。subr 内部 callsubr 也需重映射（递归 patch） */
       const objects: { bytes: Uint8Array; start: number; len: number }[] = [];
       for (const oldSn of sortedRefs) {
-        const ss = idx.dataStart + idx.offsets[oldSn] - 1;
-        const se = idx.dataStart + idx.offsets[oldSn + 1] - 1;
+        /** 按需读 offset（避免全量解析 INDEX） */
+        const ss = idx.dataStart + readIndexOffset(b, idx, oldSn) - 1;
+        const se = idx.dataStart + readIndexOffset(b, idx, oldSn + 1) - 1;
         const rewritten = rewriteCharstring(b, ss, se, info.localBias, remap, sortedRefs.length);
         objects.push({ bytes: rewritten, start: 0, len: rewritten.length });
       }
