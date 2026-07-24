@@ -243,11 +243,32 @@ export function collectSubrRefs(
   let hasSubr = false;
   while (p < end) {
     const b0 = b[p++];
-    if (b0 === 255) {
-      /** fixed point（坐标），4 字节，不入栈编号判定 */
-      lastVal = NaN;
-      stackLen++;
-      p += 4;
+    /**
+     * 分支重排：operand（b0>=32，坐标/数值）占 CJK charstring 绝大多数字节，最先判定。
+     * 旧顺序按字节值升序（255→28→29→32-246），最热的 32-246 单字节 operand 要先 3 次比较不命中才进入。
+     * 现按热度：b0>=32 operand 优先（一次比较命中热路径），<32 走操作码分支。
+     */
+    if (b0 >= 32) {
+      if (b0 <= 246) {
+        /** 单字节 operand（值 -107~107），最热 */
+        lastVal = b0 - 139;
+        stackLen++;
+      } else if (b0 === 255) {
+        /** fixed point（坐标），4 字节，不入栈编号判定 */
+        lastVal = NaN;
+        stackLen++;
+        p += 4;
+      } else if (b0 <= 250) {
+        /** 2 字节正 operand（247~250） */
+        lastVal = (b0 - 247) * 256 + b[p] + 108;
+        stackLen++;
+        p += 1;
+      } else {
+        /** 2 字节负 operand（251~254） */
+        lastVal = -(b0 - 251) * 256 - b[p] - 108;
+        stackLen++;
+        p += 1;
+      }
     } else if (b0 === 28) {
       lastVal = ((b[p] << 24) | (b[p + 1] << 16)) >> 16;
       stackLen++;
@@ -256,17 +277,6 @@ export function collectSubrRefs(
       lastVal = ((b[p] << 24) | (b[p + 1] << 16) | (b[p + 2] << 8) | b[p + 3]) | 0;
       stackLen++;
       p += 4;
-    } else if (b0 >= 32 && b0 <= 246) {
-      lastVal = b0 - 139;
-      stackLen++;
-    } else if (b0 >= 247 && b0 <= 250) {
-      lastVal = (b0 - 247) * 256 + b[p] + 108;
-      stackLen++;
-      p += 1;
-    } else if (b0 >= 251 && b0 <= 254) {
-      lastVal = -(b0 - 251) * 256 - b[p] - 108;
-      stackLen++;
-      p += 1;
     } else {
       /** 操作码（b0 <= 27，含 12 双字节） */
       if (b0 === 12) {
