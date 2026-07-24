@@ -1272,21 +1272,24 @@ export function subsetGSUB(
   currentSortedSubsetGids = Array.from(origToNew.keys()).sort((a, b) => a - b);
 
   /** ---- GSUB Header ---- */
-  const major = r.u16(0);
-  const minor = r.u16(2);
+  /** header offset（0/2/4/6/8）永不越界，dv 直接 getUint16 省方法调用+边界检查；
+   *  派生 offset（lookupListOff 等）改 dv 会使损坏表从 errorFlag 降级变 RangeError crash，
+   *  合法字体零影响（见 [[gpos-dv-getuint16]] 权衡）。dv 在函数顶部已由 gsubBytes 构造。 */
+  const major = dv.getUint16(0, false);
+  const minor = dv.getUint16(2, false);
   if (major !== 1 || minor > 1) {
     /** 不支持的版本，原样返回 */
     return gsubBytes;
   }
-  const scriptListOff = r.u16(4);
-  const featureListOff = r.u16(6);
-  const lookupListOff = r.u16(8);
+  const scriptListOff = dv.getUint16(4, false);
+  const featureListOff = dv.getUint16(6, false);
+  const lookupListOff = dv.getUint16(8, false);
 
   /** ---- 解析 LookupList ---- */
-  const lookupCount = r.u16(lookupListOff);
+  const lookupCount = dv.getUint16(lookupListOff, false);
   const lookupRelOffs: number[] = [];
   for (let i = 0; i < lookupCount; i++) {
-    lookupRelOffs.push(r.u16(lookupListOff + 2 + i * 2));
+    lookupRelOffs.push(dv.getUint16(lookupListOff + 2 + i * 2, false));
   }
 
   /** 第一遍：解析每个 lookup 的 effectiveType 与 subtable 偏移，判断是否可重映射 */
@@ -1304,19 +1307,19 @@ export function subsetGSUB(
   const lookups: LookupInfo[] = [];
   for (let i = 0; i < lookupCount; i++) {
     const lOff = lookupListOff + lookupRelOffs[i];
-    const lookupType = r.u16(lOff);
-    const subTableCount = r.u16(lOff + 4);
+    const lookupType = dv.getUint16(lOff, false);
+    const subTableCount = dv.getUint16(lOff + 4, false);
     const subtableAbsOffs: number[] = [];
     let effectiveType = lookupType;
     for (let j = 0; j < subTableCount; j++) {
-      const subOff = lOff + r.u16(lOff + 6 + j * 2);
+      const subOff = lOff + dv.getUint16(lOff + 6 + j * 2, false);
       if (lookupType === LT_EXTENSION) {
         /** ExtensionSubst format1：ExtensionFormat(=1) + ExtensionLookupType + ExtensionOffset(u32) */
-        if (r.u16(subOff) !== 1) {
+        if (dv.getUint16(subOff, false) !== 1) {
           effectiveType = -1;
           continue;
         }
-        effectiveType = r.u16(subOff + 2);
+        effectiveType = dv.getUint16(subOff + 2, false);
         subtableAbsOffs.push(subOff + r.u32(subOff + 4));
       } else {
         subtableAbsOffs.push(subOff);
