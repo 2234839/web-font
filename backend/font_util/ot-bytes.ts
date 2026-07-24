@@ -160,6 +160,80 @@ export class OTReader {
 }
 
 /**
+ * 计算 ScriptList 的连续字节跨度（相对 listAbs 的字节数），用于判断能否整块原样拷贝。
+ *
+ * ScriptList 不含 glyphId，子表（ScriptTable/LangSys）偏移相对 listAbs 起始。
+ * 绝大多数字体（含思源/初夏/令东的 GPOS 与 GSUB）的 ScriptList 子表紧凑排列在
+ * [listAbs, listAbs+span) 内、与 FeatureList/LookupList 无物理交错——此时该字节块本身
+ * 就是合法 ScriptList，可整块拷贝跳过逐字段重序列化，并保留 fontTools 的 LangSys 去重
+ * （serializeScriptList 紧凑重排会丢失去重、输出反而更大，如思源 OTF 538→1066B）。
+ *
+ * 本函数扫描全部 ScriptTable/LangSys，返回其最大结束偏移作为 span。返回 -1 表示解析异常
+ * （errorFlag，调用方降级 serializeScriptList）。注意：span 仅保证「子表结束位置」，
+ * 调用方还需校验 span 不越过下一表起始以排除物理交错。
+ *
+ * @param r 原始字节读取器
+ * @param listAbs ScriptList 在原始字节中的绝对偏移
+ * @returns ScriptList 字节跨度（≥0），解析异常返回 -1
+ */
+export function scriptListSpan(r: OTReader, listAbs: number): number {
+  r.clearError();
+  const scriptCount = r.u16(listAbs);
+  /** span = listAbs 起，覆盖 ScriptRecord 数组 + 所有 ScriptTable 及其 LangSys 的结束位置 */
+  let span = 2 + scriptCount * 6;
+  for (let i = 0; i < scriptCount; i++) {
+    /** ScriptRecord 偏移相对 listAbs */
+    const scriptRel = r.u16(listAbs + 2 + i * 6 + 4);
+    const scriptAbs = listAbs + scriptRel;
+    const defaultLangSysOff = r.u16(scriptAbs);
+    const langSysCount = r.u16(scriptAbs + 2);
+    /** ScriptTable 头：defaultLangSysOff(2) + langSysCount(2) + LangSysRecord[langSysCount](6) */
+    span = Math.max(span, scriptRel + 4 + langSysCount * 6);
+    /** defaultLangSys 表：lookupOrder(2)+reqFeatureIdx(2)+featureIdxCount(2)+indices */
+    if (defaultLangSysOff !== 0) {
+      const dlAbs = scriptAbs + defaultLangSysOff;
+      const dlRel = scriptRel + defaultLangSysOff;
+      const fic = r.u16(dlAbs + 4);
+      span = Math.max(span, dlRel + 6 + fic * 2);
+    }
+    /** 各 LangSys 表 */
+    for (let li = 0; li < langSysCount; li++) {
+      const lsRel = r.u16(scriptAbs + 4 + li * 6 + 4);
+      const lsAbs = scriptAbs + lsRel;
+      const fic = r.u16(lsAbs + 4);
+      span = Math.max(span, scriptRel + lsRel + 6 + fic * 2);
+    }
+  }
+  return r.errorFlag ? -1 : span;
+}
+
+/**
+ * 计算 FeatureList 的连续字节跨度（相对 listAbs 的字节数），用于判断能否整块原样拷贝。
+ *
+ * FeatureList 不含 glyphId，FeatureTable 偏移相对 listAbs。fontTools 常对内容相同的
+ * FeatureTable 去重（多个 FeatureRecord 指向同一 FeatureTable，如初夏 GPOS 296 个 feature
+ * 共享 1 个 FeatureTable）。serializeFeatureList 逐 feature 重写会丢失去重（296 份独立拷贝，
+ * 1840→3728B）。若 FeatureTable 紧凑排列在 [listAbs, listAbs+span) 内无交错，整块拷贝
+ * 既跳过逐字段序列化、又保留去重。
+ *
+ * @returns FeatureList 字节跨度（≥0），解析异常返回 -1
+ */
+export function featureListSpan(r: OTReader, listAbs: number): number {
+  r.clearError();
+  const featureCount = r.u16(listAbs);
+  let span = 2 + featureCount * 6;
+  for (let i = 0; i < featureCount; i++) {
+    /** FeatureRecord 偏移相对 listAbs */
+    const ftRel = r.u16(listAbs + 2 + i * 6 + 4);
+    const ftAbs = listAbs + ftRel;
+    const lookupIndexCount = r.u16(ftAbs + 2);
+    /** FeatureTable: featureParamsOff(2) + lookupIndexCount(2) + indices */
+    span = Math.max(span, ftRel + 4 + lookupIndexCount * 2);
+  }
+  return r.errorFlag ? -1 : span;
+}
+
+/**
  * 重新序列化 ScriptList（GPOS/GSUB 通用，结构完全相同）
  *
  * ScriptList 不含 glyphId，但子表（ScriptTable/LangSys）偏移相对 ScriptList 起始，

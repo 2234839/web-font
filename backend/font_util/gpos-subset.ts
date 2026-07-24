@@ -14,7 +14,7 @@
  * @reference https://learn.microsoft.com/en-us/typography/opentype/spec/gpos
  */
 
-import { OTWriter as Writer, OTReader as Reader, serializeScriptList, serializeFeatureList } from "./ot-bytes.js";
+import { OTWriter as Writer, OTReader as Reader, serializeScriptList, serializeFeatureList, scriptListSpan, featureListSpan } from "./ot-bytes.js";
 
 /** ValueFormat 位掩码 */
 const VF_X_PLACEMENT = 0x0001;
@@ -180,8 +180,24 @@ export function subsetGPOS(
    *   - 不支持的（MarkBase/Context 等）：原样拷贝原始字节（gid 不重映射，
    *     浏览器用新 gid 查 coverage 查不到会跳过，不会破坏，保留可能的非 gid 相关规则）
    */
-  const scriptListBytes = serializeScriptList(r, scriptListOff);
-  const featureListBytes = serializeFeatureList(r, featureListOff);
+  /** ScriptList / FeatureList 整块拷贝快路径：
+   *  两表均不含 glyphId（仅引用 lookup index），若其子表紧凑排列在 [listOff, listOff+span)
+   *  内、不与下一表物理交错，则该字节块本身即合法 ScriptList/FeatureList，直接 subarray 拷贝，
+   *  跳过 serializeScriptList/serializeFeatureList 的逐 u16 读写（初夏 GPOS 0.087ms 主热点），
+   *  并保留 fontTools 的 LangSys/FeatureTable 去重（serialize 重排会丢失，初夏 FL 1840→3728B）。
+   *  span 越界（越过下一表起始，说明物理交错）或解析异常时降级 serialize。 */
+  const slSpan = scriptListSpan(r, scriptListOff);
+  const slContiguous = slSpan >= 0 && scriptListOff + slSpan <= featureListOff;
+  const scriptListBytes = slContiguous
+    ? gposBytes.subarray(scriptListOff, scriptListOff + slSpan)
+    : serializeScriptList(r, scriptListOff);
+  const flSpan = featureListSpan(r, featureListOff);
+  const flContiguous = flSpan >= 0 && featureListOff + flSpan <= lookupListOff;
+  const featureListBytes = flContiguous
+    ? gposBytes.subarray(featureListOff, featureListOff + flSpan)
+    : serializeFeatureList(r, featureListOff);
+  /** span 函数可能因越界读取 set errorFlag，clear 后后续 serializeSubtable 的越界检测仍有效 */
+  r.clearError();
   /** ScriptList/FeatureList 解析失败（异常表）则整体降级返回 null（调用方保留原始 GPOS 字节） */
   if (!scriptListBytes || !featureListBytes) return null;
 
