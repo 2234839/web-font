@@ -128,6 +128,14 @@ export function collectReachableGsubTargets(
   /** 复用临时 Set，避免每个 type6 subtable 两次 new Set 的 GC 压力（初夏明朝 51 lookup 多轮迭代） */
   const refsReuse: Set<number> = new Set<number>();
   const ctxGidsReuse: Set<number> = new Set<number>();
+  /**
+   * 优化316：固定点迭代跨轮稳定性记忆。
+   * collectChainRefs 对 format2（保守全收集）与 format3 triggerable=true 返回 true，表示该 subtable
+   * 的 refs/contextGids 已收全、不随 reachable 扩展而变化。记录其偏移到 settledChain，后续轮直接跳过，
+   * 避免重复扫描（初夏纯标点 280 个 format3，第 2 轮全部可跳过）。triggerable=false 的不记忆，因
+   * reachable 扩展可能使缺失的 coverage gid 进入、令其转为触发。
+   */
+  const settledChain: Set<number> = new Set<number>();
 
   while (changed) {
     changed = false;
@@ -135,10 +143,11 @@ export function collectReachableGsubTargets(
       const lk = lookups[i];
       for (const subAbs of lk.subtableAbsOffs) {
         if (lk.effectiveType === LT_CHAIN) {
+          if (settledChain.has(subAbs)) continue;
           /** type6：收集可触发规则引用的 lookup index 与所需 context gid */
           refsReuse.clear();
           ctxGidsReuse.clear();
-          collectChainRefs(r, subAbs, refsReuse, ctxGidsReuse, inSubset, covCache);
+          const stable = collectChainRefs(r, subAbs, refsReuse, ctxGidsReuse, inSubset, covCache);
           for (const g of ctxGidsReuse) {
             if (!reachable.has(g)) { reachable.add(g); changed = true; }
           }
@@ -152,6 +161,7 @@ export function collectReachableGsubTargets(
               }
             }
           }
+          if (stable) settledChain.add(subAbs);
         } else {
           const newTargets = collectSubtableTargets(r, subAbs, lk.effectiveType, inSubset, covCache);
           for (const g of newTargets) {
@@ -264,7 +274,7 @@ function collectChainRefs(
   contextGids: Set<number>,
   inSubset: (gid: number) => boolean,
   covCache: CoverageCache,
-): void {
+): boolean {
   const format = r.u16(off);
   if (format === 1) {
     /** format1: coverage(gid) + SubRuleSet 数组，按 coverage gid 索引 */
@@ -284,6 +294,9 @@ function collectChainRefs(
         collectChainRuleRefs(r, ruleOff, refs, contextGids, inSubset, true);
       }
     }
+    /** format1 按 coverage gid 分派 SubRuleSet，部分触发部分未触发，未触发部分可能随 reachable
+     *  扩展而新增触发，故保守返回 false（不跨轮跳过）。FiraCode 90 个 format1，影响有限。 */
+    return false;
   } else if (format === 2) {
     /** format2: 三个 ClassDef + 按 input 第一分量 class 索引的 SubClassSet。
      *  class index 不重映射，规则的 backtrack/input/lookahead 是 class index（非 gid），
@@ -299,42 +312,45 @@ function collectChainRefs(
         collectChainRuleRefs(r, ruleOff, refs, contextGids, inSubset, false);
       }
     }
+    /** format2 保守收集全部 ClassDef gid（不判 inSubset），首轮即收全，结果不随 reachable 扩展变化。 */
+    return true;
   } else if (format === 3) {
     /** format3: 显式 coverage 数组 + SubstLookupRecords。
      *  三个 coverage 数组（backtrack/input/lookahead）的 gid 须全在子集才触发。
-     *  优化：triggerable 一旦为 false 即短路（无需继续遍历后续 coverage，原代码无短路会读完全部）；
-     *  去掉原 readCovGids 闭包 + allGids 中间数组（collectChainRefs 在固定点迭代中高频调用，
-     *  初夏纯标点 840 次/call），triggerable 时 gid 直接 add 进 contextGids，省 allGids 中转。 */
+     *
+     *  优化315：消除 readCovGidsChecked 闭包——collectChainRefs 在固定点迭代中高频调用
+     *  （初夏纯标点 280 个 format3 subtable × 2 轮 = 560 次/call），每次创建闭包有分配开销。
+     *  改为显式三段循环，p 局部变量手动推进，保留 triggerable 短路语义（任一 coverage 含
+     *  子集外 gid 即停止后续 coverage 遍历与 refs 收集）。 */
     let p = off + 2;
     let triggerable = true;
-    const readCovGidsChecked = (cnt: number): void => {
+    /** 三段 coverage（backtrack/input/lookahead）逻辑相同：读 count，逐 coverage 校验 gid 全在子集 */
+    for (let seg = 0; seg < 3 && triggerable; seg++) {
+      const cnt = r.u16(p);
+      p += 2;
       for (let k = 0; k < cnt; k++) {
         const covGids = readCoverageGids(r, off + r.u16(p + k * 2), covCache);
         for (const g of covGids) {
           if (!inSubset(g)) {
             triggerable = false;
-            return;
+            break;
           }
           contextGids.add(g);
         }
       }
       p += cnt * 2;
-    };
-    const backtrackCount = r.u16(p); p += 2;
-    readCovGidsChecked(backtrackCount);
-    if (triggerable) {
-      const inputCount = r.u16(p); p += 2;
-      readCovGidsChecked(inputCount);
-    }
-    if (triggerable) {
-      const lookaheadCount = r.u16(p); p += 2;
-      readCovGidsChecked(lookaheadCount);
     }
     if (triggerable) {
       const substCount = r.u16(p);
       for (let k = 0; k < substCount; k++) refs.add(r.u16(p + 2 + k * 4 + 2));
+      /** triggerable=true：三段 coverage gid 全在 reachable（reachable 单调，后续仍全在），
+       *  refs/contextGids 已确定，不随 reachable 扩展变化 → 稳定，可跨轮跳过。 */
+      return true;
     }
+    /** triggerable=false：某 coverage gid 不在 reachable，后续 reachable 扩展可能使其进入 → 不稳定。 */
+    return false;
   }
+  return false;
 }
 
 /**
