@@ -54,11 +54,12 @@ function write(writer, ttf) {
      * 优化310: simple 字形原始字节快路径——直接 set 原始 glyf 字节段（含 header），
      * 跳过 header 重写 + endPts/instructions/flags/坐标 编码。
      */
-    var origRef = glyf._origGlyfRef;
-    if (origRef) {
-      var origBytes = new Uint8Array(origRef.buffer, origRef.byteOffset, origRef.length);
+    /** 优化314: 原始字节引用展平为 _origBuf/_origOff/_origLen，消除 _origGlyfRef 子对象解引用 */
+    var origBuf = glyf._origBuf;
+    if (origBuf) {
+      var origBytes = new Uint8Array(origBuf, glyf._origOff, glyf._origLen);
       fullView.set(origBytes, pos);
-      pos += origRef.length;
+      pos += glyf._origLen;
     } else {
 
     /* 优化31+103: header 直接 view 写入 10 字节，优先使用 _numContours */

@@ -313,11 +313,11 @@ function optimizettf(ttf) {
     if (!glyf.compound) {
       /**
        * 优化310: simple 字形原始字节快路径。
-       * 有 _origGlyfRef 的字形已跳过坐标解析，_numContours/_totalPoints 已在 parse 阶段算好，
+       * 有 _origBuf 的字形已跳过坐标解析，_numContours/_totalPoints 已在 parse 阶段算好，
        * 这里只收集 metrics（maxContours/maxPoints），跳过 ceilReduceAndSizeFromTypedArrays。
        * contours 设为鸭子类型 {length}，供 sizeof/write 识别为"有内容"的字形。
        */
-      if (glyf._origGlyfRef) {
+      if (glyf._origBuf) {
         if (glyf._numContours > 0) {
           glyf.contours = { length: glyf._numContours };
           if (glyf._numContours > m_maxContours) m_maxContours = glyf._numContours;

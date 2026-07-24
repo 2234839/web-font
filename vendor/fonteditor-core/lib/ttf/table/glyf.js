@@ -95,16 +95,19 @@ var _default = exports.default = _table.default.create('glyf', [], {
             var numberOfContours = view.getInt16(vOff, false);
             /** 非(component 引用的) simple 字形走快路径；compound 及 component 走完整 parse */
             if (numberOfContours >= 0 && !componentGids[index]) {
-              /** 优化310+313: 快路径——读 header(bbox) + 最后一个 endPt（算 _totalPoints 供 metrics），
+              /** 优化310+313+314: 快路径——读 header(bbox) + 最后一个 endPt（算 _totalPoints 供 metrics），
                *  存原始字节引用，跳过 instructions/flags/坐标解码（省 parseSimpleGlyf，glyph.read 第一热点）。
-               *  优化313: 不再分配 endPtsOfContours 数组——下游（optimizettf 快路径分支、sizeof/write 拷贝
-               *  原始字节）均不消费它，_totalPoints 只需最后一个 endPt 即可算出。 */
+               *  优化313: 不再分配 endPtsOfContours 数组——_totalPoints 只需最后一个 endPt。
+               *  优化314: 原始字节引用展平到 glyfObj（_origBuf/_origOff/_origLen），
+               *  省掉每个 simple 字形的 _origGlyfRef 子对象分配。 */
               var glyfObj = {};
               glyfObj.xMin = view.getInt16(vOff + 2, false);
               glyfObj.yMin = view.getInt16(vOff + 4, false);
               glyfObj.xMax = view.getInt16(vOff + 6, false);
               glyfObj.yMax = view.getInt16(vOff + 8, false);
-              glyfObj._origGlyfRef = { buffer: fullBuf, byteOffset: fullBufOff + gStart, length: gEnd - gStart };
+              glyfObj._origBuf = fullBuf;
+              glyfObj._origOff = fullBufOff + gStart;
+              glyfObj._origLen = gEnd - gStart;
               if (numberOfContours > 0) {
                 glyfObj._numContours = numberOfContours;
                 /** 最后一个 endPt 在 vOff + 10 + (numContours-1)*2，+1 即总点数 */
@@ -124,9 +127,9 @@ var _default = exports.default = _table.default.create('glyf', [], {
             for (var gi = 0, gl = glyfs.length; gi < gl; gi++) {
               var compGid = glyfs[gi].glyphIndex;
               componentGids[compGid] = true;
-              /** 若 component 已被快路径解析（有 _origGlyfRef），需重新完整 parse 产出 _xArr 供变换。
+              /** 若 component 已被快路径解析（有 _origBuf），需重新完整 parse 产出 _xArr 供变换。
                *  触发于同一轮中 component 排在 compound 之前的情况。 */
-              if (parsedGlyfMap[compGid] && glyphs[compGid] && glyphs[compGid]._origGlyfRef) {
+              if (parsedGlyfMap[compGid] && glyphs[compGid] && glyphs[compGid]._origBuf) {
                 var cgStart = startOffset + loca[compGid];
                 glyphs[compGid] = (0, _parse.default)(reader, ttf, cgStart);
               }
