@@ -13,6 +13,11 @@ function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { de
  *
  * http://www.microsoft.com/typography/otspec/os2.htm
  */
+/**
+ * 优化309: os2head 表类按 format（0/1/2+）的模块级缓存。
+ * 原实现每次 read 都 struct.slice + _table.create 动态建类，是 OS/2 parse 主开销。
+ */
+var _os2HeadCache = {};
 var _default = exports.default = _table.default.create('OS/2', [['version', _struct.default.Uint16], ['xAvgCharWidth', _struct.default.Int16], ['usWeightClass', _struct.default.Uint16], ['usWidthClass', _struct.default.Uint16], ['fsType', _struct.default.Uint16], ['ySubscriptXSize', _struct.default.Uint16], ['ySubscriptYSize', _struct.default.Uint16], ['ySubscriptXOffset', _struct.default.Uint16], ['ySubscriptYOffset', _struct.default.Uint16], ['ySuperscriptXSize', _struct.default.Uint16], ['ySuperscriptYSize', _struct.default.Uint16], ['ySuperscriptXOffset', _struct.default.Uint16], ['ySuperscriptYOffset', _struct.default.Uint16], ['yStrikeoutSize', _struct.default.Uint16], ['yStrikeoutPosition', _struct.default.Uint16], ['sFamilyClass', _struct.default.Uint16],
 // Panose
 ['bFamilyType', _struct.default.Uint8], ['bSerifStyle', _struct.default.Uint8], ['bWeight', _struct.default.Uint8], ['bProportion', _struct.default.Uint8], ['bContrast', _struct.default.Uint8], ['bStrokeVariation', _struct.default.Uint8], ['bArmStyle', _struct.default.Uint8], ['bLetterform', _struct.default.Uint8], ['bMidline', _struct.default.Uint8], ['bXHeight', _struct.default.Uint8],
@@ -88,28 +93,35 @@ var _default = exports.default = _table.default.create('OS/2', [['version', _str
   },
   read: function read(reader, ttf) {
     var format = reader.readUint16(this.offset);
-    var struct = this.struct;
-
-    // format2
-    if (format === 0) {
-      struct = struct.slice(0, 39);
-    } else if (format === 1) {
-      struct = struct.slice(0, 41);
+    /**
+     * 优化309: 按 format 缓存 os2head 表类。
+     * 原实现每次 read 都 struct.slice + _table.create 动态建类（_createClass + Object.assign prototype），
+     * 是 OS/2 parse 的主开销（prof 实测 ObjectAssign 占稳态 4.2%）。
+     * format 仅 0/1/2+ 三种，struct 切片固定，表类按 format 缓存复用。
+     * 另：去掉 Object.assign(os2Fields, tbl)，直接在 tbl 上补默认字段。
+     */
+    var OS2Head = _os2HeadCache[format];
+    if (!OS2Head) {
+      var struct = this.struct;
+      if (format === 0) {
+        struct = struct.slice(0, 39);
+      } else if (format === 1) {
+        struct = struct.slice(0, 41);
+      }
+      OS2Head = _table.default.create('os2head', struct);
+      _os2HeadCache[format] = OS2Head;
     }
-    var OS2Head = _table.default.create('os2head', struct);
     var tbl = new OS2Head(this.offset).read(reader, ttf);
 
-    // 补齐其他version的字段
-    var os2Fields = {
-      ulCodePageRange1: 1,
-      ulCodePageRange2: 0,
-      sxHeight: 0,
-      sCapHeight: 0,
-      usDefaultChar: 0,
-      usBreakChar: 32,
-      usMaxContext: 0
-    };
-    return Object.assign(os2Fields, tbl);
+    // 补齐其他 version 的字段（直接在 tbl 上赋值，避免 Object.assign 创建 os2Fields 中间对象）
+    if (tbl.ulCodePageRange1 === undefined) tbl.ulCodePageRange1 = 1;
+    if (tbl.ulCodePageRange2 === undefined) tbl.ulCodePageRange2 = 0;
+    if (tbl.sxHeight === undefined) tbl.sxHeight = 0;
+    if (tbl.sCapHeight === undefined) tbl.sCapHeight = 0;
+    if (tbl.usDefaultChar === undefined) tbl.usDefaultChar = 0;
+    if (tbl.usBreakChar === undefined) tbl.usBreakChar = 32;
+    if (tbl.usMaxContext === undefined) tbl.usMaxContext = 0;
+    return tbl;
   },
   size: function size(ttf) {
     /* 优化120: 使用 optimizettf 预计算的 metrics，跳过全 glyf 遍历 */

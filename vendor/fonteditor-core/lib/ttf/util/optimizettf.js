@@ -121,10 +121,12 @@ function ceilReduceAndSizeFromTypedArrays(glyf) {
   glyf._preEncodedCoordSize = encodedCoordSize;
   glyf._preXBuf = xCoordBuf.subarray(0, xbi);
   glyf._preYBuf = yCoordBuf.subarray(0, ybi);
-  glyf._preXLen = xbi;
-  glyf._preYLen = ybi;
 
+  /** 优化308: _xArr/_yArr/_flags 都是 parse 阶段产物，optimizettf 消费后全部清空释放内存。
+   *  原 _xArr/_flags 已置 null，_yArr 漏置（悬挂内存，其唯一消费者 transformGlyfContours
+   *  在 optimize 后因 _xArr=null 守卫进不去，实际无读取点）。_preXLen/_preYLen 是 dead write（全库零读取点，subarray.length 已携带长度），删除。 */
   glyf._xArr = null;
+  glyf._yArr = null;
   glyf._flags = null;
   glyf.endPtsOfContours = null;
 }
@@ -263,8 +265,6 @@ function ceilReduceAndSizeFlat(glyf) {
   glyf._preEncodedCoordSize = encodedCoordSize;
   glyf._preXBuf = xCoordBuf.subarray(0, xbi);
   glyf._preYBuf = yCoordBuf.subarray(0, ybi);
-  glyf._preXLen = xbi;
-  glyf._preYLen = ybi;
   glyf._totalPoints = totalPoints;
   glyf._numContours = contours.length;
 }
