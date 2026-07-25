@@ -1667,30 +1667,40 @@ export function subsetGSUB(
       /** 输出用 effectiveType（extension 解包后内嵌，不再用 extension 包裹） */
       w.writeUint16(lk.effectiveType);
       w.writeUint16(lookupFlag);
-      w.writeUint16(lk.subtableAbsOffs.length);
-      const lookupStart = w.length - 6;
-      /**
-       * 优化329（与 subsetGPOS 一致）：subtable 偏移槽用 writeUint16(0) 占位 + 记录 slot 起点，
-       * 序列化后统一 writeInt16At 回填，替代 reserveOffset16 的 per-slot 闭包分配 + patch push。
-       * 思源 GSUB 56 lookup × 323 subtable，闭包消除省去 323 次对象分配。
-       */
-      const subtableSlotsStart = w.length;
-      for (let j = 0; j < lk.subtableAbsOffs.length; j++) {
-        w.writeUint16(0);
-      }
-      if (useMarkFilteringSet) {
-        w.writeUint16(r.u16(lk.origLookupOff + 6 + lk.subtableAbsOffs.length * 2));
-      }
+
       if (lk.allEmpty) {
-        /** 优化331：全空 lookup 批量写空 subtable，跳过逐子表 serializeSubtable。
-         *  输出与逐子表路径逐字节相同（每个子表都是 writeEmptySubtable），仅省去 N 次
-         *  函数调用 + 预检 + rollback 的开销。subCount 不变，lookup 仍存在。 */
-        for (let j = 0; j < lk.subtableAbsOffs.length; j++) {
-          /** subtable 起点（writeEmpty 前）回填到偏移槽（相对 lookupStart） */
-          w.writeInt16At(subtableSlotsStart + j * 2, w.length - lookupStart);
-          writeEmptySubtable(w, lk.effectiveType);
+        /** 优化337（与 subsetGPOS 优化330 一致）：全空 lookup 折叠 subCount=1 的单个空 subtable。
+         *  feature 仅按 lookup index 引用，subCount 改变不影响 feature；浏览器遍历 subtable 查 coverage，
+         *  单个空 subtable 与 N 个全空 subtable 渲染语义等价（都查不到字形跳过）。FiraCode 403 lookup
+         *  中 235 个全空（58%），折叠省去 (N-1)×10 字节/lookup（偏移槽 2 + 空 subtable 8）的逐空序列化。
+         *  与 [[gsub-lookup-deletion-failed-fira]] 区别：不删 lookup（index 不变、feature 不受影响），
+         *  仅把全空 lookup 内的 N 个空 subtable 折叠为 1 个。 */
+        w.writeUint16(1);
+        const lookupStart = w.length - 6;
+        const subtableSlotsStart = w.length;
+        w.writeUint16(0);
+        if (useMarkFilteringSet) {
+          /** markFilteringSet 读原 N 位置（原 lookup 头布局），写到新 1 槽之后（输出布局） */
+          w.writeUint16(r.u16(lk.origLookupOff + 6 + lk.subtableAbsOffs.length * 2));
         }
+        const subtablePos = w.length;
+        writeEmptySubtable(w, lk.effectiveType);
+        w.writeInt16At(subtableSlotsStart, subtablePos - lookupStart);
       } else {
+        w.writeUint16(lk.subtableAbsOffs.length);
+        const lookupStart = w.length - 6;
+        /**
+         * 优化329（与 subsetGPOS 一致）：subtable 偏移槽用 writeUint16(0) 占位 + 记录 slot 起点，
+         * 序列化后统一 writeInt16At 回填，替代 reserveOffset16 的 per-slot 闭包分配 + patch push。
+         * 思源 GSUB 56 lookup × 323 subtable，闭包消除省去 323 次对象分配。
+         */
+        const subtableSlotsStart = w.length;
+        for (let j = 0; j < lk.subtableAbsOffs.length; j++) {
+          w.writeUint16(0);
+        }
+        if (useMarkFilteringSet) {
+          w.writeUint16(r.u16(lk.origLookupOff + 6 + lk.subtableAbsOffs.length * 2));
+        }
         for (let j = 0; j < lk.subtableAbsOffs.length; j++) {
           /** 单个 subtable 重映射失败（coverage gid 全不在子集 / 解析异常）时，
            *  回退已写入字节，改为输出合法的空 subtable（空 coverage，浏览器跳过，不破坏字体）。
