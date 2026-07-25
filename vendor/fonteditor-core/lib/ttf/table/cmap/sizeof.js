@@ -125,8 +125,11 @@ function sizeof(ttf) {
     cmapSupport.format4Segments = format12Segments;
   }
 
-  /** 优化288: 内联赋值，消除临时变量和条件分支 */
-  cmapSupport.hasGLyphsOver2Bytes = len > 0;
+  /** 修复：hasGLyphsOver2Bytes 须用真实判定（有 > 0xFFFF 字符），原 `len > 0` 是 bug——
+   *  任何非空子集都 true，致 BMP 字体白白写 format12 subtable（plat=3/enc=10，与 format4 内容重复）。
+   *  format12 仅 > 0xFFFF 字符必需（format4 覆盖整个 BMP）。fontTools/Google Fonts 子集化亦如此。
+   *  省体积：令东千字文 cmap -880B、思源8字 -112B、FiraCode -160B（BMP 字符的冗余 format12）。 */
+  cmapSupport.hasGLyphsOver2Bytes = hasOver2Bytes;
 
   /** format4Size 需要包含 sentinel segment (+1)，与 write.js 中的 segCount = segments.length/4 + 1 一致 */
   var format4SegCount = cmapSupport.format4Segments.length / 4 + 1;
