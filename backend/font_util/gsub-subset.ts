@@ -376,7 +376,11 @@ function emitCoverage(w: Writer, newGids: number[]): number {
     i = j + 1;
   }
   const rangeCount = rangeStarts.length;
-  if (rangeCount > 0 && rangeCount < n) {
+  /** format 选择按精确字节比较（与 subsetGPOS emitCoverageFromGids 一致）：
+   *  format1(list)=4+n*2，format2(range)=4+rangeCount*6。format2 更紧凑 ⟺ rangeCount*6 < n*2 ⟺ rangeCount < n/3。
+   *  原判据 rangeCount < n 过宽：rangeCount ∈ [n/3, n)（中等长度 range，avg 1~3 gid/range）时误选 format2 致体积更大。
+   *  coverage 的 format1/format2 是等价表达（同一 gid 集合），选 format 不影响渲染，纯体积优化。 */
+  if (rangeCount > 0 && rangeCount * 6 < n * 2) {
     /** format2 区间更紧凑 */
     w.writeUint16(COV_RANGE);
     w.writeUint16(rangeCount);
