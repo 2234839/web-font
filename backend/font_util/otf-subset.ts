@@ -389,8 +389,16 @@ function calcTableChecksum(bytes: Uint8Array): number {
 /**
  * 封装 OTF sfnt（OTTO 签名）：表目录 + 各表数据（4 字节对齐）+ head.checkSumAdjustment 回填。
  * @param tables 有序 (tag → bytes) 列表（按 tag 升序排，便于浏览器二分）
+ * @param skipCheckSum woff2 输出时为 true：encodeTTFToWOFF2 解析 sfnt 目录只读 tag/offset/length
+ *  （line 742-748 不读 off+4 的 checksum），也不消费 head.checkSumAdjustment，故各表 checksum
+ *  （calcTableChecksum 遍历每表全部字节，CFF 是大头）+ 目录 dirSum + adjustment 回填全是浪费。
+ *  与 [[woff2-skip-ttf-checksum]] 的 TTFWriter.skipCheckSum 同类（TTF 侧早做，OTF 侧原遗漏）。
+ *  裸 OTF 输出（otf/ttf）仍需 checksum（浏览器/系统虽宽容但规范要求），此时传 false。
  */
-function assembleSfnt(tables: { tag: string; bytes: Uint8Array }[]): Uint8Array {
+function assembleSfnt(
+  tables: { tag: string; bytes: Uint8Array }[],
+  skipCheckSum: boolean,
+): Uint8Array {
   /** 按 tag 升序（sfnt 规范要求，浏览器按 tag 二分查找表） */
   tables.sort((a, b) => (a.tag < b.tag ? -1 : a.tag > b.tag ? 1 : 0));
   const numTables = tables.length;
@@ -426,11 +434,18 @@ function assembleSfnt(tables: { tag: string; bytes: Uint8Array }[]): Uint8Array 
     out[r + 1] = tables[i].tag.charCodeAt(1);
     out[r + 2] = tables[i].tag.charCodeAt(2);
     out[r + 3] = tables[i].tag.charCodeAt(3);
-    const checksum = calcTableChecksum(tables[i].bytes);
-    tablesDataSum = (tablesDataSum + checksum) >>> 0;
-    dv.setUint32(r + 4, checksum, false);
-    dv.setUint32(r + 8, dataOff, false);
-    dv.setUint32(r + 12, tables[i].bytes.length, false);
+    /** skipCheckSum：woff2 不消费 checksum（off+4 字段），跳过 calcTableChecksum（遍历每表全部字节，CFF 大头） */
+    if (skipCheckSum) {
+      /** checksum 字段保持 0（out 已 zero-init），仅写 offset/length */
+      dv.setUint32(r + 8, dataOff, false);
+      dv.setUint32(r + 12, tables[i].bytes.length, false);
+    } else {
+      const checksum = calcTableChecksum(tables[i].bytes);
+      tablesDataSum = (tablesDataSum + checksum) >>> 0;
+      dv.setUint32(r + 4, checksum, false);
+      dv.setUint32(r + 8, dataOff, false);
+      dv.setUint32(r + 12, tables[i].bytes.length, false);
+    }
     out.set(tables[i].bytes, dataOff);
     dataOff += paddedLens[i];
   }
@@ -438,8 +453,9 @@ function assembleSfnt(tables: { tag: string; bytes: Uint8Array }[]): Uint8Array 
   /** head.checkSumAdjustment = 0xB1B0AFBA - 全文件 sum。
    *  全文件 sum = 目录区 sum + Σ 各表数据段 checksum。
    *  数据段 sum 已在写表时累加（=各表 checksum），目录区仅 dirSize 字节（sfnt 头+表记录），单独遍历即可，
-   *  避免对数百 KB 的 CFF 等大表做第二次整段遍历。 */
-  if (headIdx >= 0) {
+   *  避免对数百 KB 的 CFF 等大表做第二次整段遍历。
+   *  skipCheckSum：woff2 不消费 adjustment（passthroughHead 已置 0），跳过 dirSum 遍历 + 回填。 */
+  if (!skipCheckSum && headIdx >= 0) {
     const headRecOff = 12 + headIdx * 16;
     const headDataOff = dv.getUint32(headRecOff + 8, false);
     let dirSum = 0;
@@ -460,7 +476,13 @@ function assembleSfnt(tables: { tag: string; bytes: Uint8Array }[]): Uint8Array 
  * @param keepGSUB 是否子集化 GSUB/GPOS（连字/标点压缩需要）
  * @returns 子集 OTF 字节；非 CFF 字体或不支持返回 null
  */
-export function subsetOTF(fontBuffer: Uint8Array, codePoints: number[], keepGSUB: boolean): Uint8Array | null {
+export function subsetOTF(
+  fontBuffer: Uint8Array,
+  codePoints: number[],
+  keepGSUB: boolean,
+  /** 输出格式：woff2 时 assembleSfnt 跳过 checksum（woff2 不消费，省 calcTableChecksum 遍历 CFF 大表） */
+  outType?: string,
+): Uint8Array | null {
   const dv = new DataView(fontBuffer.buffer, fontBuffer.byteOffset, fontBuffer.byteLength);
   const tables = readSfntTables(dv);
 
@@ -576,5 +598,6 @@ export function subsetOTF(fontBuffer: Uint8Array, codePoints: number[], keepGSUB
     }
   }
 
-  return assembleSfnt(outTables);
+  /** woff2 输出不消费 sfnt checksum，跳过 calcTableChecksum + adjustment 回填（[[woff2-skip-ttf-checksum]] OTF 侧补齐） */
+  return assembleSfnt(outTables, outType === "woff2");
 }

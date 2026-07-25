@@ -138,7 +138,7 @@ export const fontSubset = (
    *  GSUB/GPOS（思源有）按子集 gid 重映射，保留标点压缩与连字。 */
   if (option.sourceType === "otf") {
     const fontU8 = new Uint8Array(fontBuffer);
-    const otfBytes = subsetOTF(fontU8, codePoints, true);
+    const otfBytes = subsetOTF(fontU8, codePoints, true, option.outType);
     if (otfBytes !== null) {
       if (option.outType === "woff2") {
         return encodeTTFToWOFF2(otfBytes);
