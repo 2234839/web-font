@@ -88,8 +88,24 @@ type GidLookup = Int32Array;
  *
  * subsetGSUB 同步单线程执行，每次入口重置此变量；避免将 sortedSubsetGids 参数穿透
  * serializeSubtable → serializeChainedContextSubst → writeChainFormat2 → readClassDefMap 多层。
+ *
+ * 优化336：惰性构造。原入口无条件 `Array.from(origToNew.keys()).sort()`——全字符集（27677 gid）
+ * sort 耗 ~3.2ms，但仅 readClassDefMap format2 路径需要。无 ClassDef format2 的字体（令东无 GSUB、
+ * 霞鹜/初夏 GSUB 多 format3）这 3.2ms 是纯浪费。改为首次 format2 访问时按需构造并缓存。
  */
-let currentSortedSubsetGids: number[] = [];
+let currentSortedSubsetGids: number[] | null = null;
+/** 惰性构造的源 Map（subsetGSUB 入口设），首次 format2 访问时 Array.from(.keys()).sort() */
+let currentSortedSubsetSource: Map<number, number> | null = null;
+
+/** 惰性获取升序子集 gid 数组（首次调用构造，后续复用缓存） */
+function getSortedSubsetGids(): number[] {
+  if (currentSortedSubsetGids === null) {
+    currentSortedSubsetGids = currentSortedSubsetSource
+      ? Array.from(currentSortedSubsetSource.keys()).sort((a, b) => a - b)
+      : [];
+  }
+  return currentSortedSubsetGids;
+}
 
 /** 读取 Coverage 表，返回覆盖的原 gid 列表（保持顺序）。
  *  传入 cache 时按 coverage 绝对偏移缓存解析结果（同一 off 复用同一数组实例）。
@@ -265,7 +281,7 @@ function readCoverageRemapped(
        * 原实现逐 gid 遍历 [start..e] 全部查 gidLookup（FiraCode 实测 coverage format2 首次展开共 2317 gid，
        * 子集仅占极小部分）。改为在升序子集 gid 数组上二分定位 [start,end] 内的 gid，仅 push 命中的 newGid。
        * range 顺序遍历 + range 内子集 gid 升序扫描 → newGids 保持 gid 升序（与原展开顺序一致）。 */
-      const subsetGids = currentSortedSubsetGids;
+      const subsetGids = getSortedSubsetGids();
       const subsetLen = subsetGids.length;
       let p = off + 4;
       for (let i = 0; i < rangeCount; i++) {
@@ -404,7 +420,7 @@ function serializeSingleSubst(
    *  在 coverage 中二分定位下标，命中才取 target——O(subsetSize × log covCount) 替代 O(covCount)。
    *  与 [[gsub-reachable-type1-fmt2-reverse-iter]] 同思路。仅当 coverage 明显多于子集时启用，
    *  否则短 coverage 原遍历更快（二分开销 > 跳过收益）。 */
-  const subsetGids = currentSortedSubsetGids;
+  const subsetGids = getSortedSubsetGids();
   const covGidCount = coverageCount(r, covOff);
   /** 阈值：coverage gid 数 / 子集 gid 数 > 4 且 coverage 较大时启用反转 */
   const useReverse = covGidCount > subsetGids.length * 4 && covGidCount > 16;
@@ -534,7 +550,7 @@ function serializeMultipleSubst(
 
   /** 反转遍历快路径（同 serializeLigatureSubst / serializeSingleSubst）：coverage 远大于子集时
    *  遍历子集 gid 二分定位 coverage 下标 idx（即 SequenceTable 偏移数组下标），替代全量展开。 */
-  const subsetGids = currentSortedSubsetGids;
+  const subsetGids = getSortedSubsetGids();
   const covGidCount = coverageCount(r, covOff);
   const useReverse = covGidCount > subsetGids.length * 4 && covGidCount > 16;
 
@@ -610,7 +626,7 @@ function serializeAlternateSubst(
 
   /** 反转遍历快路径（同 serializeMultipleSubst / serializeLigatureSubst）：coverage 远大于子集时
    *  遍历子集 gid 二分定位 coverage 下标 idx（即 AlternateSet 偏移数组下标），替代全量展开。 */
-  const subsetGids = currentSortedSubsetGids;
+  const subsetGids = getSortedSubsetGids();
   const covGidCount = coverageCount(r, covOff);
   const useReverse = covGidCount > subsetGids.length * 4 && covGidCount > 16;
 
@@ -690,7 +706,7 @@ function serializeLigatureSubst(
    *  改为遍历子集原始 gid（currentSortedSubsetGids），用 coverageIndexOf 二分定位 coverage 下标 idx，
    *  idx 即 LigatureSet 偏移数组的下标（off + 6 + idx * 2）。与 serializeSingleSubst 反转同思路
    *  （[[gsub-serialize-single-bigcov-reverse]]）。仅当 coverage 明显多于子集时启用。 */
-  const subsetGids = currentSortedSubsetGids;
+  const subsetGids = getSortedSubsetGids();
   const covGidCount = coverageCount(r, covOff);
   const useReverse = covGidCount > subsetGids.length * 4 && covGidCount > 16;
 
@@ -813,7 +829,7 @@ function readClassDefMap(r: Reader, off: number, gidLookup: GidLookup): Map<numb
     }
   } else if (format === 2) {
     const rangeCount = r.u16(off + 2);
-    const subsetGids = currentSortedSubsetGids;
+    const subsetGids = getSortedSubsetGids();
     const subsetLen = subsetGids.length;
     if (subsetLen === 0) return result;
     /** ClassDef format2 class range 数组起始（每个 range 6 字节：startGid/endGid/startClassIndex） */
@@ -1361,7 +1377,7 @@ function coverageAllOutOfSubset(
      *  等价性：range [start,end] 含 gidLookup[g]>=0 的 g ⟺ 排序子集 gid 数组存在 gid ∈ [start,end]
      *  （gidLookup[g]>=0 ⟺ g 是子集 gid ⟺ g 在排序子集数组）。end clamp/越界语义不变：
      *  sortedGids 全部 < numGlyphs，二分天然只在子集 gid 范围查，end>=numGlyphs 时子集 gid 仍可能 <= end。 */
-    const sortedGids = currentSortedSubsetGids;
+    const sortedGids = getSortedSubsetGids();
     const subsetN = sortedGids.length;
     let p = covOff + 4;
     let origNonEmpty = false;
@@ -1461,8 +1477,11 @@ export function subsetGSUB(
   const gidLookup: GidLookup = new Int32Array(maxOrigGid + 1).fill(-1);
   for (const [g, n] of origToNew) gidLookup[g] = n;
 
-  /** 升序子集原始 gid 数组，供 readClassDefMap format2 range 二分优化（替代展开 [start..end] 全部 gid） */
-  currentSortedSubsetGids = Array.from(origToNew.keys()).sort((a, b) => a - b);
+  /** 升序子集原始 gid 数组（惰性）：供 readClassDefMap format2 / coverage range 二分优化。
+   *  优化336：不在入口无条件 sort（全字符集 27677 gid 耗 ~3.2ms），改为设 source + 清缓存，
+   *  首次 getSortedSubsetGids() 调用时（即真正遇到 format2/range 路径）才构造。 */
+  currentSortedSubsetSource = origToNew;
+  currentSortedSubsetGids = null;
 
   /** ---- GSUB Header ---- */
   /** header offset（0/2/4/6/8）永不越界，dv 直接 getUint16 省方法调用+边界检查；
