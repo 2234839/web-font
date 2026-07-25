@@ -1623,12 +1623,18 @@ export function subsetGSUB(
 
   /** LookupList 重写 */
   lookupListAbsHolder[0] = w.length;
+  const lookupListAbs = lookupListAbsHolder[0];
   w.writeUint16(lookupCount);
-  const lookupAbsPositions: number[] = new Array(lookupCount);
+  /**
+   * 优化333: lookup 偏移槽用 writeUint16(0) 占位 + 记录 slot 起点，序列化后统一 writeInt16At 回填，
+   * 替代 reserveOffset16 的 per-lookup 闭包分配 + patch push（与优化329 subtable 槽同思路）。
+   * 思源 GSUB 56 lookup，消除 56 次闭包 + patch 对象分配。
+   */
+  const lookupSlotsStart = w.length;
   for (let i = 0; i < lookupCount; i++) {
-    const slotIdx = i;
-    w.reserveOffset16(lookupListAbsHolder[0], () => lookupAbsPositions[slotIdx]);
+    w.writeUint16(0);
   }
+  const lookupAbsPositions: number[] = new Array(lookupCount);
 
   /** 逐 lookup 序列化 */
   for (let i = 0; i < lookupCount; i++) {
@@ -1694,19 +1700,24 @@ export function subsetGSUB(
       w.writeUint16(lookupFlag);
       w.writeUint16(lk.subtableAbsOffs.length);
       const lookupStart = w.length - 6;
-      const subtableAbsPositions: number[] = new Array(lk.subtableAbsOffs.length);
+      /**
+       * 优化334（与 supported 分支优化329 一致）：unsupported lookup 的 subtable 偏移槽也用
+       * writeUint16(0) 占位 + 记录 slot 起点 + 序列化后 writeInt16At 回填，替代 reserveOffset16 闭包。
+       */
+      const subtableSlotsStart = w.length;
       for (let j = 0; j < lk.subtableAbsOffs.length; j++) {
-        const slotIdx = j;
-        w.reserveOffset16(lookupStart, () => subtableAbsPositions[slotIdx]);
+        w.writeUint16(0);
       }
       if (useMarkFilteringSet) {
         w.writeUint16(r.u16(lk.origLookupOff + 6 + lk.subtableAbsOffs.length * 2));
       }
       for (let j = 0; j < lk.subtableAbsOffs.length; j++) {
-        subtableAbsPositions[j] = w.length;
+        w.writeInt16At(subtableSlotsStart + j * 2, w.length - lookupStart);
         writeEmptySubtable(w, lk.effectiveType);
       }
     }
+    /** 优化333: 回填 lookup 偏移槽（相对 LookupList 起始） */
+    w.writeInt16At(lookupSlotsStart + i * 2, lookupAbsPositions[i] - lookupListAbs);
   }
 
   w.flush();

@@ -259,12 +259,15 @@ export function subsetGPOS(
   const lookupListAbs = w.length;
   lookupListAbsHolder.push(lookupListAbs);
   w.writeUint16(lookupCount);
-  /** 预留各 lookup 的 Offset16 槽（相对 LookupList 起始） */
-  const lookupAbsPositions: number[] = new Array(lookupCount);
+  /**
+   * 优化333: lookup 偏移槽用 writeUint16(0) 占位 + 记录 slot 起点，序列化后统一 writeInt16At 回填，
+   * 替代 reserveOffset16 的 per-lookup 闭包分配 + patch push（与优化329 subtable 槽同思路）。
+   */
+  const lookupSlotsStart = w.length;
   for (let i = 0; i < lookupCount; i++) {
-    const slotIdx = i;
-    w.reserveOffset16(lookupListAbs, () => lookupAbsPositions[slotIdx]);
+    w.writeUint16(0);
   }
+  const lookupAbsPositions: number[] = new Array(lookupCount);
 
   /** 逐个 lookup 序列化 */
   for (let i = 0; i < lookupCount; i++) {
@@ -358,6 +361,8 @@ export function subsetGPOS(
       writeEmptyPosSubtable(w, lk.effectiveType);
       w.writeInt16At(subtableSlotsStart, subtablePos - lookupStart);
     }
+    /** 优化333: 回填 lookup 偏移槽（相对 LookupList 起始） */
+    w.writeInt16At(lookupSlotsStart + i * 2, lookupAbsPositions[i] - lookupListAbs);
   }
 
   w.flush();
