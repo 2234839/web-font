@@ -305,30 +305,44 @@ export function subsetGPOS(
         writeEmptyPosSubtable(w, lk.effectiveType);
         w.writeInt16At(subtableSlotsStart, subtablePos - lookupStart);
       } else {
+        /** 优化338: 跳过 coverage 完全不含子集字形的 subtable。
+         *  hits[j]=false 的 subtable 经 serializeSubtable 必然产出空 coverage（writeEmptyPosSubtable），
+         *  浏览器遍历查不到字形即跳过。直接不输出这些空 subtable（subCount 只数命中），渲染等价：
+         *  lookup 的 subtable 按序遍历，第一个匹配 coverage 应用，删掉空 subtable 不改变非空 subtable 的
+         *  匹配结果。大 lookup（初夏 lookup[7] 285 subtable 仅 6 命中）可省 (279-1)×10B 空表开销。
+         *  与优化330（全空 lookup 折叠 subCount=1）互补：330 处理「全部不命中」，338 处理「部分不命中」。
+         *  至少保留 1 个 subtable（全空已被优化330 的 anyHit=false 分支处理，此处 anyHit=true 必有≥1 命中）。 */
+        const hitIdxs: number[] = [];
+        for (let j = 0; j < hits.length; j++) {
+          if (hits[j]) hitIdxs.push(j);
+        }
+        const keptCount = hitIdxs.length;
+
         /** extension 包裹时输出仍用 effectiveType，直接内嵌 subtable（不再用 extension） */
         w.writeUint16(lk.effectiveType);
         w.writeUint16(lookupFlag);
-        w.writeUint16(lk.subtableAbsOffs.length);
+        w.writeUint16(keptCount);
 
         const lookupStart = w.length - 6;
-        const subtableAbsPositions: number[] = new Array(lk.subtableAbsOffs.length);
+        const subtableAbsPositions: number[] = new Array(keptCount);
         /**
          * 优化329: subtable 偏移槽用 writeUint16(0) 占位 + 记录 slot 位置，序列化后统一 writeInt16At 回填，
          * 替代 reserveOffset16 的 per-slot 闭包分配 + patch push。
          * writeUint16(0) 仅推进 size 不分配对象，回填用已有 writeInt16At。
          */
         const subtableSlotsStart = w.length;
-        for (let j = 0; j < lk.subtableAbsOffs.length; j++) {
+        for (let j = 0; j < keptCount; j++) {
           w.writeUint16(0);
         }
         if (useMarkFilteringSet) {
           w.writeUint16(r.u16(lk.origLookupOff + 6 + lk.subtableAbsOffs.length * 2));
         }
 
-        for (let j = 0; j < lk.subtableAbsOffs.length; j++) {
+        for (let j = 0; j < keptCount; j++) {
+          const origIdx = hitIdxs[j];
           subtableAbsPositions[j] = w.length;
           r.clearError();
-          const ok = serializeSubtable(w, r, lk.subtableAbsOffs[j], lk.effectiveType, gidLookup, hits[j]);
+          const ok = serializeSubtable(w, r, lk.subtableAbsOffs[origIdx], lk.effectiveType, gidLookup, hits[origIdx]);
           /** 越界读取（异常表）也降级为保留原始 GPOS 字节（调用方安全降级） */
           if (!ok || r.errorFlag) return null;
           w.writeInt16At(subtableSlotsStart + j * 2, subtableAbsPositions[j] - lookupStart);

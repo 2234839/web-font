@@ -1691,7 +1691,20 @@ export function subsetGSUB(
         writeEmptySubtable(w, lk.effectiveType);
         w.writeInt16At(subtableSlotsStart, subtablePos - lookupStart);
       } else {
-        w.writeUint16(lk.subtableAbsOffs.length);
+        /** 优化338（与 subsetGPOS 一致）：跳过 coverage gid 全不在子集的 subtable。
+         *  subtableSkipable[j]=true 的 subtable 经 serializeSubtable 必然 return false → fallback 写空 subtable
+         *  （空 coverage，浏览器查不到字形跳过）。直接不输出（subCount 只数非 skipable），渲染等价：
+         *  lookup 的 subtable 按序遍历，第一个匹配 coverage 应用，删掉必然空的 subtable 不改变匹配结果。
+         *  与优化337（全空 lookup 折叠 subCount=1）互补：337 处理「全部 skipable」，338 处理「部分 skipable」。
+         *  format2 class 驱动 subtable 永远 not skipable（isSubtableSkipableByCoverage 对 format2 返回 false），
+         *  故含 format2 的 lookup 不受影响；not skipable 但序列化失败的 subtable 仍走 fallback 写空（保留在输出）。
+         *  anyHit=true（allEmpty=false）保证至少有 1 个 not skipable，keptCount >= 1。 */
+        const keptIdxs: number[] = [];
+        for (let j = 0; j < lk.subtableSkipable.length; j++) {
+          if (!lk.subtableSkipable[j]) keptIdxs.push(j);
+        }
+        const keptCount = keptIdxs.length;
+        w.writeUint16(keptCount);
         const lookupStart = w.length - 6;
         /**
          * 优化329（与 subsetGPOS 一致）：subtable 偏移槽用 writeUint16(0) 占位 + 记录 slot 起点，
@@ -1699,19 +1712,20 @@ export function subsetGSUB(
          * 思源 GSUB 56 lookup × 323 subtable，闭包消除省去 323 次对象分配。
          */
         const subtableSlotsStart = w.length;
-        for (let j = 0; j < lk.subtableAbsOffs.length; j++) {
+        for (let j = 0; j < keptCount; j++) {
           w.writeUint16(0);
         }
         if (useMarkFilteringSet) {
           w.writeUint16(r.u16(lk.origLookupOff + 6 + lk.subtableAbsOffs.length * 2));
         }
-        for (let j = 0; j < lk.subtableAbsOffs.length; j++) {
+        for (let j = 0; j < keptCount; j++) {
+          const origIdx = keptIdxs[j];
           /** 单个 subtable 重映射失败（coverage gid 全不在子集 / 解析异常）时，
            *  回退已写入字节，改为输出合法的空 subtable（空 coverage，浏览器跳过，不破坏字体）。
            *  不再用 copyBytesBlock 按估算范围拷贝——原始 subtable 数据可能与其他 lookup 物理交错，
            *  按 lookup 边界估算会拷贝到错误字节（霞鹜文楷实测 subtable 在表头区之后）。 */
           const before = w.length;
-          const ok = serializeSubtable(w, r, lk.subtableAbsOffs[j], lk.effectiveType, origToNew, covCache, gidLookup, lk.subtableSkipable[j]);
+          const ok = serializeSubtable(w, r, lk.subtableAbsOffs[origIdx], lk.effectiveType, origToNew, covCache, gidLookup, lk.subtableSkipable[origIdx]);
           if (!ok) {
             w.rollback(before);
             writeEmptySubtable(w, lk.effectiveType);
