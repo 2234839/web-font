@@ -143,7 +143,11 @@ function buildSubsetGids(
   /** origGid 集合（保持插入顺序，新 gid = 数组 index） */
   const subsetGids: number[] = [0];
   /** gid → 新 gid（subsetGids 索引），替代 subsetGids.indexOf(gid) 的 O(n) 线性查找。
-   *  原 indexOf 对每个 codepoint 遍历 subsetGids，O(N×M)；全字符集场景退化为 O(N²)。 */
+   *  原 indexOf 对每个 codepoint 遍历 subsetGids，O(N×M)；全字符集场景退化为 O(N²)。
+   *  Map vs Int32Array：此处查询密度 = codePoints 数（~200），而 numGlyphs 可达 65535（CID 字体），
+   *  Int32Array(numGlyphs).fill 成本（65535 次）远超 Map 的 200 次 get，故 Map 更优。
+   *  与 [[gpos-gidlookup-int32array]] 区别：那是 GSUB/GPOS 全模块高频数千次查询 + 按需容量，Int32Array 有效；
+   *  此处低频 + 固定大容量，Map 更优（[[gpos-gidlookup-negative]] 旧直觉适用于此场景）。 */
   const gidToNewGid = new Map<number, number>([[0, 0]]);
   const cpToNewGid = new Map<number, number>();
   for (const cp of codePoints) {

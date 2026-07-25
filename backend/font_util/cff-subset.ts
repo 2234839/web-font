@@ -864,12 +864,11 @@ export function subsetCFF(cffBytes: Uint8Array, subsetGids: number[]): Uint8Arra
   for (let gi = 0; gi < newSubsetNumGlyphs; gi++) {
     const r = charStringRanges[gi];
     const origFd = gidOrigFds[gi];
-    /** 该 gid 所属原 FD 对应的 Private 信息（经 privSegCache 去重，按 privOrigOff 查） */
-    let privInfo: PrivInfo | null = null;
-    /** usedFds 顺序与 fdInfos 一致，反查 origFd→privInfo */
-    for (let fi = 0; fi < usedFds.length; fi++) {
-      if (usedFds[fi] === origFd) { privInfo = fdInfos[fi].priv; break; }
-    }
+    /** O(1) 取该 gid 所属原 FD 的 Private 信息：fdRemap(origFd→newFdIndex) 与 fdInfos 同序，直接下标取，
+     *  替代原 usedFds 线性扫描（大字集多 FD 时 O(glyphs×FDs)→O(glyphs)）。gidOrigFds 的每个 fd
+     *  必在 fdRemap（两者同源构建，见上方 fdRemap 填充循环），缺失则 null 走透传（与原线性扫描未命中等价）。 */
+    const fdIdx = fdRemap.get(origFd);
+    const privInfo: PrivInfo | null = fdIdx !== undefined ? fdInfos[fdIdx].priv : null;
     if (privInfo && privInfo.localRemap && gidHasSubr[gi]) {
       const rewritten = rewriteCharstring(b, r.start, r.end, privInfo.localBias, privInfo.localRemap, privInfo.newLocalCount);
       newCharStringObjects.push({ bytes: rewritten, start: 0, len: rewritten.length });
