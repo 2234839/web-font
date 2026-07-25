@@ -28,7 +28,12 @@ var TTFWriter = exports.default = /*#__PURE__*/function () {
       writeZeroContoursGlyfData: options.writeZeroContoursGlyfData || false,
       hinting: options.hinting || false,
       kerning: options.kerning || false,
-      support: options.support
+      support: options.support,
+      /** 优化316: woff2/woff/eot 输出会重新编码，不消费 TTF directory 的 per-table checksum 与
+       *  head.checkSumAdjustment（encodeTTFToWOFF2 只读 directory 的 tag/offset/length，重建自己的 directory）。
+       *  跳过 checksum 计算可省大字集下 ~5% 的 checkSumArrayBuffer 开销。head.checkSumAdjustment 保持 0 占位
+       *  （resolveTTF 已置 0），浏览器渲染不依赖该字段。仅 ttf 直出（消费 directory checksum）时不能跳过。 */
+      skipCheckSum: options.skipCheckSum || false
     };
   }
 
@@ -136,10 +141,12 @@ var TTFWriter = exports.default = /*#__PURE__*/function () {
        * 优化184: 内联 writeEmpty 为 fullView.fill(0)，避免 writer.writeEmpty 的函数调用 + 边界检查开销 */
       var supportTableList = ttf.support.tables;
       var buf = writer.getBuffer();
+      /** 优化316: skipCheckSum（woff2/woff/eot）时跳过 checksum 计算，head.checkSumAdjustment 保持 0 占位 */
+      var skipCheckSum = this.options.skipCheckSum;
       var wholeCheckSum = 0;
+      /** fullView 仍需用于表 padding fill(0)，skipCheckSum 时不必创建 fullDataView */
       var fullView = new Uint8Array(buf);
-      /** 优化261: 预创建 DataView，复用于所有表的校验和计算，避免每次 checkSumArrayBuffer 创建新 DataView */
-      var fullDataView = new DataView(buf);
+      var fullDataView = skipCheckSum ? null : new DataView(buf);
       for (var si = 0, sl = supportTableList.length; si < sl; si++) {
         var table = supportTableList[si];
         var tableStart = writer.offset;
@@ -153,20 +160,24 @@ var TTFWriter = exports.default = /*#__PURE__*/function () {
           fullView.fill(0, wView.byteOffset + writer.offset, wView.byteOffset + writer.offset + (4 - pad));
           writer.offset += 4 - pad;
         }
-        table.checkSum = _checkSumArrayBuffer(buf, tableStart, table.size, fullView, fullDataView);
-        wholeCheckSum = (wholeCheckSum + table.checkSum) >>> 0;
+        if (!skipCheckSum) {
+          table.checkSum = _checkSumArrayBuffer(buf, tableStart, table.size, fullView, fullDataView);
+          wholeCheckSum = (wholeCheckSum + table.checkSum) >>> 0;
+        }
       }
 
-      /* 优化111: 重新写入校验和，直接 view 写入 */
-      var csView = writer.view;
-      for (var ci = 0, cl = supportTableList.length; ci < cl; ci++) {
-        var offset2 = 12 + ci * 16 + 4;
-        csView.setUint32(offset2, supportTableList[ci].checkSum, false);
-      }
+      if (!skipCheckSum) {
+        /* 优化111: 重新写入校验和，直接 view 写入 */
+        var csView = writer.view;
+        for (var ci = 0, cl = supportTableList.length; ci < cl; ci++) {
+          var offset2 = 12 + ci * 16 + 4;
+          csView.setUint32(offset2, supportTableList[ci].checkSum, false);
+        }
 
-      /* 优化179: 用累加的各表校验和替代全局 checkSum，避免重遍历整个 buffer */
-      var ttfCheckSum = (0xB1B0AFBA - wholeCheckSum) >>> 0;
-      csView.setUint32(ttfHeadOffset + 8, ttfCheckSum, false);
+        /* 优化179: 用累加的各表校验和替代全局 checkSum，避免重遍历整个 buffer */
+        var ttfCheckSum = (0xB1B0AFBA - wholeCheckSum) >>> 0;
+        csView.setUint32(ttfHeadOffset + 8, ttfCheckSum, false);
+      }
       /** 优化260: delete → null 赋值，避免 V8 隐藏类转换 */
       ttf.writeOptions = null;
       ttf.support = null;

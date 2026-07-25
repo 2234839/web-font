@@ -171,7 +171,8 @@ var Font = exports.Font = /*#__PURE__*/function () {
         buffer = new _ttfwriter.default(options).write(this.data);
         buffer = (0, _ttf2woff.default)(buffer, options);
       } else if (options.type === 'woff2') {
-        buffer = new _ttfwriter.default(options).write(this.data);
+        /** 优化316: woff2 重新编码，不消费 TTF directory checksum 与 head.checkSumAdjustment，跳过计算省大字集 ~5% */
+        buffer = new _ttfwriter.default(Object.assign({}, options, { skipCheckSum: true })).write(this.data);
         buffer = (0, _ttftowoff.default)(buffer, options);
       } else if (options.type === 'svg') {
         buffer = (0, _ttf2svg.default)(this.data, options);
