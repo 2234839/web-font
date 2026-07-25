@@ -243,28 +243,58 @@ function buildSubsetMetrics(
   metricsOff: number,
   numberOfHMetrics: number,
   subsetGids: number[],
-): Uint8Array {
+): { bytes: Uint8Array; numberOfHMetrics: number } {
   /** 原始记录：前 numberOfHMetrics 个完整（advance+lsb），其余仅 lsb（advance 复用最后一个） */
   const lastAdv = numberOfHMetrics > 0 ? srcDv.getUint16(metricsOff + (numberOfHMetrics - 1) * 4, false) : 0;
-  const out = new Uint8Array(subsetGids.length * 4);
-  const dv = new DataView(out.buffer);
+
+  /** 先收集每个子集字形的 (advance, lsb) */
+  const advs: number[] = new Array(subsetGids.length);
+  const lsbs: number[] = new Array(subsetGids.length);
   for (let i = 0; i < subsetGids.length; i++) {
     const gid = subsetGids[i];
-    let adv: number;
-    let sb: number;
     if (gid < numberOfHMetrics) {
-      adv = srcDv.getUint16(metricsOff + gid * 4, false);
-      sb = srcDv.getInt16(metricsOff + gid * 4 + 2, false);
+      advs[i] = srcDv.getUint16(metricsOff + gid * 4, false);
+      lsbs[i] = srcDv.getInt16(metricsOff + gid * 4 + 2, false);
     } else {
-      adv = lastAdv;
+      advs[i] = lastAdv;
       /** lsb 数组起始 = metricsOff + numberOfHMetrics*4，每项 2 字节 */
       const lsbArrOff = metricsOff + numberOfHMetrics * 4;
-      sb = srcDv.getInt16(lsbArrOff + (gid - numberOfHMetrics) * 2, false);
+      lsbs[i] = srcDv.getInt16(lsbArrOff + (gid - numberOfHMetrics) * 2, false);
     }
-    dv.setUint16(i * 4, adv, false);
-    dv.setInt16(i * 4 + 2, sb, false);
   }
-  return out;
+
+  /** hmtx 规范允许「尾部连续相同 advance 的字形只写 lsb（2字节）」压缩：
+   *  numberOfHMetrics = 最后一个【不同】 advance 的位置 + 1，其后所有字形复用该 advance。
+   *  CJK 全角字体 advance 几乎全相同（如 1000），子集后多数 advance 一致，压缩省 (N-numLongMetrics)*2 字节。
+   *  从尾部向前找最长连续相同 advance 段（至少保留 1 个完整 longMetric）。
+   *  压缩后 advance 与全展开完全等价（浏览器对 gid>=numberOfHMetrics 复用最后一个 advance），渲染不变。 */
+  let numLongMetrics = advs.length;
+  if (advs.length > 1) {
+    const tailAdv = advs[advs.length - 1];
+    /** 至少保留 1 个完整 longMetric（numLongMetrics >= 1） */
+    for (let i = advs.length - 1; i >= 1; i--) {
+      if (advs[i] !== tailAdv) {
+        numLongMetrics = i + 1;
+        break;
+      }
+      numLongMetrics = i;
+    }
+  }
+
+  const out = new Uint8Array(numLongMetrics * 4 + (advs.length - numLongMetrics) * 2);
+  const dv = new DataView(out.buffer);
+  let off = 0;
+  for (let i = 0; i < advs.length; i++) {
+    if (i < numLongMetrics) {
+      dv.setUint16(off, advs[i], false);
+      dv.setInt16(off + 2, lsbs[i], false);
+      off += 4;
+    } else {
+      dv.setInt16(off, lsbs[i], false);
+      off += 2;
+    }
+  }
+  return { bytes: out, numberOfHMetrics: numLongMetrics };
 }
 
 /** 重建 maxp（OTF 版本 0.5：version(4) + numGlyphs(2)） */
@@ -541,23 +571,24 @@ export function subsetOTF(
   const numberOfHMetrics = dv.getUint16(hhea.offset + 34, false);
 
   /** 子集 hmtx */
-  const newHmtx = buildSubsetMetrics(dv, hmtx.offset, numberOfHMetrics, subsetGids);
+  /** 子集 hmtx（尾部相同 advance 压缩为只写 lsb，返回压缩后 numberOfHMetrics） */
+  const hmtxResult = buildSubsetMetrics(dv, hmtx.offset, numberOfHMetrics, subsetGids);
 
   /** 组装各表 */
   const outTables: { tag: string; bytes: Uint8Array }[] = [];
   outTables.push({ tag: "CFF ", bytes: newCFF });
   outTables.push({ tag: "cmap", bytes: newCmap });
-  outTables.push({ tag: "hmtx", bytes: newHmtx });
+  outTables.push({ tag: "hmtx", bytes: hmtxResult.bytes });
   outTables.push({ tag: "maxp", bytes: buildSubsetMaxp(subsetGids.length) });
   outTables.push({ tag: "post", bytes: buildSubsetPost() });
 
   /** head 透传（patch checkSumAdjustment 占位） */
   outTables.push({ tag: "head", bytes: passthroughHead(dv, head.offset, head.length) });
-  /** hhea 透传 + patch numberOfHMetrics = subsetGids.length */
+  /** hhea 透传 + patch numberOfHMetrics 为压缩后的值（hmtx 尾部相同 advance 已折叠） */
   {
     const hheaBytes = new Uint8Array(dv.buffer, dv.byteOffset + hhea.offset, hhea.length).slice();
     const hheaDv = new DataView(hheaBytes.buffer);
-    hheaDv.setUint16(34, subsetGids.length, false);
+    hheaDv.setUint16(34, hmtxResult.numberOfHMetrics, false);
     outTables.push({ tag: "hhea", bytes: hheaBytes });
   }
   /** OS/2 透传 + patch usFirstCharIndex/usLastCharIndex */
@@ -572,11 +603,11 @@ export function subsetOTF(
   const vmtx = findTable(tables, "vmtx");
   if (vhea && vmtx) {
     const numOfLongVerMetrics = dv.getUint16(vhea.offset + 34, false);
-    const newVmtx = buildSubsetMetrics(dv, vmtx.offset, numOfLongVerMetrics, subsetGids);
-    outTables.push({ tag: "vmtx", bytes: newVmtx });
+    const vmtxResult = buildSubsetMetrics(dv, vmtx.offset, numOfLongVerMetrics, subsetGids);
+    outTables.push({ tag: "vmtx", bytes: vmtxResult.bytes });
     const vheaBytes = new Uint8Array(dv.buffer, dv.byteOffset + vhea.offset, vhea.length).slice();
     const vheaDv = new DataView(vheaBytes.buffer);
-    vheaDv.setUint16(34, subsetGids.length, false);
+    vheaDv.setUint16(34, vmtxResult.numberOfHMetrics, false);
     outTables.push({ tag: "vhea", bytes: vheaBytes });
   }
 
