@@ -1718,32 +1718,29 @@ export function subsetGSUB(
       }
     } else {
       /** 不支持的 lookup（type5 ReverseChain，及尚未验证的类型）：
-       *  保持 lookup 表头（type/flag/subCount）与 subtable 槽位数，逐 subtable 输出空 subtable。
        *  不原样拷贝原始 subtable 字节——其 coverage/ClassDef 等子结构在原始字体中可能与其他
        *  lookup 物理交错、散落在任意偏移，按间距/边界估算拷贝会破坏字体（实测霞鹜文楷 type4
        *  的 coverage 在 subtable 后 2594 字节处）。空 subtable 合法且 coverage 为空，浏览器跳过，
        *  仅丢失该 lookup 覆盖字形的替换规则，不影响其他 lookup 与整体结构。 */
       const lookupFlag = r.u16(lk.origLookupOff + 2);
       const useMarkFilteringSet = (lookupFlag & 0x0010) !== 0;
+      /**
+       * 优化337（与 supported 分支 + subsetGPOS 优化330 一致）：unsupported lookup 本就要把每个
+       *  subtable 输出为空（gid 不重映射、coverage 空），N 个空 subtable 与 1 个空 subtable 渲染语义
+       *  等价，折叠 subCount=1 省去逐空 subtable 序列化。lookup 类型（type/flag）保留原值以维持
+       *  feature 的 lookup 类型语义。基准字体无 unsupported lookup（type5 罕见），此为对称补齐。 */
       w.writeUint16(r.u16(lk.origLookupOff));
       w.writeUint16(lookupFlag);
-      w.writeUint16(lk.subtableAbsOffs.length);
+      w.writeUint16(1);
       const lookupStart = w.length - 6;
-      /**
-       * 优化334（与 supported 分支优化329 一致）：unsupported lookup 的 subtable 偏移槽也用
-       * writeUint16(0) 占位 + 记录 slot 起点 + 序列化后 writeInt16At 回填，替代 reserveOffset16 闭包。
-       */
       const subtableSlotsStart = w.length;
-      for (let j = 0; j < lk.subtableAbsOffs.length; j++) {
-        w.writeUint16(0);
-      }
+      w.writeUint16(0);
       if (useMarkFilteringSet) {
         w.writeUint16(r.u16(lk.origLookupOff + 6 + lk.subtableAbsOffs.length * 2));
       }
-      for (let j = 0; j < lk.subtableAbsOffs.length; j++) {
-        w.writeInt16At(subtableSlotsStart + j * 2, w.length - lookupStart);
-        writeEmptySubtable(w, lk.effectiveType);
-      }
+      const subtablePos = w.length;
+      writeEmptySubtable(w, lk.effectiveType);
+      w.writeInt16At(subtableSlotsStart, subtablePos - lookupStart);
     }
     /** 优化333: 回填 lookup 偏移槽（相对 LookupList 起始） */
     w.writeInt16At(lookupSlotsStart + i * 2, lookupAbsPositions[i] - lookupListAbs);
