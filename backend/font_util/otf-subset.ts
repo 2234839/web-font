@@ -142,7 +142,9 @@ function buildSubsetGids(
   const { fmt4Off, fmt12Off } = selectCmapSubtables(dv, cmapOff);
   /** origGid 集合（保持插入顺序，新 gid = 数组 index） */
   const subsetGids: number[] = [0];
-  const seenGid = new Set<number>([0]);
+  /** gid → 新 gid（subsetGids 索引），替代 subsetGids.indexOf(gid) 的 O(n) 线性查找。
+   *  原 indexOf 对每个 codepoint 遍历 subsetGids，O(N×M)；全字符集场景退化为 O(N²)。 */
+  const gidToNewGid = new Map<number, number>([[0, 0]]);
   const cpToNewGid = new Map<number, number>();
   for (const cp of codePoints) {
     if (cpToNewGid.has(cp)) continue;
@@ -150,11 +152,13 @@ function buildSubsetGids(
     if (cp < 0x10000 && fmt4Off >= 0) gid = lookupFormat4(dv, fmt4Off, cp);
     if (gid === 0 && fmt12Off >= 0) gid = lookupFormat12(dv, fmt12Off, cp);
     if (gid === 0) continue; /** 字体无此字 */
-    if (!seenGid.has(gid)) {
-      seenGid.add(gid);
+    let newGid = gidToNewGid.get(gid);
+    if (newGid === undefined) {
+      newGid = subsetGids.length;
       subsetGids.push(gid);
+      gidToNewGid.set(gid, newGid);
     }
-    cpToNewGid.set(cp, subsetGids.indexOf(gid));
+    cpToNewGid.set(cp, newGid);
   }
   return { subsetGids, cpToNewGid };
 }
