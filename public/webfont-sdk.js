@@ -38,11 +38,47 @@ var WebFont = (function () {
   }
 
   /**
+   * 记录已注入 preconnect 的 origin，避免重复注入
+   *
+   * 跨域字体请求首次握手要付出 ~60ms（TCP+TLS）。
+   * preconnect 让浏览器在首个字体请求发出前就提前完成握手，
+   * 把首个增量片段的延迟从 ~90ms 降到 ~30ms（只剩 1 个 RTT + 服务端处理）。
+   * 同源时 location.origin === baseUrl，无需 preconnect。
+   */
+  var preconnectedOrigins = {};
+
+  /**
+   * 对跨域 baseUrl 注入 <link rel="preconnect">，提前建立 TCP+TLS 连接
+   *
+   * 仅在跨域且尚未注入时执行一次。浏览器会自行管理连接的生命周期，
+   * 即便字体请求迟迟不来，preconnect 的开销也极小（空闲握手）。
+   */
+  function ensurePreconnect(baseUrl) {
+    var origin;
+    try {
+      origin = new URL(baseUrl, location.href).origin;
+    } catch (e) {
+      return;
+    }
+    if (origin === location.origin) return;
+    if (preconnectedOrigins[origin]) return;
+    preconnectedOrigins[origin] = true;
+
+    var link = document.createElement("link");
+    link.rel = "preconnect";
+    link.href = origin;
+    /** crossorigin 必需：字体资源默认匿名请求，preconnect 需匹配否则连接无法复用 */
+    link.crossOrigin = "anonymous";
+    document.head.appendChild(link);
+  }
+
+  /**
    * 获取或创建对应 fontKey 的加载器
    */
   function getLoader(fontName, baseUrl, family, outType) {
     var key = fontKey(fontName, family);
     if (!loaders[key]) {
+      ensurePreconnect(baseUrl);
       loaders[key] = {
         loadedChars: {},
         injectedStyles: [],
