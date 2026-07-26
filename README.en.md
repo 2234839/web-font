@@ -42,6 +42,16 @@ Server-side subsetting + client-side incremental loading.
 6 characters → server subsets font → returns ~6KB (not 16MB)
 ```
 
+**Subsetting performance** (Node.js benchmark, Lingdong Qiji Fuke, avg of 50 rounds):
+
+| Case | ttf | woff2 | Output size |
+|------|-----|-------|-------------|
+| Latin + digits (Hello World 123) | **0.11ms** | 0.13ms | 0.4KB |
+| 8 CJK characters | **0.17ms** | 0.38ms | 8KB |
+| Thousand Character Classic excerpt (88 chars) | **0.37ms** | 2.11ms | 78KB |
+
+Small character sets (the common case) hit **sub-millisecond** subsetting; time scales linearly with glyph count, with woff2's extra cost from brotli compression (a native hard limit). Response headers `X-Timing-Find/Read/Subset/Total` expose per-stage timing.
+
 JS SDK with three loading modes:
 
 ```html
