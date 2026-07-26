@@ -25,6 +25,8 @@ const SUBSET_CACHE_KEY = `${PACKAGE_VERSION}:${PROCESS_START_TIME}`;
 
 /** GET /api?font=...&text=... — 字体裁剪 */
 export async function handleFontSubset(req: Request, res: Response) {
+  /** 入口时间戳，用于响应头 X-Timing-* 分阶段耗时排查 */
+  const t0 = Date.now();
   const url = parseUrl(req);
   const params = new URLSearchParams(url.search);
   const font = params.get("font") || "";
@@ -34,6 +36,8 @@ export async function handleFontSubset(req: Request, res: Response) {
   }
 
   const fontPath = await findFontPath(font);
+  /** findFontPath 结束时间戳（含可能的 readdir 遍历字体目录） */
+  const t1 = Date.now();
   if (!fontPath) {
     return {
       req,
@@ -67,6 +71,8 @@ export async function handleFontSubset(req: Request, res: Response) {
           "Content-Type": contentTypes[outType] || "font/ttf",
           "Cache-Control": "public, max-age=86400",
           "X-Cache": "HIT",
+          /** 缓存命中时仅 findFontPath + cache.get 耗时（毫秒） */
+          "X-Timing-Total": `${t1 - t0}`,
         },
       }),
     };
@@ -85,11 +91,15 @@ export async function handleFontSubset(req: Request, res: Response) {
       }),
     };
   }
+  /** readFontBuffer 结束时间戳（磁盘 IO / buffer 缓存命中） */
+  const t2 = Date.now();
 
   const newFont = await fontSubset(oldFontBuffer, text, {
     outType: outType,
     sourceType: fontType,
   });
+  /** fontSubset 结束时间戳（实际裁剪，亚毫秒级应在此体现） */
+  const t3 = Date.now();
 
   /** 写入裁剪结果缓存 */
   subsetCache.set(cacheKey, newFont as ArrayBuffer);
@@ -104,6 +114,11 @@ export async function handleFontSubset(req: Request, res: Response) {
         "Content-Type": contentTypes[outType] || "font/ttf",
         "Cache-Control": "public, max-age=86400",
         "X-Cache": "MISS",
+        /** 分阶段耗时（毫秒），供排查服务端处理时间分布 */
+        "X-Timing-Find": `${t1 - t0}`,
+        "X-Timing-Read": `${t2 - t1}`,
+        "X-Timing-Subset": `${t3 - t2}`,
+        "X-Timing-Total": `${t3 - t0}`,
       },
     }),
   };
