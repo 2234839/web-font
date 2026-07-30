@@ -125,6 +125,8 @@ services:
       - SUBSET_CACHE_MAX_SIZE=10485760
       # 临时字体保留时限（秒），超时未使用自动删除，默认 10800（3小时）
       - TEMP_RETENTION_SECONDS=10800
+      # 字体裁剪最大并发数，默认 2（内存受限环境建议 1-3）
+      - SUBSET_CONCURRENCY=2
 ```
 
 ## API

@@ -21,5 +21,14 @@ export const tempRetentionSeconds = parseInt(env.TEMP_RETENTION_SECONDS ?? "1080
 /** 字体裁剪结果内存缓存容量上限（字节），默认 10MB */
 export const subsetCacheMaxSize = parseInt(env.SUBSET_CACHE_MAX_SIZE ?? `${10 * 1024 * 1024}`, 10) || 10 * 1024 * 1024;
 
+/**
+ * 字体子集化最大并发数
+ *
+ * 字体裁剪是 CPU/内存密集操作，并发过多会导致 LLRT OOM 崩溃。
+ * 默认 2：在 900M 内存限制下安全运行。
+ * 服务器内存充足时可适当调大（如 4-8）。
+ */
+export const subsetConcurrency = Math.max(1, parseInt(env.SUBSET_CONCURRENCY ?? "2", 10) || 2);
+
 /** 字体搜索目录（按优先级排序：admin > 普通 > 临时） */
 export const fontDirs = ["font/admin", "font", "font/temp"] as const;

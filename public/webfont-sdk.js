@@ -31,6 +31,55 @@ var WebFont = (function () {
   var loaders = {};
 
   /**
+   * 全局并发请求池
+   *
+   * 字体 @font-face 注入 DOM 后浏览器立即发起请求。
+   * 页面同时加载多种字体（如列表页预览）时，短时间内大量请求打满服务端子集化队列。
+   * 通过排队控制同时挂载的 @font-face 数量，避免服务端过载。
+   *
+   * 默认 4：在浏览器同域 6 并发限制内留出余量给其他资源。
+   * 用户可通过 WebFont.setMaxConcurrent(n) 调整。
+   */
+  var maxConcurrent = 4;
+  /** 当前正在执行的字体加载任务数 */
+  var activeFontLoads = 0;
+  /** 待执行的字体加载任务队列（FIFO） */
+  var fontLoadQueue = [];
+
+  /**
+   * 设置最大并发请求数
+   *
+   * @param {number} n - 并发数，最小 1
+   */
+  function setMaxConcurrent(n) {
+    maxConcurrent = Math.max(1, n | 0);
+  }
+
+  /**
+   * 通过并发池执行字体加载
+   *
+   * @param {function} fn - 实际执行 loadChars 的函数
+   */
+  function enqueueFontLoad(fn) {
+    if (activeFontLoads < maxConcurrent) {
+      activeFontLoads++;
+      fn(doneFontLoad);
+    } else {
+      fontLoadQueue.push(fn);
+    }
+  }
+
+  /** 一个加载完成，唤醒队列中下一个 */
+  function doneFontLoad() {
+    activeFontLoads--;
+    if (fontLoadQueue.length > 0 && activeFontLoads < maxConcurrent) {
+      var next = fontLoadQueue.shift();
+      activeFontLoads++;
+      next(doneFontLoad);
+    }
+  }
+
+  /**
    * 生成 fontKey，同一字体+family 归入同一组
    */
   function fontKey(fontName, family) {
@@ -94,34 +143,51 @@ var WebFont = (function () {
 
   /**
    * 差量加载新字符，生成 unicode-range CSS 并注入
+   *
+   * 通过并发队列控制：同时挂载的 @font-face 不超过 maxConcurrent，
+   * 避免页面同时加载大量字体时打满服务端子集化队列。
    * @param {Object} loader - getLoader 返回的加载器对象
    * @param {string[]} newChars - 待加载的新字符数组
    */
   function loadChars(loader, newChars) {
     if (newChars.length === 0) return;
 
-    var fontName = loader.fontName;
-    var family = loader.family;
-    var baseUrl = loader.baseUrl;
-    var loadedChars = loader.loadedChars;
+    enqueueFontLoad(function (done) {
+      var fontName = loader.fontName;
+      var family = loader.family;
+      var baseUrl = loader.baseUrl;
+      var loadedChars = loader.loadedChars;
 
-    var text = newChars.join("");
-    var outType = loader.outType || "woff2";
-    var url = baseUrl + "/api?font=" + encodeURIComponent(fontName) + "&text=" + encodeURIComponent(text) + "&outType=" + outType;
-    var formatStr = outType === "woff2" ? "woff2" : "truetype";
-    var unicodeRanges = newChars
-      .map(function (c) { return "U+" + c.codePointAt(0).toString(16).padStart(4, "0"); })
-      .join(", ");
+      var text = newChars.join("");
+      var outType = loader.outType || "woff2";
+      var url = baseUrl + "/api?font=" + encodeURIComponent(fontName) + "&text=" + encodeURIComponent(text) + "&outType=" + outType;
+      var formatStr = outType === "woff2" ? "woff2" : "truetype";
+      var unicodeRanges = newChars
+        .map(function (c) { return "U+" + c.codePointAt(0).toString(16).padStart(4, "0"); })
+        .join(", ");
 
-    var style = document.createElement("style");
-    style.textContent =
-      '@font-face {\n' +
-      '  font-family: "' + family + '";\n' +
-      '  src: url("' + url + '") format("' + formatStr + '");\n' +
-      '  unicode-range: ' + unicodeRanges + ';\n' +
-      '}\n';
-    document.head.appendChild(style);
-    loader.injectedStyles.push(style);
+      var style = document.createElement("style");
+      style.textContent =
+        '@font-face {\n' +
+        '  font-family: "' + family + '";\n' +
+        '  src: url("' + url + '") format("' + formatStr + '");\n' +
+        '  unicode-range: ' + unicodeRanges + ';\n' +
+        '}\n';
+      document.head.appendChild(style);
+      loader.injectedStyles.push(style);
+
+      /**
+       * 释放并发槽位的策略：
+       *
+       * 优先用 FontFaceSet API 精确追踪字体加载完成；
+       * 不可用时退化为 setTimeout（3 秒兜底窗口，覆盖绝大多数裁剪+传输时间）。
+       */
+      if (document.fonts && document.fonts.load) {
+        document.fonts.load(outType === "woff2" ? "16px \"" + family + "\"" : "16px \"" + family + "\"").then(done, function () { done(); });
+      } else {
+        setTimeout(done, 3000);
+      }
+    });
   }
 
   /**
@@ -424,6 +490,8 @@ var WebFont = (function () {
     loadFont: loadFont,
     observeFont: observeFont,
     loadText: loadText,
-    disposeAll: disposeAll
+    disposeAll: disposeAll,
+    /** 设置客户端最大并发字体请求数（默认 4） */
+    setMaxConcurrent: setMaxConcurrent
   };
 })();

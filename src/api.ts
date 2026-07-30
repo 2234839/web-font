@@ -11,6 +11,8 @@ export interface ServerConfig {
   supportedOutTypes: ("woff2" | "ttf")[];
   /** 临时字体保留时限（秒） */
   tempRetentionSeconds?: number;
+  /** 字体子集化最大并发数 */
+  subsetConcurrency?: number;
 }
 
 export interface UploadResult {

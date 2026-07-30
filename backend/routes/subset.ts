@@ -2,6 +2,8 @@ import { fontSubset } from "../font_util/font";
 import type { FontEditor } from "../../vendor/fonteditor-core/lib/ttf/font.js";
 import { parseUrl, stats, subsetCache, findFontPath, readFontBuffer, markStatsDirty } from "../shared";
 import { markFontUsed } from "../temp_cleaner";
+import { withConcurrencyLimit } from "../subset_queue";
+import { subsetConcurrency } from "../config";
 
 /**
  * 进程启动时戳（模块加载时取一次，进程重启即变化）
@@ -108,10 +110,34 @@ export async function handleFontSubset(req: Request, res: Response) {
   /** readFontBuffer 结束时间戳（磁盘 IO / buffer 缓存命中） */
   const t2 = Date.now();
 
-  const newFont = await fontSubset(oldFontBuffer, text, {
-    outType: outType,
-    sourceType: fontType,
+  /**
+   * 实际子集化（CPU/内存密集）—— 通过并发队列控制
+   *
+   * 缓存未命中的请求才进入队列；并发满时排队等待，超时返回 503。
+   * 避免大字集 brotli 压缩同时执行导致 LLRT OOM 崩溃。
+   */
+  const subsetResult = await withConcurrencyLimit(subsetConcurrency, async () => {
+    return fontSubset(oldFontBuffer, text, {
+      outType: outType,
+      sourceType: fontType,
+    });
   });
+
+  /** 排队超时，返回 503 让客户端重试 */
+  if (subsetResult === null) {
+    return {
+      req,
+      res: new Response("Server busy, please retry", {
+        status: 503,
+        headers: {
+          "Content-Type": "text/plain; charset=utf-8",
+          "Retry-After": "1",
+        },
+      }),
+    };
+  }
+
+  const newFont = subsetResult;
   /** fontSubset 结束时间戳（实际裁剪，亚毫秒级应在此体现） */
   const t3 = Date.now();
 
