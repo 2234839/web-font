@@ -22,19 +22,16 @@ export const tempRetentionSeconds = parseInt(env.TEMP_RETENTION_SECONDS ?? "1080
 export const subsetCacheMaxSize = parseInt(env.SUBSET_CACHE_MAX_SIZE ?? `${10 * 1024 * 1024}`, 10) || 10 * 1024 * 1024;
 
 /**
- * 字体子集化最大并发数
+ * 字体子集化内存水位阈值（MB）
  *
- * 字体裁剪是 CPU/内存密集操作，并发过多会导致 LLRT OOM 崩溃。
- * 默认 4：在 900M 内存限制下安全运行。
- * 内存充裕可调大，内存紧张可调小到 2。
+ * RSS 超过此值时，新的子集化请求排队等待，
+ * 直到前面的请求完成 + GC 释放内存后 RSS 回落。
+ * 默认 600：容器限制 900M 时留 300M 余量给峰值。
  */
-export const subsetConcurrency = Math.max(1, parseInt(env.SUBSET_CONCURRENCY ?? "4", 10) || 4);
+export const subsetMemSoftLimitMB = parseInt(env.SUBSET_MEM_SOFT_LIMIT_MB ?? "600", 10) || 600;
 
 /**
- * 队列等待超时（秒）—— 排队超过此时间返回 503，避免请求无限堆积
- *
- * 50 并发场景下并发 4，每批 ~300ms，排队最久约 (50/4)*300ms ≈ 3.75s，
- * 30 秒足够覆盖正常高峰。极端过载时快速失败让客户端重试。
+ * 队列等待超时（秒）—— 排队超过此时间返回 503，客户端可重试
  */
 export const subsetQueueTimeoutSeconds = Math.max(5, parseInt(env.SUBSET_QUEUE_TIMEOUT ?? "30", 10) || 30);
 

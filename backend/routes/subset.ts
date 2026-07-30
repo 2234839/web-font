@@ -2,8 +2,8 @@ import { fontSubset } from "../font_util/font";
 import type { FontEditor } from "../../vendor/fonteditor-core/lib/ttf/font.js";
 import { parseUrl, stats, subsetCache, findFontPath, readFontBuffer, markStatsDirty } from "../shared";
 import { markFontUsed } from "../temp_cleaner";
-import { withConcurrencyLimit } from "../subset_queue";
-import { subsetConcurrency, subsetQueueTimeoutSeconds } from "../config";
+import { withMemoryGate } from "../subset_queue";
+import { subsetMemSoftLimitMB, subsetQueueTimeoutSeconds } from "../config";
 
 /**
  * 进程启动时戳（模块加载时取一次，进程重启即变化）
@@ -111,12 +111,12 @@ export async function handleFontSubset(req: Request, res: Response) {
   const t2 = Date.now();
 
   /**
-   * 实际子集化（CPU/内存密集）—— 通过并发队列控制
+   * 实际子集化（CPU/内存密集）—— 通过内存水位闸门控制
    *
-   * 缓存未命中的请求才进入队列；并发满时排队等待，超时返回 503。
-   * 避免大字集 brotli 压缩同时执行导致 LLRT OOM 崩溃。
+   * 缓存未命中的请求才进入闸门；RSS 超 softLimit 时排队等待，
+   * 前面请求完成 + GC 释放内存后 RSS 回落才执行。避免 OOM 崩溃。
    */
-  const subsetResult = await withConcurrencyLimit(subsetConcurrency, async () => {
+  const subsetResult = await withMemoryGate(subsetMemSoftLimitMB, async () => {
     return fontSubset(oldFontBuffer, text, {
       outType: outType,
       sourceType: fontType,
