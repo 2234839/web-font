@@ -122,14 +122,14 @@ onUnmounted(() => {
       <span><b style="color: #333">{{ t('cacheHit') }}</b> {{ data.subsetRequests > 0 ? ((data.subsetCacheHits / data.subsetRequests) * 100).toFixed(1) : '0.0' }}%</span>
     </div>
     <!-- 底部进度条：每轮询周期走一轮，走完触发下次刷新 -->
-    <div :key="progressKey" style="position: absolute; bottom: 0; left: 0; height: 2px; background: #1677ff; transform-origin: left; animation: stats-progress 10s linear" />
+    <div :key="progressKey" style="position: absolute; bottom: 0; left: 0; width: 100%; height: 2px; background: #1677ff; transform-origin: left; animation: stats-progress 10s linear" />
   </section>
   </div>
 </template>
 
 <style>
 @keyframes stats-progress {
-  from { transform: scaleX(1); }
-  to { transform: scaleX(0); }
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
 }
 </style>
