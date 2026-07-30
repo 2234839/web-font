@@ -99,6 +99,13 @@ const bodyText = computed(() => meta.value?.config?.bodyText ?? "");
 /** 字符预览行：来自 config.charsetPreview */
 const charsetPreview = computed(() => meta.value?.config?.charsetPreview ?? "");
 
+/** 所有需要预览的文字合并，用于字体子集加载 */
+const allPreviewText = computed(() => {
+  if (!meta.value?.config) return "";
+  const c = meta.value.config;
+  return [c.previewText ?? "", c.bodyTitle ?? "", c.bodyText ?? "", c.charsetPreview ?? ""].join("");
+});
+
 /** 使用方法示例代码（动态拼接 origin + fontName） */
 const usageCode = computed(() =>
   `<link rel="stylesheet"
@@ -112,11 +119,11 @@ const usageCode = computed(() =>
 
 <template>
   <div style="min-height: 100vh; background: #fafafa">
-    <!-- 字体加载：previewContent 为空时不加载（避免无效请求） -->
+    <!-- 字体加载：合并所有预览文字请求字体子集 -->
     <link
-      v-if="previewContent"
+      v-if="allPreviewText"
       rel="stylesheet"
-      :href="`${origin}/api?font=${fontName}&text=${encodeURIComponent(previewContent)}&outType=woff2`"
+      :href="`${origin}/api?font=${fontName}&text=${encodeURIComponent(allPreviewText)}&outType=woff2`"
     />
 
     <!-- 顶部导航 -->
