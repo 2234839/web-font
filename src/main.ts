@@ -14,6 +14,15 @@ import App from "./App.vue";
 const routes = [
   { path: "/", component: () => import("./pages/Home.vue") },
   { path: "/demo", component: () => import("./pages/Demo.vue") },
+  { path: "/fonts", component: () => import("./pages/FontList.vue") },
+  /**
+   * 字体详情页 —— SSG 构建时以 __FONT_NAME__ 占位符渲染模板 HTML，
+   * 后端对 /fonts/* 请求做字符串替换返回动态页面。
+   */
+  {
+    path: "/fonts/:slug",
+    component: () => import("./pages/FontDetail.vue"),
+  },
 ];
 
 export const createApp = ViteSSG(

@@ -10,6 +10,7 @@ import { handleGetConfig } from "./routes/config";
 import { handleStats } from "./routes/stats";
 import { handleUpload } from "./routes/upload";
 import { handleFontSubset } from "./routes/subset";
+import { handleFontDetail } from "./routes/font_detail";
 import "./server/node";
 import "./server/llrt";
 
@@ -74,6 +75,18 @@ const staticFileMiddleware: cMiddleware = async function (req, _res, next) {
         },
       });
     } catch {
+      /**
+       * 字体详情页 SSR：/fonts/xxx 路径无预渲染文件时，
+       * 读取 SSG 模板替换占位符后返回完整 HTML。
+       * handleFontDetail 返回 null 时继续走 SPA fallback。
+       */
+      if (pathname.startsWith("/fonts/")) {
+        const ssrResponse = await handleFontDetail(pathname);
+        if (ssrResponse) {
+          newRes = ssrResponse;
+          return next(req, newRes);
+        }
+      }
       /**
        * 文件/目录不存在 → SPA fallback：返回根 index.html，
        * 交给前端 vue-router 接管路由（支持未预渲染的动态路由）。

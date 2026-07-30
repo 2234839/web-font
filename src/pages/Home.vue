@@ -183,6 +183,9 @@ async function refreshFonts() {
         <button @click="toggleLocale" style="font-size: 12px; border: 1px solid #d9d9d9; border-radius: 6px; padding: 4px 10px; cursor: pointer; background: #fff; color: #333; min-width: 42px">
           {{ locale === 'zh' ? 'EN' : '中' }}
         </button>
+        <router-link to="/fonts" style="font-size: 13px; color: #8b7355; text-decoration: none; border: 1px solid #8b7355; border-radius: 6px; padding: 4px 12px; display: inline-flex; align-items: center; gap: 4px">
+          {{ t('browseFonts') }}
+        </router-link>
         <router-link to="/demo" style="font-size: 13px; color: #8b7355; text-decoration: none; border: 1px solid #8b7355; border-radius: 6px; padding: 4px 12px; display: inline-flex; align-items: center; gap: 4px">
           {{ t('agentSkillDemo') }}
         </router-link>

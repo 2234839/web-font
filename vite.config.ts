@@ -49,7 +49,7 @@ export default defineConfig({
      * vite-ssg 默认会过滤掉动态路由、保留静态路由，
      * 这里显式返回需要 SSG 的路由清单，新增内容页（/blog 等）时在此追加。
      */
-    includedRoutes: () => ["/", "/demo"],
+    includedRoutes: () => ["/", "/demo", "/fonts", "/fonts/__FONT_NAME__"],
     /**
      * 构建期（Node 环境）模拟浏览器全局变量，
      * 防止第三方库在 SSG 阶段访问 window/document 时崩溃。

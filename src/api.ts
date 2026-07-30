@@ -1,6 +1,8 @@
 export interface FontInfo {
   name: string;
-  dir: string;
+  dir?: string;
+  /** 是否为临时上传的字体 */
+  temporary?: boolean;
 }
 
 export interface ServerConfig {

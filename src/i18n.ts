@@ -65,6 +65,8 @@ const messages = {
     viewSkill: "查看 AI Chinese Font Skill →",
     sponsor: "赞助支持",
     agentSkillDemo: "Agent Skill Demo",
+    /** 字体列表入口 */
+    browseFonts: "字体列表",
 
     // FontSelector.vue
     selectFont: "选择字体",
@@ -137,6 +139,8 @@ const messages = {
     viewSkill: "View AI Chinese Font Skill →",
     sponsor: "Sponsor",
     agentSkillDemo: "Agent Skill Demo",
+    /** Font list entry */
+    browseFonts: "Font List",
 
     // FontSelector.vue
     selectFont: "Select font",
