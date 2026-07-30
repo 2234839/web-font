@@ -9,7 +9,17 @@ import { parseUrl, stats, subsetCache, findFontPath, readFontBuffer, markStatsDi
  * 调用会抛 TypeError: not a function，导致容器启动即崩溃。
  * Date.now() 在 Node 与 LLRT 中均可用，且模块只加载一次，取到的就是稳定的启动时戳。
  */
+/**
+ * 构建期由 tsdown define 注入的真实版本号
+ *
+ * 仅 declare（无运行时定义）—— 生产构建时 tsdown 会把它替换为字面量字符串。
+ * 开发态用 `pnpx tsx` 直接跑源码不走构建，此时 PACKAGE_VERSION 未定义，
+ * 用 typeof 探测兜底为 "dev"，避免 ReferenceError 崩溃。
+ * 开发态缓存失效靠下面的 PROCESS_START_TIME 保障，版本号取何值无所谓。
+ */
 declare const PACKAGE_VERSION: string;
+/** 生产=注入的版本号；开发(tsx 直跑)= "dev" */
+const RESOLVED_VERSION = typeof PACKAGE_VERSION !== "undefined" ? PACKAGE_VERSION : "dev";
 /** 进程启动时刻，重启进程即变化 —— 用于开发态「重启即重置内存缓存」 */
 const PROCESS_START_TIME = Date.now();
 /**
@@ -21,7 +31,7 @@ const PROCESS_START_TIME = Date.now();
  *
  * 杜绝「子集化代码已修但缓存返回旧错误结果」的陷阱。
  */
-const SUBSET_CACHE_KEY = `${PACKAGE_VERSION}:${PROCESS_START_TIME}`;
+const SUBSET_CACHE_KEY = `${RESOLVED_VERSION}:${PROCESS_START_TIME}`;
 
 /** GET /api?font=...&text=... — 字体裁剪 */
 export async function handleFontSubset(req: Request, res: Response) {

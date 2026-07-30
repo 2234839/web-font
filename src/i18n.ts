@@ -1,8 +1,15 @@
-import { ref, computed } from "vue"
+import { ref } from "vue"
 
 export type Locale = "zh" | "en"
 
-/** 检测浏览器语言偏好 */
+/**
+ * 检测浏览器语言偏好（仅客户端调用）
+ *
+ * SSG 构建在 Node 环境执行，没有 localStorage / navigator，
+ * 在模块顶层调用会抛 ReferenceError 导致构建崩溃。
+ * 因此 locale 初始值固定为 "zh"，客户端在 onMounted 中调用
+ * syncLocaleFromStorage() 按用户存储/浏览器语言修正。
+ */
 function detectLocale(): Locale {
   const saved = localStorage.getItem("webfont-locale") as Locale | null
   if (saved === "zh" || saved === "en") return saved
@@ -10,8 +17,18 @@ function detectLocale(): Locale {
   return lang.startsWith("zh") ? "zh" : "en"
 }
 
-/** 当前语言 */
-export const locale = ref<Locale>(detectLocale())
+/** 当前语言（SSG 构建期固定 "zh"，客户端挂载后由 syncLocaleFromStorage 修正） */
+export const locale = ref<Locale>("zh")
+
+/**
+ * 客户端挂载后同步语言偏好
+ *
+ * 在页面组件的 onMounted 里调用，从 localStorage / navigator 浏览器偏好
+ * 修正 locale，避免 SSG 预渲染阶段访问浏览器 API。
+ */
+export function syncLocaleFromStorage() {
+  locale.value = detectLocale()
+}
 
 /** 切换语言 */
 export function toggleLocale() {
@@ -52,6 +69,10 @@ const messages = {
     // FontSelector.vue
     selectFont: "选择字体",
     pleaseSelect: "-- 请选择 --",
+    /** 搜索框占位提示 */
+    searchFontPlaceholder: "搜索字体（支持拼音）...",
+    /** 无搜索结果提示 */
+    noFontFound: "未找到匹配的字体",
     outputFormat: "输出格式",
     woff2Label: "WOFF2 体积更小",
     ttfLabel: "TTF 速度更快",
@@ -120,6 +141,10 @@ const messages = {
     // FontSelector.vue
     selectFont: "Select font",
     pleaseSelect: "-- Select --",
+    /** Search placeholder */
+    searchFontPlaceholder: "Search font (pinyin supported)...",
+    /** No search results */
+    noFontFound: "No matching font found",
     outputFormat: "Format",
     woff2Label: "WOFF2 Smaller",
     ttfLabel: "TTF Faster",

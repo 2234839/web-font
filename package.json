@@ -1,7 +1,7 @@
 {
   "name": "webfont",
   "private": true,
-  "version": "1.9.5",
+  "version": "1.11.1",
   "type": "module",
   "scripts": {
     "dev": "pnpx tsx scripts/dev-all.ts",
@@ -9,7 +9,7 @@
     "dev:backend": "pnpx tsx backend/app.ts",
     "dev:backend:llrt": "pnpm build_backend && ./llrt ./dist_backend/app.cjs",
     "serve:llrt": "./llrt ./dist_backend/app.cjs",
-    "build": "vite build",
+    "build": "vite-ssg build",
     "build_backend": "pnpx tsx scripts/build-backend.ts",
     "docker_build": "docker build -t llej0/web-font:${npm_package_version} -t llej0/web-font:latest .",
     "docker_push": "docker push llej0/web-font:${npm_package_version} && docker push llej0/web-font:latest",
@@ -17,6 +17,8 @@
     "release": "pnpm build && pnpm build_backend && pnpm docker_build && pnpm docker_push"
   },
   "dependencies": {
+    "@unhead/vue": "^2.1.16",
+    "pinyin-pro": "^3.28.2",
     "web-streams-polyfill": "^4.3.0"
   },
   "devDependencies": {
@@ -31,7 +33,9 @@
     "undici": "^8.8.0",
     "vite": "^8.1.5",
     "vite-plugin-pilot": "^1.0.35",
+    "vite-ssg": "^28.3.0",
     "vitest": "^4.1.10",
-    "vue": "3.6.0-beta.17"
+    "vue": "3.6.0-beta.17",
+    "vue-router": "^5.2.0"
   }
 }

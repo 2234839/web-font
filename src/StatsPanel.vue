@@ -18,24 +18,37 @@ function formatUptime(seconds: number): string {
   if (seconds < 3600) return `${Math.floor(seconds / 60)}分${seconds % 60}秒`;
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
-  const s = seconds % 60;
+  const s = seconds % 3600 % 60;
   if (h < 24) return `${h}时${m}分${s}秒`;
   const d = Math.floor(h / 24);
   return `${d}天${h % 24}时${m}分`;
 }
 
 const data = ref<ServerStats | null>(null);
+/** 进度条动画 key —— 每次刷新后递增以重置 CSS animation */
+const progressKey = ref(0);
+/** 组件根元素 ref（用于 IntersectionObserver 观测） */
+const rootRef = ref<HTMLElement | null>(null);
 let timer: ReturnType<typeof setInterval> | null = null;
+/** 组件是否在视口内可见 */
+let inViewport = false;
+
+/** 轮询周期（毫秒），与进度条 animation-duration 保持一致 */
+const POLL_INTERVAL = 10_000;
 
 async function load() {
   const s = await fetchStats().catch(() => null);
-  if (s) data.value = s;
+  if (s) {
+    data.value = s;
+    /** 重启进度条动画 */
+    progressKey.value++;
+  }
 }
 
 function startPolling() {
   if (timer) return;
   load();
-  timer = setInterval(load, 10_000);
+  timer = setInterval(load, POLL_INTERVAL);
 }
 
 function stopPolling() {
@@ -45,27 +58,48 @@ function stopPolling() {
   }
 }
 
-function onVisibilityChange() {
-  if (document.visibilityState === "visible") {
-    startPolling();
-  } else {
-    stopPolling();
-  }
+/** 评估是否应该轮询：组件在视口内 且 页面标签可见 */
+function evaluatePolling() {
+  const shouldPoll = inViewport && document.visibilityState === "visible";
+  if (shouldPoll) startPolling();
+  else stopPolling();
 }
 
+function onVisibilityChange() {
+  evaluatePolling();
+}
+
+/** IntersectionObserver 实例 */
+let intersectionObserver: IntersectionObserver | null = null;
+
 onMounted(() => {
+  /** 监听页面标签可见性 */
   document.addEventListener("visibilitychange", onVisibilityChange);
-  startPolling();
+
+  /** 监听组件是否进入视口 */
+  if (rootRef.value) {
+    intersectionObserver = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          inViewport = entry.isIntersecting;
+        }
+        evaluatePolling();
+      },
+      { rootMargin: "50px" },
+    );
+    intersectionObserver.observe(rootRef.value);
+  }
 });
 
 onUnmounted(() => {
   stopPolling();
   document.removeEventListener("visibilitychange", onVisibilityChange);
+  intersectionObserver?.disconnect();
 });
 </script>
 
 <template>
-  <section v-if="data" style="margin-top: 24px; margin-bottom: 28px; padding: 12px 16px; background: #f0f0f0; border-radius: 8px">
+  <section ref="rootRef" v-if="data" style="margin-top: 24px; margin-bottom: 28px; padding: 12px 16px; background: #f0f0f0; border-radius: 8px; position: relative; overflow: hidden">
     <div style="font-size: 13px; font-weight: 600; color: #333; margin-bottom: 4px">{{ t('serverStatus') }}</div>
     <div style="display: flex; gap: 20px; flex-wrap: wrap; font-size: 13px; color: #555; line-height: 2">
       <span><b style="color: #333">{{ t('uptime') }}</b> {{ formatUptime(data.uptime) }}</span>
@@ -74,5 +108,14 @@ onUnmounted(() => {
       <span><b style="color: #333">{{ t('chars') }}</b> {{ data.totalChars }} {{ t('charUnit') }}</span>
       <span><b style="color: #333">{{ t('cacheHit') }}</b> {{ data.subsetRequests > 0 ? ((data.subsetCacheHits / data.subsetRequests) * 100).toFixed(1) : '0.0' }}%</span>
     </div>
+    <!-- 底部进度条：每轮询周期走一轮，走完触发下次刷新 -->
+    <div :key="progressKey" style="position: absolute; bottom: 0; left: 0; height: 2px; background: #1677ff; transform-origin: left; animation: stats-progress 10s linear" />
   </section>
 </template>
+
+<style>
+@keyframes stats-progress {
+  from { transform: scaleX(1); }
+  to { transform: scaleX(0); }
+}
+</style>

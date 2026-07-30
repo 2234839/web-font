@@ -41,7 +41,8 @@ const staticFileMiddleware: cMiddleware = async function (req, _res, next) {
   let newRes: Response;
   if (req.method === "GET") {
     const url = parseUrl(req);
-    const filePath = path_join(ROOT_DIR, url.pathname === "/" ? "index.html" : url.pathname);
+    const pathname = url.pathname;
+    const filePath = path_join(ROOT_DIR, pathname === "/" ? "index.html" : pathname);
     /** 防止路径穿越：规范化后必须仍在 dist 目录内 */
     if (!filePath.startsWith(ROOT_DIR + "/") && filePath !== ROOT_DIR) {
       newRes = new Response("403 Forbidden", {
@@ -51,34 +52,49 @@ const staticFileMiddleware: cMiddleware = async function (req, _res, next) {
       return next(req, newRes);
     }
     try {
+      /**
+       * 解析静态文件路径，处理三种情况：
+       * 1. 精确文件（如 /assets/app.js）→ 直接返回
+       * 2. 目录（如 /demo）→ 尝试 目录/index.html（SSG 子路由预渲染产物）
+       * 3. 不存在（如 SPA 动态路由 /blog/123）→ fallback 到根 index.html
+       */
+      let resolvedPath = filePath;
       const fileStat = await stat(filePath);
-
-      if (fileStat.isFile()) {
-        const fileContent = await readFile(filePath);
-        const extname = filePath.split(".").pop() ?? "";
-        newRes = new Response(fileContent, {
-          status: 200,
-          headers: {
-            "Content-Type": mimeTypes[extname] || "application/octet-stream",
-            "Content-Length": `${fileStat.size}`,
-          },
-        });
-      } else {
+      if (fileStat.isDirectory()) {
+        resolvedPath = path_join(filePath, "index.html");
+        await stat(resolvedPath);
+      }
+      const fileContent = await readFile(resolvedPath);
+      const extname = resolvedPath.split(".").pop() ?? "";
+      newRes = new Response(fileContent, {
+        status: 200,
+        headers: {
+          "Content-Type": mimeTypes[extname] || "application/octet-stream",
+          "Content-Length": `${fileContent.byteLength}`,
+        },
+      });
+    } catch {
+      /**
+       * 文件/目录不存在 → SPA fallback：返回根 index.html，
+       * 交给前端 vue-router 接管路由（支持未预渲染的动态路由）。
+       * 带后缀的请求（.js/.css 等静态资源）不 fallback，直接 404。
+       */
+      const hasExt = /\.[^/]+$/.test(pathname);
+      if (hasExt) {
         newRes = new Response("404 Not Found", {
           status: 404,
+          headers: { "Content-Type": "text/plain; charset=utf-8" },
+        });
+      } else {
+        const fallbackContent = await readFile(path_join(ROOT_DIR, "index.html"));
+        newRes = new Response(fallbackContent, {
+          status: 200,
           headers: {
-            "Content-Type": "text/plain; charset=utf-8",
+            "Content-Type": "text/html; charset=utf-8",
+            "Content-Length": `${fallbackContent.byteLength}`,
           },
         });
       }
-    } catch (err) {
-      console.log("[err]", err);
-      newRes = new Response("500 Internal Server Error", {
-        status: 500,
-        headers: {
-          "Content-Type": "text/plain; charset=utf-8",
-        },
-      });
     }
   } else {
     newRes = new Response("Method Not Allowed", {

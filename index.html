@@ -4,11 +4,15 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="在线字体裁剪工具 — 服务端按需裁剪字体子集，大小无限制，免费开源。支持自定义裁剪、增量加载 SDK，轻松嵌入任何网站。" />
+    <!--
+      SEO 元信息（title/description/OG/JSON-LD）全部由 useHead 在组件中程序化管理，
+      SSG 构建时会自动注入到各页面的 HTML <head> 里。
+      这里只保留最基础的 charset 和 viewport。
+    -->
     <title>WebFont — 在线字体裁剪 | 按需加载 | 免费开源</title>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="app"></div>
     <script src="/webfont-sdk.js"></script>
     <script type="module" src="/src/main.ts"></script>
   </body>
