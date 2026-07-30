@@ -121,7 +121,7 @@ export async function handleFontSubset(req: Request, res: Response) {
       outType: outType,
       sourceType: fontType,
     });
-  }, subsetQueueTimeoutSeconds * 1000);
+  }, subsetQueueTimeoutSeconds * 1000, fontPath);
 
   /** 排队超时，返回 503 让客户端重试 */
   if (subsetResult === null) {
