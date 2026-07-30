@@ -444,6 +444,8 @@ export interface FontUserConfig {
 
 /** 字体元数据结果 */
 export interface FontMeta {
+  /** 元数据版本指纹（算法变更后 bump，用于磁盘缓存失效） */
+  metaVersion: number;
   /** 字体支持的 codepoint 总数 */
   totalCodePoints: number;
   /** 各字符集覆盖率 */
