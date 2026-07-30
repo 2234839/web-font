@@ -34,6 +34,18 @@ export const createApp = ViteSSG(
   ({ router }) => {
     /** 显式使用 history 模式，避免 hash 模式下 SSG 路由不生效 */
     router.options.history = createWebHistory(import.meta.env.BASE_URL);
+
+    /**
+     * 路由切换时滚动到顶部
+     *
+     * 默认 Vue Router 不处理滚动位置，SPA 内导航会保留前一页的滚动偏移，
+     * 从详情页→列表→另一个详情页时用户看到的不是页面顶部而是中间位置。
+     */
+    router.afterEach((_to, _from) => {
+      if (typeof window === "undefined") return;
+      /** nextTick 确保 DOM 已更新到新页面后再滚动 */
+      window.scrollTo({ top: 0 });
+    });
   },
 );
 
