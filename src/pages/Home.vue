@@ -180,10 +180,10 @@ async function refreshFonts() {
     <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px">
       <h1 style="font-size: 22px; font-weight: 600; margin: 0 0 4px 0">Web Font</h1>
       <div style="display: flex; gap: 8px; align-items: center; flex-wrap: nowrap; flex-shrink: 0">
-        <button @click="toggleLocale" style="font-size: 12px; border: 1px solid #d9d9d9; border-radius: 6px; padding: 4px 10px; cursor: pointer; background: #fff; color: #333; min-width: 42px; white-space: nowrap; flex-shrink: 0">
+        <button @click="toggleLocale" style="font-size: 13px; border: 1px solid #d9d9d9; border-radius: 6px; padding: 4px 12px; cursor: pointer; background: #fff; color: #333; white-space: nowrap; flex-shrink: 0; line-height: 1.6">
           {{ locale === 'zh' ? 'EN' : '中' }}
         </button>
-        <router-link to="/fonts" style="font-size: 13px; color: #8b7355; text-decoration: none; border: 1px solid #8b7355; border-radius: 6px; padding: 4px 12px; display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; flex-shrink: 0">
+        <router-link to="/fonts" style="font-size: 13px; color: #fff; text-decoration: none; border-radius: 6px; padding: 5px 14px; display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; flex-shrink: 0; background: linear-gradient(135deg, #1677ff, #0958d9); font-weight: 500; box-shadow: 0 2px 8px rgba(22, 119, 255, 0.3)">
           {{ t('browseFonts') }}
         </router-link>
         <router-link to="/demo" style="font-size: 13px; color: #8b7355; text-decoration: none; border: 1px solid #8b7355; border-radius: 6px; padding: 4px 12px; display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; flex-shrink: 0">

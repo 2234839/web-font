@@ -10,13 +10,13 @@ import { ref, computed, onMounted } from "vue";
 import { useRouter } from "vue-router";
 import { pinyin } from "pinyin-pro";
 import { useHead } from "@unhead/vue";
-import { fetchFonts } from "../api";
-import type { FontInfo } from "../api";
+import { fetchFonts, fetchFontMeta } from "../api";
+import type { FontInfo, FontMeta } from "../api";
 import { SITE_NAME } from "../seo";
 import LazyTrigger from "../components/LazyTrigger.vue";
 
 useHead({
-  title: `字体列表 | ${SITE_NAME}`,
+  title: `所有字体 | ${SITE_NAME}`,
   meta: [
     {
       name: "description",
@@ -31,8 +31,50 @@ const loading = ref(true);
 /** 搜索关键词 */
 const query = ref("");
 
+/** 字体元数据缓存（key = 字体名），卡片进入视口后按需加载 */
+const metaMap = ref<Map<string, FontMeta>>(new Map());
+
 /** 预览文字内容（与 loadText 参数一致） */
 const PREVIEW_TEXT = "静心茶舍 天地无极 ABCDEF";
+
+/** 排序方式：default | codePoints | name | coverage:<charsetKey> */
+const sortBy = ref<string>("default");
+
+/** 从已加载的 meta 中提取可选字符集列表（用第一个有 meta 的字体） */
+const charsetOptions = computed(() => {
+  for (const m of metaMap.value.values()) {
+    return m.coverage.map((c) => ({ key: c.key, name: c.name }));
+  }
+  return [];
+});
+
+/** 取某个字体在指定字符集上的覆盖率（0-100），无数据返回 -1 */
+function coverageOf(fontName: string, key: string): number {
+  const m = metaMap.value.get(fontName);
+  if (!m) return -1;
+  return m.coverage.find((c) => c.key === key)?.percent ?? -1;
+}
+
+/** 排序后的列表 */
+const sortedFonts = computed(() => {
+  const list = [...filteredFonts.value];
+  const sb = sortBy.value;
+  if (sb === "codePoints") {
+    return list.sort((a, b) => {
+      const ta = metaMap.value.get(a.name)?.totalCodePoints ?? 0;
+      const tb = metaMap.value.get(b.name)?.totalCodePoints ?? 0;
+      return tb - ta;
+    });
+  }
+  if (sb === "name") {
+    return list.sort((a, b) => a.name.localeCompare(b.name, "zh-Hans-CN"));
+  }
+  if (sb.startsWith("coverage:")) {
+    const key = sb.slice("coverage:".length);
+    return list.sort((a, b) => coverageOf(b.name, key) - coverageOf(a.name, key));
+  }
+  return list;
+});
 
 /**
  * 过滤后的字体列表 —— 同 FontSelector 的搜索逻辑：
@@ -55,8 +97,9 @@ onMounted(async () => {
 });
 
 /**
- * LazyTrigger @appear 回调 —— 卡片进入视口时按需加载字体子集。
- * WebFont SDK 内部有去重，无需额外缓存。
+ * LazyTrigger @appear 回调 —— 卡片进入视口时：
+ * 1. 按需加载字体预览子集
+ * 2. 请求字体元数据（覆盖率），后端有磁盘缓存不重复计算
  */
 function onCardAppear(fontName: string) {
   (globalThis as any).WebFont?.loadText?.({
@@ -64,6 +107,15 @@ function onCardAppear(fontName: string) {
     text: PREVIEW_TEXT,
     family: fontName,
   });
+  /** 已加载过则跳过 */
+  if (metaMap.value.has(fontName)) return;
+  fetchFontMeta(fontName)
+    .then((m) => {
+      metaMap.value.set(fontName, m);
+      /** 触发响应式更新 */
+      metaMap.value = new Map(metaMap.value);
+    })
+    .catch(() => {});
 }
 
 /** 点击字体卡片 → 跳转详情页 */
@@ -114,27 +166,52 @@ function goToDetail(name: string) {
 
     <!-- 标题 + 搜索 -->
     <div style="max-width: 960px; margin: 0 auto; padding: 40px 24px 24px">
-      <h1 style="font-size: 28px; font-weight: 700; color: #2c2c2c; margin: 0 0 8px">字体列表</h1>
+      <h1 style="font-size: 28px; font-weight: 700; color: #2c2c2c; margin: 0 0 8px">所有字体</h1>
       <p style="font-size: 14px; color: #999; margin: 0 0 24px">
         共 {{ loading ? "..." : fonts.length }} 个字体 · 点击查看完整预览
       </p>
 
-      <!-- 搜索框 -->
-      <input
-        v-model="query"
-        type="text"
-        placeholder="搜索字体（支持拼音）..."
-        style="
-          width: 100%;
-          max-width: 480px;
-          padding: 10px 16px;
-          border: 1px solid #ddd;
-          border-radius: 8px;
-          font-size: 14px;
-          outline: none;
-          box-sizing: border-box;
-        "
-      />
+      <!-- 搜索 + 排序 -->
+      <div style="display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 0">
+        <input
+          v-model="query"
+          type="text"
+          placeholder="搜索字体（支持拼音）..."
+          style="
+            flex: 1;
+            min-width: 200px;
+            max-width: 480px;
+            padding: 10px 16px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            font-size: 14px;
+            outline: none;
+            box-sizing: border-box;
+          "
+        />
+        <select
+          v-model="sortBy"
+          style="
+            padding: 10px 16px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            font-size: 14px;
+            outline: none;
+            background: white;
+            cursor: pointer;
+            white-space: nowrap;
+          "
+        >
+          <option value="default">默认排序</option>
+          <option value="codePoints">字符量 ↓</option>
+          <option value="name">名称 A→Z</option>
+          <option
+            v-for="cs in charsetOptions"
+            :key="cs.key"
+            :value="`coverage:${cs.key}`"
+          >{{ cs.name.replace(/（.+）/, '') }} 覆盖率 ↓</option>
+        </select>
+      </div>
     </div>
 
     <!-- 字体卡片网格 -->
@@ -142,7 +219,7 @@ function goToDetail(name: string) {
       <div v-if="loading" style="text-align: center; padding: 60px; color: #999">加载中...</div>
 
       <div
-        v-else-if="filteredFonts.length === 0"
+        v-else-if="sortedFonts.length === 0"
         style="text-align: center; padding: 60px; color: #999"
       >
         未找到匹配的字体
@@ -158,7 +235,7 @@ function goToDetail(name: string) {
         "
       >
         <LazyTrigger
-          v-for="font in filteredFonts"
+          v-for="font in sortedFonts"
           :key="font.name"
           @appear="onCardAppear(font.name)"
         >
@@ -213,6 +290,21 @@ function goToDetail(name: string) {
             }"
           >
             天地无极 ABCDEF
+          </div>
+
+          <!-- 覆盖率标签 -->
+          <div v-if="metaMap.get(font.name)" style="display: flex; flex-wrap: wrap; gap: 4px; margin-top: 10px">
+            <span
+              v-for="c in (metaMap.get(font.name)?.coverage ?? []).filter(c => c.percent < 100)"
+              :key="c.name"
+              :style="{
+                fontSize: '11px',
+                padding: '2px 6px',
+                borderRadius: '4px',
+                color: c.percent >= 50 ? '#1677ff' : '#ff4d4f',
+                background: c.percent >= 50 ? '#e6f4ff' : '#fff2f0',
+              }"
+            >{{ c.name.replace(/（.+）/, '') }} {{ c.percent }}%</span>
           </div>
           </div>
         </LazyTrigger>

@@ -9,8 +9,8 @@
 import { ref, computed, onMounted } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useHead } from "@unhead/vue";
-import { fetchFonts } from "../api";
-import type { FontInfo } from "../api";
+import { fetchFonts, fetchFontMeta } from "../api";
+import type { FontInfo, FontMeta } from "../api";
 import { FONT_NAME, FONT_SLUG, ORIGIN } from "../placeholders";
 import { SITE_NAME } from "../seo";
 
@@ -43,13 +43,36 @@ useHead({
 
 const fonts = ref<FontInfo[]>([]);
 const notFound = ref(false);
+/** 字体元数据（字符覆盖率） */
+const meta = ref<FontMeta | null>(null);
+const metaLoading = ref(false);
 
 onMounted(async () => {
   origin.value = location.origin;
-  const allFonts = await fetchFonts().catch(() => []);
+  const [allFonts] = await Promise.all([
+    fetchFonts().catch(() => [] as FontInfo[]),
+  ]);
   fonts.value = allFonts;
   notFound.value = allFonts.length > 0 && !allFonts.some((f) => f.name === fontName.value);
+
+  /** 加载字体元数据（覆盖率+支持的字符集） */
+  metaLoading.value = true;
+  meta.value = await fetchFontMeta(fontName.value).catch(() => null);
+  metaLoading.value = false;
 });
+
+/**
+ * 将分号分隔的长文本拆成多行数组。
+ * 字体 name 表中 designer/description 等字段常把多人用 ";" 连接，
+ * 拆分后逐行渲染更清晰。
+ */
+function splitSemicolon(text: string | undefined): string[] {
+  if (!text) return [];
+  return text
+    .split(";")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
 </script>
 
 <template>
@@ -209,6 +232,141 @@ onMounted(async () => {
           }"
         >
           天地无极乾坤借法：0123456789 ABCDEF
+        </div>
+      </div>
+
+      <!-- 字符覆盖率 -->
+      <div
+        v-if="metaLoading || meta"
+        style="
+          background: #fff;
+          border-radius: 12px;
+          padding: 32px 40px;
+          margin-bottom: 24px;
+          box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+        "
+      >
+        <!-- 标签 + 开源链接 -->
+        <div
+          v-if="meta?.config"
+          style="display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px"
+        >
+          <span
+            v-for="tag in meta.config.tags"
+            :key="tag"
+            style="
+              font-size: 12px;
+              padding: 3px 10px;
+              border-radius: 12px;
+              background: #f0f5ff;
+              color: #1677ff;
+            "
+          >{{ tag }}</span>
+          <a
+            v-if="meta.config.homepage"
+            :href="meta.config.homepage"
+            target="_blank"
+            style="
+              font-size: 12px;
+              padding: 3px 10px;
+              border-radius: 12px;
+              background: #f6f6f6;
+              color: #666;
+              text-decoration: none;
+              display: inline-flex;
+              align-items: center;
+              gap: 4px;
+            "
+          >📎 开源仓库</a>
+        </div>
+
+        <!-- 简介 -->
+        <p
+          v-if="meta?.config?.description"
+          style="font-size: 14px; color: #666; line-height: 1.7; margin: 0 0 20px"
+        >
+          {{ meta.config.description }}
+        </p>
+
+        <div style="font-size: 13px; font-weight: 600; color: #999; margin-bottom: 16px">
+          字符覆盖率
+          <span v-if="meta" style="font-weight: 400; margin-left: 8px; color: #bbb">
+            共 {{ meta.totalCodePoints }} 个字符
+          </span>
+        </div>
+
+        <div v-if="metaLoading" style="color: #ccc; font-size: 14px">分析中...</div>
+
+        <div v-else-if="meta" style="display: flex; flex-direction: column; gap: 12px">
+          <div v-for="item in meta.coverage" :key="item.name">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px">
+              <span style="font-size: 13px; color: #555">{{ item.name }}</span>
+              <span style="font-size: 12px; color: #999">
+                {{ item.covered }}/{{ item.total }} · {{ item.percent }}%
+              </span>
+            </div>
+            <!-- 进度条 -->
+            <div style="height: 6px; background: #f0f0f0; border-radius: 3px; overflow: hidden">
+              <div
+                :style="{
+                  width: item.percent + '%',
+                  height: '100%',
+                  borderRadius: '3px',
+                  transition: 'width 0.4s ease',
+                  background:
+                    item.percent >= 90
+                      ? '#52c41a'
+                      : item.percent >= 50
+                        ? '#faad14'
+                        : '#ff4d4f',
+                }"
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 字体信息（来自 name 表） -->
+      <div
+        v-if="meta?.info"
+        style="
+          background: #fff;
+          border-radius: 12px;
+          padding: 32px 40px;
+          margin-bottom: 24px;
+          box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+        "
+      >
+        <div style="font-size: 13px; font-weight: 600; color: #999; margin-bottom: 16px">
+          字体信息
+        </div>
+        <div style="display: grid; grid-template-columns: 80px 1fr; gap: 10px 16px; font-size: 13px">
+          <template v-if="meta.info.designer">
+            <span style="color: #999">设计师</span>
+            <span style="color: #555; display: flex; flex-direction: column; gap: 4px">
+              <span v-for="d in splitSemicolon(meta.info.designer)" :key="d">{{ d }}</span>
+            </span>
+          </template>
+          <template v-if="meta.info.manufacturer">
+            <span style="color: #999">制造商</span>
+            <span style="color: #555">{{ meta.info.manufacturer }}</span>
+          </template>
+          <template v-if="meta.info.version">
+            <span style="color: #999">版本</span>
+            <span style="color: #555">{{ meta.info.version }}</span>
+          </template>
+          <template v-if="meta.info.copyright">
+            <span style="color: #999">版权</span>
+            <span style="color: #555">{{ meta.info.copyright }}</span>
+          </template>
+          <template v-if="meta.info.license">
+            <span style="color: #999">许可</span>
+            <span style="color: #555">{{ meta.info.license }}</span>
+          </template>
+          <template v-if="meta.info.licenseUrl">
+            <span style="color: #999">许可链接</span>
+            <a :href="meta.info.licenseUrl" target="_blank" style="color: #1677ff; text-decoration: none">{{ meta.info.licenseUrl }}</a>
+          </template>
         </div>
       </div>
 

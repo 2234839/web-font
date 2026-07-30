@@ -1,6 +1,7 @@
 import { fontSubset } from "../font_util/font";
 import type { FontEditor } from "../../vendor/fonteditor-core/lib/ttf/font.js";
 import { parseUrl, stats, subsetCache, findFontPath, readFontBuffer, markStatsDirty } from "../shared";
+import { markFontUsed } from "../temp_cleaner";
 
 /**
  * 进程启动时戳（模块加载时取一次，进程重启即变化）
@@ -61,6 +62,9 @@ export async function handleFontSubset(req: Request, res: Response) {
   /** 默认 ttf（兼容性最好） */
   const outTypeParam = params.get("outType") || "";
   const outType = (outTypeParam === "woff2" || outTypeParam === "ttf") ? outTypeParam : "ttf";
+
+  /** 记录字体被使用（临时字体保留机制依赖此时间） */
+  markFontUsed(fontPath);
 
   /** 查询裁剪结果缓存 */
   /** 版本指纹纳入 key：代码变更后旧缓存自动失效 */

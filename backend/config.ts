@@ -15,6 +15,9 @@ export const tempMaxFiles = parseInt(env.TEMP_MAX_FILES ?? "10", 10) || 10;
 /** 临时上传目录总体积上限（字节），默认 200MB */
 export const tempMaxTotalSize = parseInt(env.TEMP_MAX_TOTAL_SIZE ?? `${200 * 1024 * 1024}`, 10) || 200 * 1024 * 1024;
 
+/** 临时字体保留时限（小时），超过后若无人使用则自动删除 */
+export const tempRetentionHours = parseFloat(env.TEMP_RETENTION_HOURS ?? "3") || 3;
+
 /** 字体裁剪结果内存缓存容量上限（字节），默认 10MB */
 export const subsetCacheMaxSize = parseInt(env.SUBSET_CACHE_MAX_SIZE ?? `${10 * 1024 * 1024}`, 10) || 10 * 1024 * 1024;
 

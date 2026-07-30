@@ -1,6 +1,8 @@
 export let stat: (path: string) => Promise<{
   isFile: () => boolean;
   size: number;
+  /** 最后修改时间戳（毫秒），用于文件变更检测 */
+  mtimeMs: number;
 }>;
 
 export let readFile: (path: string) => Promise<Uint8Array>;

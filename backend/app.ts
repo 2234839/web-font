@@ -11,6 +11,8 @@ import { handleStats } from "./routes/stats";
 import { handleUpload } from "./routes/upload";
 import { handleFontSubset } from "./routes/subset";
 import { handleFontDetail } from "./routes/font_detail";
+import { handleFontMeta } from "./routes/font_meta";
+import { startTempCleaner } from "./temp_cleaner";
 import "./server/node";
 import "./server/llrt";
 
@@ -156,6 +158,9 @@ const fontApiMiddleware: cMiddleware = async (req, res, next) => {
   if (url.pathname === "/api/upload" && req.method === "POST") {
     return handleUpload(req, res);
   }
+  if (url.pathname === "/api/font-meta" && req.method === "GET") {
+    return handleFontMeta(req, res);
+  }
   if (url.pathname === "/api" && req.method === "GET") {
     return handleFontSubset(req, res);
   }
@@ -201,6 +206,9 @@ async function main() {
   );
   console.log("[config] temp upload:", enableTempUpload);
   console.log("[config] admin upload:", !!adminApiKey);
+
+  /** 启动临时字体定时清理器 */
+  startTempCleaner();
 }
 
 main();

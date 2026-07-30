@@ -1,5 +1,5 @@
 import { jsonResponse } from "../shared";
-import { enableTempUpload, adminApiKey } from "../config";
+import { enableTempUpload, adminApiKey, tempRetentionHours } from "../config";
 
 /** GET /api/config — 返回公开配置 */
 export async function handleGetConfig(req: Request, _res: Response) {
@@ -9,6 +9,8 @@ export async function handleGetConfig(req: Request, _res: Response) {
       enableTempUpload,
       adminUploadEnabled: !!adminApiKey,
       supportedOutTypes: ["woff2", "ttf"],
+      /** 临时字体保留时限（小时） */
+      tempRetentionHours,
     }),
   };
 }

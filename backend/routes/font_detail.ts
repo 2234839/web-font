@@ -79,9 +79,9 @@ export async function handleFontDetail(pathname: string): Promise<Response | nul
     html = html.replaceAll(placeholder, value);
   }
 
-  /** 字体不存在时，在 body 开头注入 noindex 标签防止搜索引擎收录 */
-  if (meta && !meta.exists) {
-    html = html.replace("</head>", '<meta name="robots" content="noindex"></head>');
+  /** 字体不存在时，在 head 注入 noindex 标签防止搜索引擎收录 */
+  if (!meta?.exists) {
+    html = html.replace("</head>", '<meta name="robots" content="noindex">\n</head>');
   }
 
   const encoder = new TextEncoder();

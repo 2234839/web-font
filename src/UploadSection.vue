@@ -52,7 +52,16 @@ function onFileSelect(e: Event, target: ReturnType<typeof useUpload>) {
 <template>
   <section v-if="canUpload" style="margin-bottom: 28px">
     <label style="display: block; font-size: 14px; font-weight: 500; margin-bottom: 12px">{{ t('uploadFont') }}</label>
-    <div style="font-size: 12px; color: #e6a700; margin-bottom: 12px">{{ t('uploadTip') }}</div>
+    <div style="font-size: 12px; color: #e6a700; margin-bottom: 8px">{{ t('uploadTip') }}</div>
+    <div style="
+      font-size: 12px;
+      color: #b91c1c;
+      background: #fef2f2;
+      border: 1px solid #fecaca;
+      border-radius: 6px;
+      padding: 8px 12px;
+      margin-bottom: 12px;
+    ">{{ t('uploadWarning') }}</div>
 
     <div
       v-if="temp.msg.value"
@@ -71,7 +80,12 @@ function onFileSelect(e: Event, target: ReturnType<typeof useUpload>) {
 
     <div v-if="config.enableTempUpload" style="padding: 16px; border: 1px solid #e8e8e8; border-radius: 8px; margin-bottom: 16px">
       <div style="font-size: 14px; font-weight: 500; margin-bottom: 4px">{{ t('guestUpload') }}</div>
-      <div style="font-size: 12px; color: #999; margin-bottom: 12px">{{ t('guestUploadDesc') }}</div>
+      <div style="font-size: 12px; color: #999; margin-bottom: 12px">
+        {{ t('guestUploadDesc') }}
+        <span v-if="config.tempRetentionHours" style="color: #1677ff">
+          （保留时限 {{ config.tempRetentionHours }} 小时）
+        </span>
+      </div>
       <div style="display: flex; gap: 8px; align-items: center">
         <label style="padding: 6px 20px; font-size: 14px; border: 1px solid #d9d9d9; border-radius: 6px; cursor: pointer; background: #fff; color: #333; display: inline-flex; align-items: center">
           {{ t('selectFile') }}

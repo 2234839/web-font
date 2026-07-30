@@ -65,8 +65,8 @@ const messages = {
     viewSkill: "查看 AI Chinese Font Skill →",
     sponsor: "赞助支持",
     agentSkillDemo: "Agent Skill Demo",
-    /** 字体列表入口 */
-    browseFonts: "字体列表",
+    /** 所有字体入口 */
+    browseFonts: "所有字体",
 
     // FontSelector.vue
     selectFont: "选择字体",
@@ -84,8 +84,9 @@ const messages = {
     // UploadSection.vue
     uploadTip: "支持 .ttf 和 .otf 格式，建议上传 .ttf 字体文件以获得最佳兼容性",
     uploadFont: "上传字体",
+    uploadWarning: "⚠ 切勿上传非商用授权或付费字体，本平台仅用于分享免费可商用字体",
     guestUpload: "游客上传",
-    guestUploadDesc: "临时文件，最多保留 10 个，总大小限制 200MB，超出后自动删除最早上传的",
+    guestUploadDesc: "临时文件，最多保留 10 个，总大小限制 200MB，超时未使用将自动删除",
     adminUpload: "管理员上传",
     adminUploadDesc: "永久保存，需要 API Key 认证",
     selectFile: "选择文件",
@@ -139,8 +140,8 @@ const messages = {
     viewSkill: "View AI Chinese Font Skill →",
     sponsor: "Sponsor",
     agentSkillDemo: "Agent Skill Demo",
-    /** Font list entry */
-    browseFonts: "Font List",
+    /** All fonts entry */
+    browseFonts: "All Fonts",
 
     // FontSelector.vue
     selectFont: "Select font",
@@ -158,8 +159,9 @@ const messages = {
     // UploadSection.vue
     uploadTip: "Supports .ttf and .otf. .ttf recommended for best compatibility",
     uploadFont: "Upload Font",
+    uploadWarning: "⚠ Do NOT upload non-commercial or paid fonts. This platform is for free commercial-use fonts only.",
     guestUpload: "Guest Upload",
-    guestUploadDesc: "Temporary files, max 10 files, 200MB total. Oldest deleted when full.",
+    guestUploadDesc: "Temporary files, max 10 files, 200MB total. Auto-deleted if unused beyond retention period.",
     adminUpload: "Admin Upload",
     adminUploadDesc: "Permanent storage, requires API Key",
     selectFile: "Choose file",
