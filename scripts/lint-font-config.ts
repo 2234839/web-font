@@ -1,7 +1,7 @@
 /**
  * lint-font-config.ts
  *
- * 检查 font/font-config.json 中每个字体的文本字段（previewText / bodyTitle / bodyText / charsetPreview）
+ * 检查 font/font-config.json 中每个字体的文本字段（previewText / charsetPreview）
  * 是否都被该字体实际包含。如果有不支持的字符，输出警告并标记失败。
  *
  * 用法：pnpm lint:font-config
@@ -15,16 +15,12 @@ import { extractCodePoints } from "../backend/font_util/font_meta.ts";
 interface FontUserConfig {
   displayName?: string;
   previewText?: string;
-  bodyTitle?: string;
-  bodyText?: string;
   charsetPreview?: string;
 }
 
 /** 需要检查的文本字段及显示名 */
 const TEXT_FIELDS: Array<{ key: keyof FontUserConfig; label: string }> = [
   { key: "previewText", label: "previewText" },
-  { key: "bodyTitle", label: "bodyTitle" },
-  { key: "bodyText", label: "bodyText" },
   { key: "charsetPreview", label: "charsetPreview" },
 ];
 

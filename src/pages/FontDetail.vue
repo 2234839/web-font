@@ -90,12 +90,6 @@ const previewLines = computed(() => {
   };
 });
 
-/** 正文标题：来自 config.bodyTitle */
-const bodyTitle = computed(() => meta.value?.config?.bodyTitle ?? "");
-
-/** 正文段落：来自 config.bodyText */
-const bodyText = computed(() => meta.value?.config?.bodyText ?? "");
-
 /** 字符预览行：来自 config.charsetPreview */
 const charsetPreview = computed(() => meta.value?.config?.charsetPreview ?? "");
 
@@ -103,7 +97,7 @@ const charsetPreview = computed(() => meta.value?.config?.charsetPreview ?? "");
 const allPreviewText = computed(() => {
   if (!meta.value?.config) return "";
   const c = meta.value.config;
-  return [c.previewText ?? "", c.bodyTitle ?? "", c.bodyText ?? "", c.charsetPreview ?? ""].join("");
+  return [c.previewText ?? "", c.charsetPreview ?? ""].join("");
 });
 
 /** 使用方法示例代码（动态拼接 origin + fontName） */
@@ -216,42 +210,6 @@ const usageCode = computed(() =>
           }"
         >
           {{ previewLines.subtitle }}
-        </p>
-      </div>
-
-      <!-- 正文预览 -->
-      <div
-        v-if="bodyTitle || bodyText"
-        style="
-          background: #fff;
-          border-radius: 12px;
-          padding: 40px;
-          margin-bottom: 24px;
-          box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
-        "
-      >
-        <h2
-          :style="{
-            fontFamily: `'${fontName}', serif`,
-            fontSize: '24px',
-            fontWeight: 600,
-            margin: '0 0 20px',
-            color: '#3a3a3a',
-          }"
-        >
-          {{ bodyTitle }}
-        </h2>
-        <p
-          :style="{
-            fontFamily: `'${fontName}', serif`,
-            fontSize: '16px',
-            lineHeight: 1.8,
-            color: '#4a4a4a',
-            textIndent: '2em',
-            margin: 0,
-          }"
-        >
-          {{ bodyText }}
         </p>
       </div>
 

@@ -37,7 +37,39 @@ function readTableEntry(dv: DataView, tag: string): TableEntry | null {
  * 从 cmap 的 format4 subtable 遍历所有 segment，收集每个 segment 中 gid≠0 的 codepoint。
  * format4 表布局见 gsub-probe.ts 的 lookupFormat4 注释。
  */
-function collectFormat4(dv: DataView, subOff: number, cps: Set<number>): void {
+/**
+ * 构建 glyph 验证器：对 TrueType 字体，检查 gid 在 loca 表中对应 glyf 长度 > 0。
+ * CFF 字体（无 glyf/loca）则返回恒真函数。
+ */
+function createGlyphValidator(dv: DataView): (gid: number) => boolean {
+  const glyfEntry = readTableEntry(dv, "glyf");
+  const locaEntry = readTableEntry(dv, "loca");
+  const headEntry = readTableEntry(dv, "head");
+
+  if (!glyfEntry || !locaEntry || !headEntry) {
+    /** CFF 字体：cmap 有映射即有效 */
+    return () => true;
+  }
+
+  /** indexToLocFormat：0=short(uint16偏移×2), 1=long(uint32偏移) */
+  const locaFormat = dv.getUint16(headEntry.offset + 50, false);
+  const locaBase = locaEntry.offset;
+
+  return (gid: number): boolean => {
+    let start: number;
+    let end: number;
+    if (locaFormat === 0) {
+      start = dv.getUint16(locaBase + gid * 2, false) * 2;
+      end = dv.getUint16(locaBase + (gid + 1) * 2, false) * 2;
+    } else {
+      start = dv.getUint32(locaBase + gid * 4, false);
+      end = dv.getUint32(locaBase + (gid + 1) * 4, false);
+    }
+    return end - start > 0;
+  };
+}
+
+function collectFormat4(dv: DataView, subOff: number, cps: Set<number>, hasGlyph: (gid: number) => boolean): void {
   if (subOff + 14 > dv.byteLength) return;
   const segCountX2 = dv.getUint16(subOff + 6, false);
   const segCount = segCountX2 / 2;
@@ -57,7 +89,8 @@ function collectFormat4(dv: DataView, subOff: number, cps: Set<number>): void {
     if (idRangeOffset === 0) {
       /** 线性映射：gid = (cp + idDelta) & 0xFFFF，gid=0 表示缺失 */
       for (let cp = start; cp <= end; cp++) {
-        if (((cp + idDelta) & 0xFFFF) !== 0) cps.add(cp);
+        const gid = (cp + idDelta) & 0xFFFF;
+        if (gid !== 0 && hasGlyph(gid)) cps.add(cp);
       }
     } else {
       /** 逐个查 glyphIdArray */
@@ -65,7 +98,8 @@ function collectFormat4(dv: DataView, subOff: number, cps: Set<number>): void {
         const glyphOff = idRangeOffsetBase + i * 2 + idRangeOffset + (cp - start) * 2;
         if (glyphOff + 2 > dv.byteLength) break;
         const glyphId = dv.getUint16(glyphOff, false);
-        if (glyphId !== 0 && ((glyphId + idDelta) & 0xFFFF) !== 0) cps.add(cp);
+        const gid = (glyphId + idDelta) & 0xFFFF;
+        if (glyphId !== 0 && gid !== 0 && hasGlyph(gid)) cps.add(cp);
       }
     }
   }
@@ -75,7 +109,7 @@ function collectFormat4(dv: DataView, subOff: number, cps: Set<number>): void {
  * 从 cmap 的 format12 subtable 遍历所有 group，收集 gid 在范围内的 codepoint。
  * format12 表布局见 gsub-probe.ts 的 lookupFormat12 注释。
  */
-function collectFormat12(dv: DataView, subOff: number, cps: Set<number>): void {
+function collectFormat12(dv: DataView, subOff: number, cps: Set<number>, hasGlyph: (gid: number) => boolean): void {
   if (subOff + 16 > dv.byteLength) return;
   const nGroups = dv.getUint32(subOff + 12, false);
   const groupsBase = subOff + 16;
@@ -84,10 +118,11 @@ function collectFormat12(dv: DataView, subOff: number, cps: Set<number>): void {
     if (gOff + 12 > dv.byteLength) break;
     const gStart = dv.getUint32(gOff, false);
     const gEnd = dv.getUint32(gOff + 4, false);
-    /** startGlyphID 无需检查——gid 从 startGlyphID 连续递增，0 才表示缺失，
-     *  但 format12 的 group 本身就是连续有效区间，整个 [gStart, gEnd] 都有字形 */
+    const gGid = dv.getUint32(gOff + 8, false);
+    /** 逐个验证 gid 是否有真实轮廓（空轮廓 glyph 会被 loca 表过滤掉） */
     for (let cp = gStart; cp <= gEnd; cp++) {
-      cps.add(cp);
+      const gid = gGid + (cp - gStart);
+      if (gid !== 0 && hasGlyph(gid)) cps.add(cp);
     }
   }
 }
@@ -125,9 +160,12 @@ export function extractCodePoints(fontBuffer: ArrayBuffer | Uint8Array): Set<num
     dirOff += 8;
   }
 
+  /** 创建 glyph 轮廓验证器（TrueType 检查 loca，CFF 恒真） */
+  const hasGlyph = createGlyphValidator(dv);
+
   /** format12 优先（含补充平面），format4 补充 BMP */
-  if (fmt12Off >= 0) collectFormat12(dv, fmt12Off, cps);
-  if (fmt4Off >= 0) collectFormat4(dv, fmt4Off, cps);
+  if (fmt12Off >= 0) collectFormat12(dv, fmt12Off, cps, hasGlyph);
+  if (fmt4Off >= 0) collectFormat4(dv, fmt4Off, cps, hasGlyph);
 
   return cps;
 }
