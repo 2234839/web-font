@@ -1,5 +1,5 @@
 import { jsonResponse } from "../shared";
-import { enableTempUpload, adminApiKey, tempRetentionSeconds, subsetConcurrency } from "../config";
+import { enableTempUpload, adminApiKey, tempRetentionSeconds, subsetConcurrency, subsetQueueTimeoutSeconds } from "../config";
 
 /** GET /api/config — 返回公开配置 */
 export async function handleGetConfig(req: Request, _res: Response) {
@@ -13,6 +13,8 @@ export async function handleGetConfig(req: Request, _res: Response) {
       tempRetentionSeconds,
       /** 字体子集化最大并发数 */
       subsetConcurrency,
+      /** 队列等待超时（秒） */
+      subsetQueueTimeoutSeconds,
     }),
   };
 }

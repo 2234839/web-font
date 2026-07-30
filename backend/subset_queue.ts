@@ -8,8 +8,11 @@
  * 等待超时则返回 503，避免请求无限堆积。
  */
 
-/** 等待队列中的请求超时时间（毫秒），默认 10 秒 */
-const QUEUE_TIMEOUT_MS = 10_000;
+/**
+ * 等待队列中的请求超时时间（秒），由 config.ts 通过环境变量控制
+ *
+ * 在 subset.ts 中通过参数传入，不在此处硬编码。
+ */
 
 /** 当前正在执行的子集化数量 */
 let activeCount = 0;
@@ -25,11 +28,13 @@ let waitingCount = 0;
  *
  * @param maxConcurrency 最大并发数
  * @param task 实际的子集化异步任务
+ * @param queueTimeoutMs 排队等待超时（毫秒），超时返回 null
  * @returns 任务结果，或 null 表示排队超时
  */
 export async function withConcurrencyLimit<T>(
   maxConcurrency: number,
   task: () => Promise<T>,
+  queueTimeoutMs: number,
 ): Promise<T | null> {
   /** 并发未满，直接执行 */
   if (activeCount < maxConcurrency) {
@@ -47,7 +52,7 @@ export async function withConcurrencyLimit<T>(
   waitingCount++;
   try {
     /** 等待获取许可，或超时 */
-    const acquired = await waitForSlot(QUEUE_TIMEOUT_MS);
+    const acquired = await waitForSlot(queueTimeoutMs);
     if (!acquired) {
       /** 排队超时，返回 null 让调用方返回 503 */
       return null;

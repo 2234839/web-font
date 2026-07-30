@@ -25,10 +25,18 @@ export const subsetCacheMaxSize = parseInt(env.SUBSET_CACHE_MAX_SIZE ?? `${10 * 
  * 字体子集化最大并发数
  *
  * 字体裁剪是 CPU/内存密集操作，并发过多会导致 LLRT OOM 崩溃。
- * 默认 2：在 900M 内存限制下安全运行。
- * 服务器内存充足时可适当调大（如 4-8）。
+ * 默认 4：在 900M 内存限制下安全运行。
+ * 内存充裕可调大，内存紧张可调小到 2。
  */
-export const subsetConcurrency = Math.max(1, parseInt(env.SUBSET_CONCURRENCY ?? "2", 10) || 2);
+export const subsetConcurrency = Math.max(1, parseInt(env.SUBSET_CONCURRENCY ?? "4", 10) || 4);
+
+/**
+ * 队列等待超时（秒）—— 排队超过此时间返回 503，避免请求无限堆积
+ *
+ * 50 并发场景下并发 4，每批 ~300ms，排队最久约 (50/4)*300ms ≈ 3.75s，
+ * 30 秒足够覆盖正常高峰。极端过载时快速失败让客户端重试。
+ */
+export const subsetQueueTimeoutSeconds = Math.max(5, parseInt(env.SUBSET_QUEUE_TIMEOUT ?? "30", 10) || 30);
 
 /** 字体搜索目录（按优先级排序：admin > 普通 > 临时） */
 export const fontDirs = ["font/admin", "font", "font/temp"] as const;

@@ -3,7 +3,7 @@ import type { FontEditor } from "../../vendor/fonteditor-core/lib/ttf/font.js";
 import { parseUrl, stats, subsetCache, findFontPath, readFontBuffer, markStatsDirty } from "../shared";
 import { markFontUsed } from "../temp_cleaner";
 import { withConcurrencyLimit } from "../subset_queue";
-import { subsetConcurrency } from "../config";
+import { subsetConcurrency, subsetQueueTimeoutSeconds } from "../config";
 
 /**
  * 进程启动时戳（模块加载时取一次，进程重启即变化）
@@ -121,7 +121,7 @@ export async function handleFontSubset(req: Request, res: Response) {
       outType: outType,
       sourceType: fontType,
     });
-  });
+  }, subsetQueueTimeoutSeconds * 1000);
 
   /** 排队超时，返回 503 让客户端重试 */
   if (subsetResult === null) {

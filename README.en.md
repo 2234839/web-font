@@ -125,8 +125,8 @@ services:
       - SUBSET_CACHE_MAX_SIZE=10485760
       # Temp font retention (seconds), auto-deleted if unused. Default: 10800 (3h)
       - TEMP_RETENTION_SECONDS=10800
-      # Max concurrent font subsetting. Default: 2
-      - SUBSET_CONCURRENCY=2
+      # Max concurrent font subsetting. Default: 4
+      - SUBSET_CONCURRENCY=4
 ```
 
 ## API Reference
