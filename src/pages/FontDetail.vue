@@ -11,6 +11,7 @@ import { useRoute, useRouter } from "vue-router";
 import { useHead } from "@unhead/vue";
 import { fetchFonts, fetchFontMeta } from "../api";
 import type { FontInfo, FontMeta } from "../api";
+import CodeBlock from "../components/CodeBlock.vue";
 import { FONT_NAME, FONT_SLUG, ORIGIN } from "../placeholders";
 import { SITE_NAME } from "../seo";
 
@@ -74,11 +75,8 @@ function splitSemicolon(text: string | undefined): string[] {
     .filter(Boolean);
 }
 
-/** 默认预览文案（font-config.json 未配 previewText 时使用） */
-const DEFAULT_PREVIEW = "静心茶舍以茶为媒观自在一叶知秋山间晨露未晞茶人已入林深处指尖轻捻择其嫩芽天地无极乾坤借法";
-
-/** 当前字体的预览文案：优先用 config.previewText */
-const previewContent = computed(() => meta.value?.config?.previewText ?? DEFAULT_PREVIEW);
+/** 当前字体的预览文案：来自 config.previewText，未配置则不渲染预览 */
+const previewContent = computed(() => meta.value?.config?.previewText ?? "");
 
 /** 预览文字拆分：第一段做大标题，其余做副文本 */
 const previewLines = computed(() => {
@@ -92,20 +90,31 @@ const previewLines = computed(() => {
   };
 });
 
-/** 正文标题：优先 config.bodyTitle */
-const bodyTitle = computed(() => meta.value?.config?.bodyTitle ?? "清风明月");
+/** 正文标题：来自 config.bodyTitle */
+const bodyTitle = computed(() => meta.value?.config?.bodyTitle ?? "");
 
-/** 正文段落：优先 config.bodyText */
-const bodyText = computed(() => meta.value?.config?.bodyText ?? "山中有桂树，常伴青云飞。");
+/** 正文段落：来自 config.bodyText */
+const bodyText = computed(() => meta.value?.config?.bodyText ?? "");
 
-/** 字符预览行：优先 config.charsetPreview */
-const charsetPreview = computed(() => meta.value?.config?.charsetPreview ?? "天地玄黄宇宙洪荒：0123456789 ABCDEF");
+/** 字符预览行：来自 config.charsetPreview */
+const charsetPreview = computed(() => meta.value?.config?.charsetPreview ?? "");
+
+/** 使用方法示例代码（动态拼接 origin + fontName） */
+const usageCode = computed(() =>
+  `<link rel="stylesheet"
+  href="${origin.value}/api?font=${fontName.value}&text=你的文字&outType=woff2">
+
+<style>
+  .my-title { font-family: "${fontName.value}"; }
+</style>`
+);
 </script>
 
 <template>
   <div style="min-height: 100vh; background: #fafafa">
-    <!-- 字体加载：SSG 时含占位符，后端替换后即指向正确字体子集 -->
+    <!-- 字体加载：previewContent 为空时不加载（避免无效请求） -->
     <link
+      v-if="previewContent"
       rel="stylesheet"
       :href="`${origin}/api?font=${fontName}&text=${encodeURIComponent(previewContent)}&outType=woff2`"
     />
@@ -168,7 +177,7 @@ const charsetPreview = computed(() => meta.value?.config?.charsetPreview ?? "天
     <div style="max-width: 800px; margin: 0 auto; padding: 0 24px 80px">
       <!-- 大标题预览 -->
       <div
-        v-if="meta"
+        v-if="previewContent"
         style="
           background: #fff;
           border-radius: 12px;
@@ -205,7 +214,7 @@ const charsetPreview = computed(() => meta.value?.config?.charsetPreview ?? "天
 
       <!-- 正文预览 -->
       <div
-        v-if="meta"
+        v-if="bodyTitle || bodyText"
         style="
           background: #fff;
           border-radius: 12px;
@@ -241,7 +250,7 @@ const charsetPreview = computed(() => meta.value?.config?.charsetPreview ?? "天
 
       <!-- 字符集预览 -->
       <div
-        v-if="meta"
+        v-if="charsetPreview"
         style="
           background: #fff;
           border-radius: 12px;
@@ -413,22 +422,7 @@ const charsetPreview = computed(() => meta.value?.config?.charsetPreview ?? "天
         <div style="font-size: 13px; font-weight: 600; color: #999; margin-bottom: 16px">
           使用方法
         </div>
-        <pre
-          style="
-            background: #f5f5f5;
-            padding: 16px 20px;
-            border-radius: 8px;
-            font-size: 13px;
-            overflow-x: auto;
-            margin: 0;
-            color: #333;
-          "
-        ><code>&lt;link rel="stylesheet"
-  href="{{ origin }}/api?font={{ fontName }}&amp;text=你的文字&amp;outType=woff2"&gt;
-
-&lt;style&gt;
-  .my-title { font-family: "{{ fontName }}"; }
-&lt;/style&gt;</code></pre>
+        <CodeBlock :code="usageCode" lang="html" />
       </div>
     </div>
   </div>

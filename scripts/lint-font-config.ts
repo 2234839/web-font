@@ -52,10 +52,29 @@ async function main() {
 
   let hasError = false;
 
+  /** 检查 font/ 目录下所有字体是否都在 config 中有配置 */
+  for (const fontFile of fontPathMap.keys()) {
+    if (!config[fontFile]) {
+      console.error(`❌ [${fontFile}] 字体文件存在但 font-config.json 中没有配置`);
+      hasError = true;
+    }
+  }
+
   for (const [fileName, cfg] of Object.entries(config)) {
     const fontPath = fontPathMap.get(fileName);
     if (!fontPath) {
       console.warn(`⚠️  [${fileName}] 字体文件不存在，跳过`);
+      continue;
+    }
+
+    /** 检查必填字段是否都配置了 */
+    const missingFields = TEXT_FIELDS.filter(({ key }) => !cfg[key]);
+    if (missingFields.length > 0) {
+      const displayName = cfg.displayName ?? fileName;
+      hasError = true;
+      console.error(
+        `❌ [${displayName}] 缺少字段：${missingFields.map((f) => f.label).join(", ")}`,
+      );
       continue;
     }
 
