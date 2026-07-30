@@ -6,7 +6,7 @@
  * 产出完整 HTML 模板（title/meta/body 全含占位符）。
  * 后端收到 /fonts/实际字体名 时读取模板做字符串替换返回。
  */
-import { ref, computed, onMounted } from "vue";
+import { ref, computed, onMounted, watchEffect, onUnmounted } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useHead } from "@unhead/vue";
 import { fetchFonts, fetchFontMeta } from "../api";
@@ -100,12 +100,39 @@ const allPreviewText = computed(() => {
   return [c.previewText ?? "", c.charsetPreview ?? ""].join("");
 });
 
+/** 子集字体 URL（合并所有预览文字） */
+const subsetFontUrl = computed(() => {
+  if (!allPreviewText.value) return "";
+  return `${origin.value}/api?font=${encodeURIComponent(fontName.value)}&text=${encodeURIComponent(allPreviewText.value)}&outType=woff2`;
+});
+
+/** 动态注入 @font-face —— API 返回二进制 woff2，需用 @font-face 引入而非 <link rel=stylesheet> */
+let injectedStyle: HTMLStyleElement | null = null;
+watchEffect(() => {
+  /** SSG/SSR 阶段没有 document */
+  if (typeof document === "undefined") return;
+  const css = subsetFontUrl.value
+    ? `@font-face { font-family: "${fontName.value}"; src: url("${subsetFontUrl.value}") format("woff2"); }`
+    : "";
+  if (!css) return;
+  if (!injectedStyle) {
+    injectedStyle = document.createElement("style");
+    document.head.appendChild(injectedStyle);
+  }
+  injectedStyle.textContent = css;
+});
+onUnmounted(() => {
+  injectedStyle?.remove();
+  injectedStyle = null;
+});
+
 /** 使用方法示例代码（动态拼接 origin + fontName） */
 const usageCode = computed(() =>
-  `<link rel="stylesheet"
-  href="${origin.value}/api?font=${fontName.value}&text=你的文字&outType=woff2">
-
-<style>
+  `<style>
+  @font-face {
+    font-family: "${fontName.value}";
+    src: url("${origin.value}/api?font=${fontName.value}&text=你的文字&outType=woff2") format("woff2");
+  }
   .my-title { font-family: "${fontName.value}"; }
 </style>`
 );
@@ -113,12 +140,7 @@ const usageCode = computed(() =>
 
 <template>
   <div style="min-height: 100vh; background: #fafafa">
-    <!-- 字体加载：合并所有预览文字请求字体子集 -->
-    <link
-      v-if="allPreviewText"
-      rel="stylesheet"
-      :href="`${origin}/api?font=${fontName}&text=${encodeURIComponent(allPreviewText)}&outType=woff2`"
-    />
+    <!-- 字体加载：通过 watchEffect 注入 @font-face（见 script 部分） -->
 
     <!-- 顶部导航 -->
     <div
