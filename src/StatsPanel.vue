@@ -18,7 +18,7 @@ function formatUptime(seconds: number): string {
   if (seconds < 3600) return `${Math.floor(seconds / 60)}分${seconds % 60}秒`;
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
-  const s = seconds % 3600 % 60;
+  const s = seconds % 60;
   if (h < 24) return `${h}时${m}分${s}秒`;
   const d = Math.floor(h / 24);
   return `${d}天${h % 24}时${m}分`;
@@ -35,6 +35,15 @@ let inViewport = false;
 
 /** 轮询周期（毫秒），与进度条 animation-duration 保持一致 */
 const POLL_INTERVAL = 10_000;
+
+/** 首次加载数据（不受视口/可见性限制，mount 时立即调用） */
+async function initialLoad() {
+  const s = await fetchStats().catch(() => null);
+  if (s) {
+    data.value = s;
+    progressKey.value++;
+  }
+}
 
 async function load() {
   const s = await fetchStats().catch(() => null);
@@ -73,6 +82,9 @@ function onVisibilityChange() {
 let intersectionObserver: IntersectionObserver | null = null;
 
 onMounted(() => {
+  /** 立即首次加载，确保卡片尽快出现 */
+  initialLoad();
+
   /** 监听页面标签可见性 */
   document.addEventListener("visibilitychange", onVisibilityChange);
 
@@ -99,7 +111,8 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <section ref="rootRef" v-if="data" style="margin-top: 24px; margin-bottom: 28px; padding: 12px 16px; background: #f0f0f0; border-radius: 8px; position: relative; overflow: hidden">
+  <div ref="rootRef">
+  <section v-if="data" style="margin-top: 24px; margin-bottom: 28px; padding: 12px 16px; background: #f0f0f0; border-radius: 8px; position: relative; overflow: hidden">
     <div style="font-size: 13px; font-weight: 600; color: #333; margin-bottom: 4px">{{ t('serverStatus') }}</div>
     <div style="display: flex; gap: 20px; flex-wrap: wrap; font-size: 13px; color: #555; line-height: 2">
       <span><b style="color: #333">{{ t('uptime') }}</b> {{ formatUptime(data.uptime) }}</span>
@@ -111,6 +124,7 @@ onUnmounted(() => {
     <!-- 底部进度条：每轮询周期走一轮，走完触发下次刷新 -->
     <div :key="progressKey" style="position: absolute; bottom: 0; left: 0; height: 2px; background: #1677ff; transform-origin: left; animation: stats-progress 10s linear" />
   </section>
+  </div>
 </template>
 
 <style>
