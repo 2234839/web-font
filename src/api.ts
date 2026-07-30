@@ -73,6 +73,12 @@ export interface FontUserConfig {
   homepage?: string;
   /** 默认预览文字 */
   previewText?: string;
+  /** 详情页正文标题 */
+  bodyTitle?: string;
+  /** 详情页正文段落 */
+  bodyText?: string;
+  /** 详情页字符预览行 */
+  charsetPreview?: string;
 }
 
 /** 字体元数据 */

@@ -92,8 +92,14 @@ const previewLines = computed(() => {
   };
 });
 
-/** 显示名：优先 config.displayName */
-const displayName = computed(() => meta.value?.config?.displayName ?? fontName.value);
+/** 正文标题：优先 config.bodyTitle */
+const bodyTitle = computed(() => meta.value?.config?.bodyTitle ?? "清风明月");
+
+/** 正文段落：优先 config.bodyText */
+const bodyText = computed(() => meta.value?.config?.bodyText ?? "山中有桂树，常伴青云飞。");
+
+/** 字符预览行：优先 config.charsetPreview */
+const charsetPreview = computed(() => meta.value?.config?.charsetPreview ?? "天地玄黄宇宙洪荒：0123456789 ABCDEF");
 </script>
 
 <template>
@@ -148,7 +154,7 @@ const displayName = computed(() => meta.value?.config?.displayName ?? fontName.v
         :data-font="fontName"
         style="font-size: 36px; font-weight: 700; color: #2c2c2c; margin: 0; line-height: 1.3"
       >
-        {{ fontName }}
+        {{ meta?.config?.displayName ?? fontName }}
       </h1>
       <p v-if="notFound" style="font-size: 14px; color: #e74c3c; margin: 12px 0 0">
         ⚠ 该字体不存在或已被删除
@@ -162,6 +168,7 @@ const displayName = computed(() => meta.value?.config?.displayName ?? fontName.v
     <div style="max-width: 800px; margin: 0 auto; padding: 0 24px 80px">
       <!-- 大标题预览 -->
       <div
+        v-if="meta"
         style="
           background: #fff;
           border-radius: 12px;
@@ -198,6 +205,7 @@ const displayName = computed(() => meta.value?.config?.displayName ?? fontName.v
 
       <!-- 正文预览 -->
       <div
+        v-if="meta"
         style="
           background: #fff;
           border-radius: 12px;
@@ -215,7 +223,7 @@ const displayName = computed(() => meta.value?.config?.displayName ?? fontName.v
             color: '#3a3a3a',
           }"
         >
-          一叶知秋
+          {{ bodyTitle }}
         </h2>
         <p
           :style="{
@@ -227,12 +235,13 @@ const displayName = computed(() => meta.value?.config?.displayName ?? fontName.v
             margin: 0,
           }"
         >
-          山间晨露未晞，茶人已入林深处。指尖轻捻，择其嫩芽一二，置于竹篮之中。此乃一年之始，亦是一叶与万物的初遇。
+          {{ bodyText }}
         </p>
       </div>
 
       <!-- 字符集预览 -->
       <div
+        v-if="meta"
         style="
           background: #fff;
           border-radius: 12px;
@@ -253,7 +262,7 @@ const displayName = computed(() => meta.value?.config?.displayName ?? fontName.v
             wordBreak: 'break-all',
           }"
         >
-          天地无极乾坤借法：0123456789 ABCDEF
+          {{ charsetPreview }}
         </div>
       </div>
 

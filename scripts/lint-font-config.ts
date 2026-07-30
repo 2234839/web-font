@@ -1,12 +1,12 @@
 /**
  * lint-font-config.ts
  *
- * 检查 font/font-config.json 中每个字体的 previewText 是否都被该字体实际包含。
- * 如果 previewText 中有字体不支持的字符，输出警告并标记失败。
+ * 检查 font/font-config.json 中每个字体的文本字段（previewText / bodyTitle / bodyText / charsetPreview）
+ * 是否都被该字体实际包含。如果有不支持的字符，输出警告并标记失败。
  *
- * 用法：pnpm tsx scripts/lint-font-config.ts
+ * 用法：pnpm lint:font-config
  *
- * 修改 font-config.json 的 previewText 字段后应运行此脚本验证。
+ * 修改 font-config.json 中任何文本字段后应运行此脚本验证。
  */
 import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
@@ -15,7 +15,18 @@ import { extractCodePoints } from "../backend/font_util/font_meta.ts";
 interface FontUserConfig {
   displayName?: string;
   previewText?: string;
+  bodyTitle?: string;
+  bodyText?: string;
+  charsetPreview?: string;
 }
+
+/** 需要检查的文本字段及显示名 */
+const TEXT_FIELDS: Array<{ key: keyof FontUserConfig; label: string }> = [
+  { key: "previewText", label: "previewText" },
+  { key: "bodyTitle", label: "bodyTitle" },
+  { key: "bodyText", label: "bodyText" },
+  { key: "charsetPreview", label: "charsetPreview" },
+];
 
 type FontConfig = Record<string, FontUserConfig>;
 
@@ -36,58 +47,69 @@ async function main() {
     }
   }
 
+  /** 字体 codepoints 缓存（同一字体只解析一次） */
+  const cpCache = new Map<string, Set<number>>();
+
   let hasError = false;
 
   for (const [fileName, cfg] of Object.entries(config)) {
-    const previewText = cfg.previewText;
-    if (!previewText) {
-      /** 没配 previewText，跳过（用默认值，无法检查） */
-      continue;
-    }
-
     const fontPath = fontPathMap.get(fileName);
     if (!fontPath) {
       console.warn(`⚠️  [${fileName}] 字体文件不存在，跳过`);
       continue;
     }
 
-    /** 读取字体并提取 codepoints */
-    const raw = await readFile(fontPath);
-    const fontBuffer = raw.buffer.slice(
-      raw.byteOffset,
-      raw.byteOffset + raw.byteLength,
-    );
-    const supportedCps = extractCodePoints(fontBuffer);
-
-    /** 逐字符检查 previewText */
-    const chars = [...previewText];
-    /** 空格/换行等空白字符不检查（字体通常都有，但即使没有也不影响预览） */
-    const missing: string[] = [];
-    for (const ch of chars) {
-      if (/\s/.test(ch)) continue;
-      const cp = ch.codePointAt(0)!;
-      if (!supportedCps.has(cp)) {
-        missing.push(ch);
-      }
+    /** 读取字体 codepoints（有缓存则复用） */
+    let supportedCps = cpCache.get(fileName);
+    if (!supportedCps) {
+      const raw = await readFile(fontPath);
+      const fontBuffer = raw.buffer.slice(
+        raw.byteOffset,
+        raw.byteOffset + raw.byteLength,
+      );
+      supportedCps = extractCodePoints(fontBuffer);
+      cpCache.set(fileName, supportedCps);
     }
 
     const displayName = cfg.displayName ?? fileName;
-    if (missing.length > 0) {
-      hasError = true;
-      console.error(
-        `❌ [${displayName}] (${fileName}) previewText 含 ${missing.length} 个不支持的字符：${missing.join(" ")}`,
-      );
-      console.error(`   previewText: "${previewText}"`);
-    } else {
-      console.log(`✅ [${displayName}] (${fileName}) previewText 检查通过`);
+    let fontHasError = false;
+
+    /** 逐字段检查 */
+    for (const { key, label } of TEXT_FIELDS) {
+      const text = cfg[key];
+      if (!text) continue;
+
+      const chars = [...text];
+      const missing: string[] = [];
+      for (const ch of chars) {
+        /** 空白字符不检查 */
+        if (/\s/.test(ch)) continue;
+        const cp = ch.codePointAt(0)!;
+        if (!supportedCps!.has(cp)) {
+          missing.push(ch);
+        }
+      }
+
+      if (missing.length > 0) {
+        fontHasError = true;
+        hasError = true;
+        console.error(
+          `❌ [${displayName}] ${label} 含 ${missing.length} 个不支持的字符：${missing.join(" ")}`,
+        );
+        console.error(`   ${label}: "${text}"`);
+      }
+    }
+
+    if (!fontHasError) {
+      console.log(`✅ [${displayName}] (${fileName}) 所有文本字段检查通过`);
     }
   }
 
   if (hasError) {
-    console.error("\n💔 存在不支持的字符，请修正 previewText");
+    console.error("\n💔 存在不支持的字符，请修正相关文本字段");
     process.exit(1);
   } else {
-    console.log("\n🎉 所有 previewText 检查通过");
+    console.log("\n🎉 所有文本字段检查通过");
   }
 }
 
