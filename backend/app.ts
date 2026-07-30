@@ -14,7 +14,7 @@ import { handleFontDetail } from "./routes/font_detail";
 import { handleFontMeta } from "./routes/font_meta";
 import { startTempCleaner } from "./temp_cleaner";
 import { initMemoryGate } from "./subset_queue";
-import { subsetMemSoftLimitMB } from "./config";
+import { subsetConcurrency } from "./config";
 import "./server/node";
 import "./server/llrt";
 
@@ -209,8 +209,8 @@ async function main() {
   console.log("[config] temp upload:", enableTempUpload);
   console.log("[config] admin upload:", !!adminApiKey);
 
-  /** 初始化内存水位闸门（子集化排队控制） */
-  initMemoryGate(subsetMemSoftLimitMB);
+  /** 初始化子集化并发队列（含字体分组调度） */
+  initMemoryGate(0, subsetConcurrency);
 
   /** 启动临时字体定时清理器 */
   startTempCleaner();

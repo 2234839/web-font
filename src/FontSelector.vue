@@ -43,6 +43,9 @@ const filteredFonts = computed(() => {
   });
 });
 
+/** 当前选中的字体对象（用于判断是否临时字体） */
+const selectedFontInfo = computed(() => props.fonts.find((f) => f.name === props.selectedFont));
+
 /** 当前选中字体的显示名（无选中时显示占位文字） */
 const selectedLabel = computed(() => props.selectedFont || t("pleaseSelect"));
 
@@ -135,8 +138,12 @@ function handleOutTypeChange(e: Event) {
           style="width: 100%; border: none; outline: none; font-size: 14px; background: transparent; padding: 0; color: #000"
         />
         <!-- 关闭时：显示选中的字体名 -->
-        <span v-else :style="{ color: selectedFont ? '#000' : '#bbb', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }">
-          {{ selectedLabel }}
+        <span v-else :style="{ color: selectedFont ? '#000' : '#bbb', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '6px' }">
+          <span style="overflow: hidden; text-overflow: ellipsis">{{ selectedLabel }}</span>
+          <span
+            v-if="selectedFontInfo?.temporary"
+            style="flex-shrink: 0; font-size: 10px; padding: 1px 5px; border-radius: 3px; background: #fff7e6; color: #fa8c16; border: 1px solid #ffd591"
+          >临时</span>
         </span>
         <!-- 下拉箭头 -->
         <svg style="position: absolute; right: 10px; top: 50%; transform: translateY(-50%); transition: transform 0.2s" :style="{ transform: dropdownOpen ? 'translateY(-50%) rotate(180deg)' : 'translateY(-50%)' }" width="12" height="12" viewBox="0 0 12 12">
@@ -161,11 +168,15 @@ function handleOutTypeChange(e: Event) {
               :key="f.name"
               @click="selectFont(f.name)"
               @mouseenter="($event.currentTarget as HTMLElement).style.background = '#f5f5f5'"
-              @mouseleave="($event.currentTarget as HTMLElement).style.background = '#fff'"
-              style="padding: 8px 12px; font-size: 14px; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap"
+              @mouseleave="($event.currentTarget as HTMLElement).style.background = f.name === selectedFont ? '#e6f4ff' : '#fff'"
+              style="padding: 8px 12px; font-size: 14px; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: flex; align-items: center; gap: 6px"
               :style="{ background: f.name === selectedFont ? '#e6f4ff' : '#fff', color: f.name === selectedFont ? '#1677ff' : '#333', fontWeight: f.name === selectedFont ? '500' : 'normal' }"
             >
-              {{ f.name }}
+              <span style="flex: 1; overflow: hidden; text-overflow: ellipsis">{{ f.name }}</span>
+              <span
+                v-if="f.temporary"
+                style="flex-shrink: 0; font-size: 10px; padding: 1px 5px; border-radius: 3px; background: #fff7e6; color: #fa8c16; border: 1px solid #ffd591"
+              >临时</span>
             </div>
           </div>
         </div>

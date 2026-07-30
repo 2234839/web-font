@@ -125,8 +125,8 @@ services:
       - SUBSET_CACHE_MAX_SIZE=10485760
       # 临时字体保留时限（秒），超时未使用自动删除，默认 10800（3小时）
       - TEMP_RETENTION_SECONDS=10800
-      # 子集化内存水位阈值(MB)，RSS 超此值时排队等待，默认 600
-      - SUBSET_MEM_SOFT_LIMIT_MB=600
+      # 字体裁剪最大并发数，默认 4（内存受限环境建议 2-3）
+      - SUBSET_CONCURRENCY=4
 ```
 
 ## API

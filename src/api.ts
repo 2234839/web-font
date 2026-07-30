@@ -11,8 +11,8 @@ export interface ServerConfig {
   supportedOutTypes: ("woff2" | "ttf")[];
   /** 临时字体保留时限（秒） */
   tempRetentionSeconds?: number;
-  /** 子集化内存水位阈值（MB），RSS 超此值时排队 */
-  subsetMemSoftLimitMB?: number;
+  /** 字体子集化最大并发数 */
+  subsetConcurrency?: number;
   /** 队列等待超时（秒） */
   subsetQueueTimeoutSeconds?: number;
 }

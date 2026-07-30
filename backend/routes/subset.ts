@@ -3,7 +3,7 @@ import type { FontEditor } from "../../vendor/fonteditor-core/lib/ttf/font.js";
 import { parseUrl, stats, subsetCache, findFontPath, readFontBuffer, markStatsDirty } from "../shared";
 import { markFontUsed } from "../temp_cleaner";
 import { withMemoryGate } from "../subset_queue";
-import { subsetMemSoftLimitMB, subsetQueueTimeoutSeconds } from "../config";
+import { subsetConcurrency, subsetQueueTimeoutSeconds } from "../config";
 
 /**
  * 进程启动时戳（模块加载时取一次，进程重启即变化）
@@ -116,7 +116,7 @@ export async function handleFontSubset(req: Request, res: Response) {
    * 缓存未命中的请求才进入闸门；RSS 超 softLimit 时排队等待，
    * 前面请求完成 + GC 释放内存后 RSS 回落才执行。避免 OOM 崩溃。
    */
-  const subsetResult = await withMemoryGate(subsetMemSoftLimitMB, async () => {
+  const subsetResult = await withMemoryGate(subsetConcurrency, async () => {
     return fontSubset(oldFontBuffer, text, {
       outType: outType,
       sourceType: fontType,

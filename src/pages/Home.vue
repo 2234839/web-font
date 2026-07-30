@@ -35,6 +35,7 @@ import UploadSection from "../UploadSection.vue";
 import StatsPanel from "../StatsPanel.vue";
 import SelectorRow from "../FontSelector.vue";
 import FontDebugPreview from "../FontDebugPreview.vue";
+import CodeBlock from "../components/CodeBlock.vue";
 
 const text = ref("天地无极，乾坤借法");
 const fonts = ref<FontInfo[]>([]);
@@ -100,6 +101,16 @@ const cssStyle = computed(() => {
   color: red;
   font-family: "CustomFont";
 }`;
+});
+
+/** 基础用法代码示例（依赖 origin，需 computed） */
+const basicUsageCode = computed(() => {
+  return '<style>\n@font-face {\n  font-family: "MyFont";\n  src: url("' + origin.value + '/api?font=\u5b57\u4f53\u540d&text=\u4f60\u7684\u6587\u5b57") format("woff2");\n}\n.title { font-family: "MyFont"; }\n</style>\n<h1 class="title">\u4f60\u7684\u6587\u5b57</h1>';
+});
+
+/** JS SDK 代码示例 */
+const jsSdkCode = computed(() => {
+  return '<script src="' + origin.value + '/webfont-sdk.js"><\/script>\n<script>\n  WebFont.loadFont({\n    fontName: "\u5b57\u4f53\u6587\u4ef6\u540d.ttf",\n    selector: ".my-element",\n    family: "MyFont",\n    interval: 1000,\n  });\n<\/script>';
 });
 
 let textLoader: { update: (text: string) => void; dispose: () => void } | null = null;
@@ -243,7 +254,7 @@ async function refreshFonts() {
           </button>
         </div>
       </div>
-      <pre style="background: #f7f7f8; padding: 16px; border-radius: 6px; font-size: 13px; font-family: 'SF Mono', Menlo, Consolas, monospace; overflow: auto; white-space: pre-wrap; word-break: break-all; line-height: 1.5; margin: 0">{{ cssStyle }}</pre>
+      <CodeBlock :code="cssStyle" lang="css" />
     </section>
 
     <FontDebugPreview v-if="isDev" />
@@ -255,9 +266,9 @@ async function refreshFonts() {
     <section style="margin-bottom: 28px; font-size: 12px; color: #aaa; line-height: 1.8">
       <p><b>{{ t('principle') }}</b>{{ t('principleText') }}</p>
       <p><b>{{ t('basicUsage') }}</b>{{ t('basicUsageText') }}</p>
-      <pre style="background: #f7f7f8; padding: 16px; border-radius: 6px; font-size: 13px; font-family: 'SF Mono', Menlo, Consolas, monospace; overflow: auto; white-space: pre-wrap; word-break: break-all; line-height: 1.5; margin-top: 4px">{{ `&lt;style&gt;\n@font-face {\n  font-family: "MyFont";\n  src: url("${origin}/api?font=字体名&text=你的文字") format("woff2");\n}\n.title { font-family: "MyFont"; }\n&lt;/style&gt;\n&lt;h1 class="title"&gt;你的文字&lt;/h1&gt;` }}</pre>
+      <div style="margin-top: 4px"><CodeBlock :code="basicUsageCode" lang="html" /></div>
       <p style="margin-top: 12px"><b>{{ t('jsSdk') }}</b>{{ t('jsSdkText') }}<a href="/webfont-sdk.js" download="webfont-sdk.js">{{ t('downloadSdk') }}</a></p>
-      <pre style="background: #f7f7f8; padding: 16px; border-radius: 6px; font-size: 13px; font-family: 'SF Mono', Menlo, Consolas, monospace; overflow: auto; white-space: pre-wrap; word-break: break-all; line-height: 1.5; margin-top: 4px">{{ `&lt;script src="${origin}/webfont-sdk.js"&gt;&lt;/script&gt;\n&lt;script&gt;\n  WebFont.loadFont({\n    fontName: "字体文件名.ttf",\n    selector: ".my-element",\n    family: "MyFont",\n    interval: 1000,\n  });\n&lt;/script&gt;` }}</pre>
+      <div style="margin-top: 4px"><CodeBlock :code="jsSdkCode" lang="html" /></div>
       <p style="margin-top: 8px">{{ t('sdkModes') }}<code>WebFont.observeFont()</code>{{ t('observeFont') }}<code>WebFont.loadText()</code>{{ t('loadText') }}</p>
     </section>
 
