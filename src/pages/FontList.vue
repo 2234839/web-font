@@ -34,8 +34,18 @@ const query = ref("");
 /** 字体元数据缓存（key = 字体名），卡片进入视口后按需加载 */
 const metaMap = ref<Map<string, FontMeta>>(new Map());
 
-/** 预览文字内容（与 loadText 参数一致） */
-const PREVIEW_TEXT = "静心茶舍 天地无极 ABCDEF";
+/** 默认预览文字（font-config.json 未配置 previewText 时使用） */
+const DEFAULT_PREVIEW_TEXT = "静心茶舍 天地无极 ABCDEF";
+
+/** 取某个字体的预览文字：优先用 font-config.json 配置的 previewText */
+function previewTextOf(fontName: string): string {
+  return metaMap.value.get(fontName)?.config?.previewText ?? DEFAULT_PREVIEW_TEXT;
+}
+
+/** 取显示名：优先用 config.displayName，否则用文件名 */
+function displayNameOf(fontName: string): string {
+  return metaMap.value.get(fontName)?.config?.displayName ?? fontName;
+}
 
 /** 排序方式：default | codePoints | name | coverage:<charsetKey> */
 const sortBy = ref<string>("default");
@@ -102,9 +112,10 @@ onMounted(async () => {
  * 2. 请求字体元数据（覆盖率），后端有磁盘缓存不重复计算
  */
 function onCardAppear(fontName: string) {
+  /** 预加载默认预览文字，meta 拿到后如果配了 previewText 再加载一次 */
   (globalThis as any).WebFont?.loadText?.({
     fontName,
-    text: PREVIEW_TEXT,
+    text: DEFAULT_PREVIEW_TEXT,
     family: fontName,
   });
   /** 已加载过则跳过 */
@@ -112,15 +123,18 @@ function onCardAppear(fontName: string) {
   fetchFontMeta(fontName)
     .then((m) => {
       metaMap.value.set(fontName, m);
-      /** 触发响应式更新 */
       metaMap.value = new Map(metaMap.value);
+      /** 如果配了专属 previewText，用配置文字再加载一次字体子集 */
+      const customText = m.config?.previewText;
+      if (customText && customText !== DEFAULT_PREVIEW_TEXT) {
+        (globalThis as any).WebFont?.loadText?.({
+          fontName,
+          text: customText,
+          family: fontName,
+        });
+      }
     })
     .catch(() => {});
-}
-
-/** 点击字体卡片 → 跳转详情页 */
-function goToDetail(name: string) {
-  router.push(`/fonts/${encodeURIComponent(name)}`);
 }
 </script>
 
@@ -239,10 +253,12 @@ function goToDetail(name: string) {
           :key="font.name"
           @appear="onCardAppear(font.name)"
         >
-          <div
+          <router-link
+            :to="`/fonts/${encodeURIComponent(font.name)}`"
             :data-font="font.name"
-            @click="goToDetail(font.name)"
             style="
+              display: block;
+              text-decoration: none;
               background: #fff;
               border-radius: 12px;
               padding: 24px;
@@ -253,9 +269,9 @@ function goToDetail(name: string) {
             onmouseover="this.style.boxShadow='0 4px 16px rgba(0,0,0,0.08)';this.style.borderColor='#1677ff'"
             onmouseout="this.style.boxShadow='0 2px 8px rgba(0,0,0,0.04)';this.style.borderColor='transparent'"
           >
-          <!-- 字体名 -->
-          <div style="font-size: 15px; font-weight: 600; color: #333; margin-bottom: 12px">
-            {{ font.name }}
+          <!-- 字体名（优先显示 displayName） -->
+          <div style="font-size: 15px; font-weight: 600; color: #333; margin-bottom: 4px">
+            {{ displayNameOf(font.name) }}
             <span
               v-if="font.temporary"
               style="
@@ -270,17 +286,25 @@ function goToDetail(name: string) {
             >
           </div>
 
-          <!-- 字体预览 -->
+          <!-- 描述（来自 font-config.json） -->
+          <div
+            v-if="metaMap.get(font.name)?.config?.description"
+            style="font-size: 12px; color: #888; margin-bottom: 10px; line-height: 1.4"
+          >
+            {{ metaMap.get(font.name)?.config?.description }}
+          </div>
+
+          <!-- 字体预览（优先使用配置的 previewText） -->
           <div
             :style="{
               fontFamily: `'${font.name}', serif`,
               fontSize: '32px',
               color: '#2c2c2c',
               lineHeight: 1.4,
-              marginBottom: '8px',
+              marginBottom: '4px',
             }"
           >
-            静心茶舍
+            {{ previewTextOf(font.name).split(' ')[0] || previewTextOf(font.name) }}
           </div>
           <div
             :style="{
@@ -289,7 +313,26 @@ function goToDetail(name: string) {
               color: '#999',
             }"
           >
-            天地无极 ABCDEF
+            {{ previewTextOf(font.name).split(' ').slice(1).join(' ') || 'ABCDEF abcdef 0123' }}
+          </div>
+
+          <!-- 标签（来自 font-config.json） -->
+          <div
+            v-if="metaMap.get(font.name)?.config?.tags?.length"
+            style="display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px"
+          >
+            <span
+              v-for="tag in metaMap.get(font.name)?.config?.tags ?? []"
+              :key="tag"
+              style="
+                font-size: 11px;
+                padding: 2px 8px;
+                border-radius: 10px;
+                background: #f5f0e8;
+                color: #8b7355;
+              "
+              >{{ tag }}</span
+            >
           </div>
 
           <!-- 覆盖率标签 -->
@@ -306,8 +349,27 @@ function goToDetail(name: string) {
               }"
             >{{ c.name.replace(/（.+）/, '') }} {{ c.percent }}%</span>
           </div>
-          </div>
+          </router-link>
         </LazyTrigger>
+      </div>
+
+      <!-- 投稿提示 -->
+      <div
+        style="
+          margin-top: 32px;
+          padding: 20px 24px;
+          background: #faf8f5;
+          border-radius: 12px;
+          border: 1px solid #f0ebe3;
+          text-align: center;
+          font-size: 14px;
+          color: #8b7355;
+          line-height: 1.8;
+        "
+      >
+        想要永久上传自己的商用免费字体？
+        <a href="mailto:admin@shenzilong.cn" style="color: #8b7355; text-decoration: underline">联系崮生</a>
+        · 邮箱 admin@shenzilong.cn
       </div>
     </div>
   </div>

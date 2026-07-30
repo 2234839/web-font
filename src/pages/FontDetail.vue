@@ -73,6 +73,27 @@ function splitSemicolon(text: string | undefined): string[] {
     .map((s) => s.trim())
     .filter(Boolean);
 }
+
+/** 默认预览文案（font-config.json 未配 previewText 时使用） */
+const DEFAULT_PREVIEW = "静心茶舍以茶为媒观自在一叶知秋山间晨露未晞茶人已入林深处指尖轻捻择其嫩芽天地无极乾坤借法";
+
+/** 当前字体的预览文案：优先用 config.previewText */
+const previewContent = computed(() => meta.value?.config?.previewText ?? DEFAULT_PREVIEW);
+
+/** 预览文字拆分：第一段做大标题，其余做副文本 */
+const previewLines = computed(() => {
+  const text = previewContent.value;
+  /** 按空格拆分，第一段做大字标题 */
+  const parts = text.split(/\s+/).filter(Boolean);
+  return {
+    title: parts[0] ?? text,
+    subtitle: parts.slice(1).join(" ") || "",
+    full: text,
+  };
+});
+
+/** 显示名：优先 config.displayName */
+const displayName = computed(() => meta.value?.config?.displayName ?? fontName.value);
 </script>
 
 <template>
@@ -80,7 +101,7 @@ function splitSemicolon(text: string | undefined): string[] {
     <!-- 字体加载：SSG 时含占位符，后端替换后即指向正确字体子集 -->
     <link
       rel="stylesheet"
-      :href="`${origin}/api?font=${fontName}&text=静心茶舍以茶为媒观自在一叶知秋山间晨露未晞茶人已入林深处指尖轻捻择其嫩芽天地无极乾坤借法&outType=woff2`"
+      :href="`${origin}/api?font=${fontName}&text=${encodeURIComponent(previewContent)}&outType=woff2`"
     />
 
     <!-- 顶部导航 -->
@@ -159,9 +180,10 @@ function splitSemicolon(text: string | undefined): string[] {
             lineHeight: 1.3,
           }"
         >
-          静心茶舍
+          {{ previewLines.title }}
         </div>
         <p
+          v-if="previewLines.subtitle"
           :style="{
             fontFamily: `'${fontName}', sans-serif`,
             fontSize: '16px',
@@ -170,7 +192,7 @@ function splitSemicolon(text: string | undefined): string[] {
             letterSpacing: '0.1em',
           }"
         >
-          以茶为媒 · 静心观自在
+          {{ previewLines.subtitle }}
         </p>
       </div>
 

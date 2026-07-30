@@ -11,6 +11,7 @@
     "serve:llrt": "./llrt ./dist_backend/app.cjs",
     "build": "vite-ssg build",
     "build_backend": "pnpx tsx scripts/build-backend.ts",
+    "lint:font-config": "pnpx tsx scripts/lint-font-config.ts",
     "docker_build": "docker build -t llej0/web-font:${npm_package_version} -t llej0/web-font:latest .",
     "docker_push": "docker push llej0/web-font:${npm_package_version} && docker push llej0/web-font:latest",
     "preview": "vite preview",
