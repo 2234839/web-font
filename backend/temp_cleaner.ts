@@ -7,7 +7,7 @@
  * 清理周期 = 保留时限的一半（最少 5 分钟），避免过于频繁的扫描。
  */
 import { readdir, stat, unlink, path_join } from "./interface";
-import { tempRetentionHours } from "./config";
+import { tempRetentionSeconds } from "./config";
 
 /** 临时字体目录 */
 const TEMP_DIR = "font/temp";
@@ -33,7 +33,7 @@ export function markFontUsed(fontPath: string): void {
  */
 async function cleanOnce(): Promise<void> {
   const now = Date.now();
-  const retentionMs = tempRetentionHours * 3600_000;
+  const retentionMs = tempRetentionSeconds * 1000;
 
   let entries: Array<{ name: string; isFile: () => boolean }>;
   try {
@@ -64,7 +64,7 @@ async function cleanOnce(): Promise<void> {
 }
 
 /** 清理周期：保留时限的一半，最少 5 分钟 */
-const CLEAN_INTERVAL = Math.max(tempRetentionHours * 1800_000, 300_000);
+const CLEAN_INTERVAL = Math.max(tempRetentionSeconds * 500, 300_000);
 
 /**
  * 启动定时清理器。
@@ -72,7 +72,7 @@ const CLEAN_INTERVAL = Math.max(tempRetentionHours * 1800_000, 300_000);
  */
 export function startTempCleaner(): void {
   const intervalSec = Math.round(CLEAN_INTERVAL / 1000);
-  console.log(`[temp-cleaner] 启动，保留时限 ${tempRetentionHours}h，清理周期 ${intervalSec}s`);
+  console.log(`[temp-cleaner] 启动，保留时限 ${tempRetentionSeconds}s，清理周期 ${intervalSec}s`);
 
   /** 首次延迟 60 秒 */
   setTimeout(() => {

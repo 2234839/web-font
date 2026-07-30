@@ -9,8 +9,8 @@ export interface ServerConfig {
   enableTempUpload: boolean;
   adminUploadEnabled: boolean;
   supportedOutTypes: ("woff2" | "ttf")[];
-  /** 临时字体保留时限（小时） */
-  tempRetentionHours?: number;
+  /** 临时字体保留时限（秒） */
+  tempRetentionSeconds?: number;
 }
 
 export interface UploadResult {

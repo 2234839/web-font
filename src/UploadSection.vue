@@ -82,8 +82,14 @@ function onFileSelect(e: Event, target: ReturnType<typeof useUpload>) {
       <div style="font-size: 14px; font-weight: 500; margin-bottom: 4px">{{ t('guestUpload') }}</div>
       <div style="font-size: 12px; color: #999; margin-bottom: 12px">
         {{ t('guestUploadDesc') }}
-        <span v-if="config.tempRetentionHours" style="color: #1677ff">
-          （保留时限 {{ config.tempRetentionHours }} 小时）
+        <span v-if="config.tempRetentionSeconds" style="color: #1677ff">
+          （保留时限 {{
+            config.tempRetentionSeconds >= 3600
+              ? Math.round(config.tempRetentionSeconds / 3600 * 10) / 10 + ' 小时'
+              : config.tempRetentionSeconds >= 60
+                ? Math.round(config.tempRetentionSeconds / 60) + ' 分钟'
+                : config.tempRetentionSeconds + ' 秒'
+          }}）
         </span>
       </div>
       <div style="display: flex; gap: 8px; align-items: center">

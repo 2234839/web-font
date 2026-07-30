@@ -123,6 +123,8 @@ services:
       - ENABLE_TEMP_UPLOAD=true
       - ADMIN_API_KEY=your-secret-key
       - SUBSET_CACHE_MAX_SIZE=10485760
+      # Temp font retention (seconds), auto-deleted if unused. Default: 10800 (3h)
+      - TEMP_RETENTION_SECONDS=10800
 ```
 
 ## API Reference

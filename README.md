@@ -123,6 +123,8 @@ services:
       - ENABLE_TEMP_UPLOAD=true
       - ADMIN_API_KEY=your-secret-key
       - SUBSET_CACHE_MAX_SIZE=10485760
+      # 临时字体保留时限（秒），超时未使用自动删除，默认 10800（3小时）
+      - TEMP_RETENTION_SECONDS=10800
 ```
 
 ## API
