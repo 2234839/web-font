@@ -1,6 +1,8 @@
-import { extractFontMeta, type FontUserConfig } from "../font_util/font_meta.js";
+import { extractFontMeta, META_VERSION, type FontUserConfig } from "../font_util/font_meta.js";
 import { parseUrl, jsonResponse, findFontPath, readFontBuffer } from "../shared";
 import { readFile, writeFile, stat } from "../interface";
+import { withMemoryGate } from "../subset_queue";
+import { subsetQueueTimeoutSeconds } from "../config";
 
 /**
  * 字体元数据路由 —— 分为两层：
@@ -99,17 +101,41 @@ export async function handleFontMeta(req: Request, _res: Response) {
   /** 1. 进程内存命中 */
   let meta = metaCache.get(fontPath);
   if (!meta) {
-    /** 2. 磁盘 .meta.json 命中 */
+    /** 2. 磁盘 .meta.json 命中（版本指纹不匹配则视为 miss，重新计算） */
     meta = await loadMetaFromDisk(fontPath);
-    if (meta) {
+    if (meta && meta.metaVersion === META_VERSION) {
       metaCache.set(fontPath, meta);
+    } else {
+      meta = undefined;
     }
   }
 
-  /** 3. 首次请求 —— 解析 cmap + name 表计算元数据 */
+  /** 3. 首次请求 —— 解析 cmap + name 表计算元数据（CPU/内存密集，复用子集化并发闸门） */
   if (!meta) {
-    const fontBuffer = await readFontBuffer(fontPath);
-    meta = extractFontMeta(fontBuffer);
+    /** 排队超时，返回 503 让客户端重试 */
+    const result = await withMemoryGate(
+      async () => {
+        const fontBuffer = await readFontBuffer(fontPath);
+        return extractFontMeta(fontBuffer);
+      },
+      subsetQueueTimeoutSeconds * 1000,
+      fontPath,
+    );
+
+    if (result === null) {
+      return {
+        req,
+        res: new Response("Server busy, please retry", {
+          status: 503,
+          headers: {
+            "Content-Type": "text/plain; charset=utf-8",
+            "Retry-After": "1",
+          },
+        }),
+      };
+    }
+
+    meta = result;
     metaCache.set(fontPath, meta);
     /** 异步写盘，不阻塞响应 */
     saveMetaToDisk(fontPath, meta);

@@ -116,7 +116,7 @@ export async function handleFontSubset(req: Request, res: Response) {
    * 缓存未命中的请求才进入闸门；RSS 超 softLimit 时排队等待，
    * 前面请求完成 + GC 释放内存后 RSS 回落才执行。避免 OOM 崩溃。
    */
-  const subsetResult = await withMemoryGate(subsetConcurrency, async () => {
+  const subsetResult = await withMemoryGate(async () => {
     return fontSubset(oldFontBuffer, text, {
       outType: outType,
       sourceType: fontType,

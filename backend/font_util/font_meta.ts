@@ -461,12 +461,21 @@ export interface FontMeta {
 }
 
 /**
+ * 元数据版本指纹
+ *
+ * extractCodePoints / calcCoverage 的算法变更后手动 bump，
+ * 让路由层的 .meta.json 磁盘缓存自动失效（旧文件的 metaVersion 不匹配即重算）。
+ */
+export const META_VERSION = 3;
+
+/**
  * 提取字体元数据：codepoint 总数、覆盖率、支持的区间、字体基本信息。
  * 注意：config 字段由路由层从 font-config.json 填充，此处不包含。
  */
 export function extractFontMeta(fontBuffer: ArrayBuffer | Uint8Array): FontMeta {
   const cps = extractCodePoints(fontBuffer);
   return {
+    metaVersion: META_VERSION,
     totalCodePoints: cps.size,
     coverage: calcCoverage(cps),
     ranges: codePointsToRanges(cps),

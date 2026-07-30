@@ -37,16 +37,12 @@ let lastGroupKey = "";
  * 分组优化：同 groupKey（同一字体）的排队请求优先连续唤醒，
  * 使字体 buffer / 解析对象在缓存窗口内被下一个请求复用，降低内存峰值。
  *
- * 函数名保留 withMemoryGate 以减少调用方改动（subset.ts 等）。
- *
- * @param _softLimitMB 废弃保留（兼容签名），不再使用
- * @param task 实际的子集化异步任务
+ * @param task 实际的异步任务
  * @param queueTimeoutMs 排队超时（毫秒）
  * @param groupKey 分组键（通常为 fontPath），同组连续处理以复用缓存
  * @returns 任务结果，或 null 表示排队超时
  */
 export async function withMemoryGate<T>(
-  _softLimitMB: number,
   task: () => Promise<T>,
   queueTimeoutMs: number,
   groupKey = "",
@@ -121,10 +117,9 @@ function release(): void {
  * 初始化并发参数（由 config 设置）
  *
  * 必须在第一次 withMemoryGate 调用前执行。
- * @param _softLimitMB 废弃（兼容签名）
  * @param concurrency 最大并发数
  */
-export function initMemoryGate(_softLimitMB: number, concurrency?: number): void {
+export function initMemoryGate(concurrency?: number): void {
   if (concurrency && concurrency > 0) {
     maxConcurrency = concurrency;
   }

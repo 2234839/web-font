@@ -210,7 +210,7 @@ async function main() {
   console.log("[config] admin upload:", !!adminApiKey);
 
   /** 初始化子集化并发队列（含字体分组调度） */
-  initMemoryGate(0, subsetConcurrency);
+  initMemoryGate(subsetConcurrency);
 
   /** 启动临时字体定时清理器 */
   startTempCleaner();
