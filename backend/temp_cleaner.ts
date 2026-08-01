@@ -38,10 +38,12 @@ async function cleanOnce(): Promise<void> {
   let entries: Array<{ name: string; isFile: () => boolean }>;
   try {
     entries = await readdir(TEMP_DIR);
-  } catch {
+  } catch (err) {
+    console.log("[temp-cleaner] readdir 失败:", err);
     return;
   }
 
+  let cleaned = 0;
   for (const entry of entries) {
     if (!entry.isFile()) continue;
     if (!/\.(ttf|otf|woff|woff2)$/i.test(entry.name)) continue;
@@ -55,11 +57,14 @@ async function cleanOnce(): Promise<void> {
       if (now - lastActive > retentionMs) {
         await unlink(filePath);
         lastUsedMap.delete(entry.name);
-        console.log(`[temp-cleaner] 删除过期临时字体: ${entry.name}`);
+        cleaned++;
       }
-    } catch {
-      /** 文件可能在扫描过程中被删除，忽略 */
+    } catch (err) {
+      console.log("[temp-cleaner] 处理文件失败:", entry.name, err);
     }
+  }
+  if (cleaned > 0) {
+    console.log(`[temp-cleaner] 本次清理 ${cleaned} 个过期临时字体`);
   }
 }
 

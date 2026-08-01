@@ -90,8 +90,21 @@ const previewLines = computed(() => {
   };
 });
 
-/** 字符预览行：来自 config.charsetPreview */
-const charsetPreview = computed(() => meta.value?.config?.charsetPreview ?? "");
+/** 字符预览：用户可实时编辑，初始值来自 config.charsetPreview */
+const charsetPreviewText = ref("");
+/** charsetPreview 初始值就绪后同步到可编辑 ref */
+watchEffect(() => {
+  const val = meta.value?.config?.charsetPreview ?? "";
+  if (val && !charsetPreviewText.value) charsetPreviewText.value = val;
+});
+
+/**
+ * 实时编辑用的 textLoader —— 通过 WebFont SDK 动态更新子集
+ *
+ * 用户在字符预览 textarea 中输入文字时，
+ * textLoader.update() 会请求新子集并自动注入 @font-face。
+ */
+let charsetLoader: { update: (text: string) => void; dispose: () => void } | null = null;
 
 /** 所有需要预览的文字合并，用于字体子集加载 */
 const allPreviewText = computed(() => {
@@ -124,6 +137,29 @@ watchEffect(() => {
 onUnmounted(() => {
   injectedStyle?.remove();
   injectedStyle = null;
+  charsetLoader?.dispose();
+  charsetLoader = null;
+});
+
+/**
+ * 字符预览实时编辑：meta 就绪后初始化 textLoader，
+ * 后续用户编辑时仅调 update（增量请求子集）。
+ */
+watchEffect(() => {
+  if (typeof document === "undefined") return;
+  const font = fontName.value;
+  const text = charsetPreviewText.value;
+  if (!font || !text) return;
+  if (!charsetLoader) {
+    charsetLoader = (globalThis as any).WebFont?.loadText?.({
+      fontName: font,
+      text,
+      family: font,
+      outType: "woff2",
+    }) ?? null;
+  } else {
+    charsetLoader.update(text);
+  }
 });
 
 /** 使用方法示例代码（动态拼接 origin + fontName） */
@@ -235,9 +271,9 @@ const usageCode = computed(() =>
         </p>
       </div>
 
-      <!-- 字符集预览 -->
+      <!-- 字符预览（可实时编辑） -->
       <div
-        v-if="charsetPreview"
+        v-if="charsetPreviewText || meta"
         style="
           background: #fff;
           border-radius: 12px;
@@ -247,19 +283,27 @@ const usageCode = computed(() =>
         "
       >
         <div style="font-size: 13px; font-weight: 600; color: #999; margin-bottom: 16px">
-          字符预览
+          字符预览（可编辑）
         </div>
-        <div
+        <textarea
+          v-model="charsetPreviewText"
+          :rows="Math.max(2, Math.min(charsetPreviewText.split('\n').length, 8))"
+          placeholder="输入文字实时预览字体效果"
           :style="{
+            width: '100%',
+            padding: '8px 12px',
             fontFamily: `'${fontName}', monospace`,
             fontSize: '18px',
             color: '#555',
-            lineHeight: 2,
-            wordBreak: 'break-all',
+            lineHeight: '2',
+            border: '1px solid #e8e8e8',
+            borderRadius: '8px',
+            boxSizing: 'border-box',
+            outline: 'none',
+            resize: 'vertical',
+            background: '#fafafa',
           }"
-        >
-          {{ charsetPreview }}
-        </div>
+        />
       </div>
 
       <!-- 字符覆盖率 -->
