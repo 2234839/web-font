@@ -47,6 +47,29 @@ var WebFont = (function () {
   var fontLoadQueue = [];
 
   /**
+   * 子集化提供者 —— 决定如何获取增量字体片段
+   *
+   * 默认走 HTTP API（在线模式）。
+   * 离线模式下通过 setSubsetProvider 注入本地裁剪函数，
+   * SDK 负责增量管理（去重、unicode-range），provider 只管"给定文本→返回字体URL"。
+   *
+   * provider 签名：async function(fontName, text, outType) -> { url: string, format: string }
+   * - url：字体文件的 URL（HTTP URL 或 blob: URL）
+   * - format：字体格式（"woff2" / "truetype"）
+   */
+  var subsetProvider = null;
+
+  /**
+   * 默认在线 provider —— 构造 HTTP API URL
+   */
+  function httpProvider(baseUrl) {
+    return function (fontName, text, outType) {
+      var url = baseUrl + "/api?font=" + encodeURIComponent(fontName) + "&text=" + encodeURIComponent(text) + "&outType=" + outType;
+      return Promise.resolve({ url: url, format: outType === "woff2" ? "woff2" : "truetype" });
+    };
+  }
+
+  /**
    * 设置最大并发请求数
    *
    * @param {number} n - 并发数，最小 1
@@ -160,33 +183,40 @@ var WebFont = (function () {
 
       var text = newChars.join("");
       var outType = loader.outType || "woff2";
-      var url = baseUrl + "/api?font=" + encodeURIComponent(fontName) + "&text=" + encodeURIComponent(text) + "&outType=" + outType;
-      var formatStr = outType === "woff2" ? "woff2" : "truetype";
       var unicodeRanges = newChars
         .map(function (c) { return "U+" + c.codePointAt(0).toString(16).padStart(4, "0"); })
         .join(", ");
 
-      var style = document.createElement("style");
-      style.textContent =
-        '@font-face {\n' +
-        '  font-family: "' + family + '";\n' +
-        '  src: url("' + url + '") format("' + formatStr + '");\n' +
-        '  unicode-range: ' + unicodeRanges + ';\n' +
-        '}\n';
-      document.head.appendChild(style);
-      loader.injectedStyles.push(style);
-
       /**
-       * 释放并发槽位的策略：
-       *
-       * 优先用 FontFaceSet API 精确追踪字体加载完成；
-       * 不可用时退化为 setTimeout（3 秒兜底窗口，覆盖绝大多数裁剪+传输时间）。
+       * 通过 subsetProvider 获取字体片段 URL。
+       * 默认走 HTTP API；离线模式下由本地裁剪 provider 提供 blob: URL。
        */
-      if (document.fonts && document.fonts.load) {
-        document.fonts.load(outType === "woff2" ? "16px \"" + family + "\"" : "16px \"" + family + "\"").then(done, function () { done(); });
-      } else {
-        setTimeout(done, 3000);
-      }
+      var provider = subsetProvider || httpProvider(baseUrl);
+      provider(fontName, text, outType).then(function (result) {
+        var style = document.createElement("style");
+        style.textContent =
+          '@font-face {\n' +
+          '  font-family: "' + family + '";\n' +
+          '  src: url("' + result.url + '") format("' + result.format + '");\n' +
+          '  unicode-range: ' + unicodeRanges + ';\n' +
+          '}\n';
+        document.head.appendChild(style);
+        loader.injectedStyles.push(style);
+
+        /**
+         * 释放并发槽位的策略：
+         *
+         * 优先用 FontFaceSet API 精确追踪字体加载完成；
+         * 不可用时退化为 setTimeout（3 秒兜底窗口，覆盖绝大多数裁剪+传输时间）。
+         */
+        if (document.fonts && document.fonts.load) {
+          document.fonts.load("16px \"" + family + "\"").then(done, function () { done(); });
+        } else {
+          setTimeout(done, 3000);
+        }
+      }).catch(function () {
+        done();
+      });
     });
   }
 
@@ -486,12 +516,25 @@ var WebFont = (function () {
     }
   }
 
+  /**
+   * 注入自定义子集化提供者（离线裁剪等场景）
+   *
+   * provider 签名：async function(fontName, text, outType) -> { url: string, format: string }
+   * - 离线场景：provider 调用本地裁剪函数，生成 blob: URL 返回
+   * - 传 null 恢复默认 HTTP 行为
+   */
+  function setSubsetProvider(provider) {
+    subsetProvider = provider;
+  }
+
   return {
     loadFont: loadFont,
     observeFont: observeFont,
     loadText: loadText,
     disposeAll: disposeAll,
     /** 设置客户端最大并发字体请求数（默认 4） */
-    setMaxConcurrent: setMaxConcurrent
+    setMaxConcurrent: setMaxConcurrent,
+    /** 注入自定义子集化提供者（离线裁剪等场景） */
+    setSubsetProvider: setSubsetProvider
   };
 })();

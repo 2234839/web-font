@@ -13,6 +13,7 @@ import App from "./App.vue";
  */
 const routes = [
   { path: "/", component: () => import("./pages/Home.vue") },
+  { path: "/offline-subset", component: () => import("./pages/OfflineSubset.vue") },
   { path: "/demo", component: () => import("./pages/Demo.vue") },
   { path: "/fonts", component: () => import("./pages/FontList.vue") },
   /**
@@ -23,6 +24,12 @@ const routes = [
     path: "/fonts/:slug",
     component: () => import("./pages/FontDetail.vue"),
   },
+  /**
+   * DEV 字体预览页 —— 仅 dev 模式注册路由，生产构建不可达
+   */
+  ...(import.meta.env.DEV
+    ? [{ path: "/__dev", component: () => import("./pages/DevPreview.vue") }]
+    : []),
 ];
 
 export const createApp = ViteSSG(

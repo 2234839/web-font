@@ -22,6 +22,8 @@ export interface PersistedStats {
   subsetRequests: number;
   subsetCacheHits: number;
   totalChars: number;
+  /** 临时文件上传次数（持久化累计） */
+  tempUploads: number;
 }
 
 /** 落盘防抖间隔（毫秒）：在请求热路径之外的最低频写盘，平衡丢失量与 IO */
@@ -48,11 +50,12 @@ export async function loadPersistedStats(): Promise<PersistedStats & { startTime
       subsetRequests: parsed.subsetRequests ?? 0,
       subsetCacheHits: parsed.subsetCacheHits ?? 0,
       totalChars: parsed.totalChars ?? 0,
+      tempUploads: parsed.tempUploads ?? 0,
       startTime: Date.now(),
     };
   } catch {
     /** 首次启动 / 文件缺失 / JSON 损坏：从 0 起步 */
-    return { totalRequests: 0, subsetRequests: 0, subsetCacheHits: 0, totalChars: 0, startTime: Date.now() };
+    return { totalRequests: 0, subsetRequests: 0, subsetCacheHits: 0, totalChars: 0, tempUploads: 0, startTime: Date.now() };
   }
 }
 

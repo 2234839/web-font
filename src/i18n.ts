@@ -94,6 +94,8 @@ const messages = {
     upload: "上传",
     uploadSuccess: "上传成功",
     uploadFailed: "上传失败",
+    /** 离线裁剪导航链接 */
+    offlineSubsetLink: "🔒 离线裁剪（字体不上传服务器）",
 
     // StatsPanel.vue
     serverStatus: "服务状态",
@@ -169,6 +171,8 @@ const messages = {
     upload: "Upload",
     uploadSuccess: "Upload successful",
     uploadFailed: "Upload failed",
+    /** 离线裁剪导航链接 */
+    offlineSubsetLink: "🔒 Offline Subsetting (no upload)",
 
     // StatsPanel.vue
     serverStatus: "Server Status",

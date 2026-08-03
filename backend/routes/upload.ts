@@ -1,4 +1,4 @@
-import { jsonResponse, parseUrl } from "../shared";
+import { jsonResponse, parseUrl, stats, markStatsDirty } from "../shared";
 import { parseMultipart } from "../multipart";
 import { handleTempUpload, handleAdminUpload } from "../upload";
 
@@ -43,5 +43,9 @@ export async function handleUpload(req: Request, _res: Response) {
 
   result = await handleTempUpload({ data: file.data, filename: file.filename });
   console.log("[upload] temp result:", result);
+  if (result.success) {
+    stats.tempUploads++;
+    markStatsDirty();
+  }
   return { req, res: jsonResponse(result, result.success ? 200 : 400) };
 }

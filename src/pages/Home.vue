@@ -24,6 +24,7 @@ usePageSeo({
 });
 
 const router = useRouter();
+/** dev 模式标志 —— 控制 DEV 预览入口可见性 */
 const isDev = import.meta.env.DEV;
 
 /** 站点 origin —— SSG 构建期为空串，客户端挂载后修正 */
@@ -34,7 +35,6 @@ const showDemoEntry = ref(false);
 import UploadSection from "../UploadSection.vue";
 import StatsPanel from "../StatsPanel.vue";
 import SelectorRow from "../FontSelector.vue";
-import FontDebugPreview from "../FontDebugPreview.vue";
 import CodeBlock from "../components/CodeBlock.vue";
 
 const text = ref("天地无极，乾坤借法");
@@ -110,7 +110,7 @@ const basicUsageCode = computed(() => {
 
 /** JS SDK 代码示例 */
 const jsSdkCode = computed(() => {
-  return '<script src="' + origin.value + '/webfont-sdk.js"><\/script>\n<script>\n  WebFont.loadFont({\n    fontName: "\u5b57\u4f53\u6587\u4ef6\u540d.ttf",\n    selector: ".my-element",\n    family: "MyFont",\n    interval: 1000,\n  });\n<\/script>';
+  return '<script src="' + origin.value + '/webfont-sdk.js"><\/script>\n\n<h1 class="title">你的文字</h1>\n<p class="content">输入任意文字，SDK 自动裁剪加载</p>\n\n<script>\n  WebFont.loadFont({\n    fontName: "字体文件名.ttf",\n    selector: ".title, .content",\n    family: "MyFont",\n    interval: 1000,\n  });\n<\/script>';
 });
 
 let textLoader: { update: (text: string) => void; dispose: () => void } | null = null;
@@ -190,7 +190,7 @@ async function refreshFonts() {
   <div style="max-width: 720px; margin: 0 auto; padding: 48px 24px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: #1a1a1a; line-height: 1.6">
     <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px">
       <h1 style="font-size: 22px; font-weight: 600; margin: 0 0 4px 0">Web Font</h1>
-      <div style="display: flex; gap: 8px; align-items: center; flex-wrap: nowrap; flex-shrink: 0">
+      <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end">
         <button @click="toggleLocale" style="font-size: 13px; border: 1px solid #d9d9d9; border-radius: 6px; padding: 4px 12px; cursor: pointer; background: #fff; color: #333; white-space: nowrap; flex-shrink: 0; line-height: 1.6">
           {{ locale === 'zh' ? 'EN' : '中' }}
         </button>
@@ -199,6 +199,16 @@ async function refreshFonts() {
         </router-link>
         <router-link to="/demo" style="font-size: 13px; color: #8b7355; text-decoration: none; border: 1px solid #8b7355; border-radius: 6px; padding: 4px 12px; display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; flex-shrink: 0">
           {{ t('agentSkillDemo') }}
+        </router-link>
+        <router-link to="/offline-subset" style="font-size: 13px; color: #16a34a; text-decoration: none; border: 1px solid #16a34a; border-radius: 6px; padding: 4px 12px; display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; flex-shrink: 0">
+          离线裁剪
+        </router-link>
+        <router-link
+          v-if="isDev"
+          to="/__dev"
+          style="font-size: 13px; color: #e6a700; text-decoration: none; border: 1px dashed #e6a700; border-radius: 6px; padding: 4px 12px; display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; flex-shrink: 0"
+        >
+          DEV 预览
         </router-link>
         <a
           href="https://github.com/2234839/web-font"
@@ -225,7 +235,10 @@ async function refreshFonts() {
     </section>
 
     <section style="margin-bottom: 28px">
-      <label style="display: block; font-size: 13px; color: #555; margin-bottom: 6px">{{ t('inputLabel') }}</label>
+      <label style="display: block; font-size: 13px; color: #555; margin-bottom: 6px">
+        {{ t('inputLabel') }}
+        <span style="font-size: 12px; color: #999; font-weight: 400">— 输入即时触发<a href="#sdk-doc" style="color: #1677ff; text-decoration: none">增量加载</a>，只裁剪用到的字符，非全量下载</span>
+      </label>
       <textarea
         id="webfont-preview"
         :rows="textareaRows"
@@ -257,13 +270,11 @@ async function refreshFonts() {
       <CodeBlock :code="cssStyle" lang="css" />
     </section>
 
-    <FontDebugPreview v-if="isDev" />
-
     <UploadSection :config="serverConfig" :onUploaded="refreshFonts" />
 
     <StatsPanel />
 
-    <section style="margin-bottom: 28px; font-size: 12px; color: #aaa; line-height: 1.8">
+    <section id="sdk-doc" style="margin-bottom: 28px; font-size: 12px; color: #aaa; line-height: 1.8">
       <p><b>{{ t('principle') }}</b>{{ t('principleText') }}</p>
       <p><b>{{ t('basicUsage') }}</b>{{ t('basicUsageText') }}</p>
       <div style="margin-top: 4px"><CodeBlock :code="basicUsageCode" lang="html" /></div>

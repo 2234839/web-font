@@ -10,6 +10,7 @@ export async function handleStats(req: Request, _res: Response) {
       subsetRequests: stats.subsetRequests,
       subsetCacheHits: stats.subsetCacheHits,
       totalChars: stats.totalChars,
+      tempUploads: stats.tempUploads,
       subsetCacheEntries: subsetCache.size,
       fontBufferCacheEntries: fontBufferCache.size,
     }),

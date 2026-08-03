@@ -28,6 +28,8 @@ export const stats = {
   subsetCacheHits: 0,
   /** 累计裁剪文字字符数（持久化累计） */
   totalChars: 0,
+  /** 临时文件上传次数（持久化累计） */
+  tempUploads: 0,
 };
 
 /**
@@ -43,6 +45,7 @@ export async function initStats(): Promise<void> {
   stats.subsetRequests = persisted.subsetRequests;
   stats.subsetCacheHits = persisted.subsetCacheHits;
   stats.totalChars = persisted.totalChars;
+  stats.tempUploads = persisted.tempUploads;
 }
 
 /** 取出需要持久化的累计计数字段 */
@@ -52,6 +55,7 @@ export function snapshotStats(): PersistedStats {
     subsetRequests: stats.subsetRequests,
     subsetCacheHits: stats.subsetCacheHits,
     totalChars: stats.totalChars,
+    tempUploads: stats.tempUploads,
   };
 }
 

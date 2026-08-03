@@ -119,6 +119,7 @@ onUnmounted(() => {
       <span><b style="color: #333">{{ t('requests') }}</b> {{ data.totalRequests }} {{ t('times') }}</span>
       <span><b style="color: #333">{{ t('subset') }}</b> {{ data.subsetRequests }} {{ t('times') }}</span>
       <span><b style="color: #333">{{ t('chars') }}</b> {{ data.totalChars }} {{ t('charUnit') }}</span>
+      <span><b style="color: #333">上传</b> {{ data.tempUploads ?? 0 }} 次</span>
       <span><b style="color: #333">{{ t('cacheHit') }}</b> {{ data.subsetRequests > 0 ? ((data.subsetCacheHits / data.subsetRequests) * 100).toFixed(1) : '0.0' }}%</span>
     </div>
     <!-- 底部进度条：每轮询周期走一轮，走完触发下次刷新 -->

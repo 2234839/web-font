@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed } from "vue";
+import { RouterLink } from "vue-router";
 import { uploadFont, type UploadResult, type ServerConfig } from "./api";
 import { t } from "./i18n";
 
@@ -106,6 +107,19 @@ function onFileSelect(e: Event, target: ReturnType<typeof useUpload>) {
           {{ temp.uploading.value ? '...' : t('upload') }}
         </button>
       </div>
+
+      <!-- 离线裁剪入口：不想上传？试试纯浏览器端方案 -->
+      <router-link
+        to="/offline-subset"
+        style="display: flex; align-items: center; gap: 6px; text-decoration: none; font-size: 12px; color: #1677ff; margin-top: 12px; padding-top: 10px; border-top: 1px dashed #eee; transition: color 0.2s"
+        onmouseover="this.style.color='#0958d9'"
+        onmouseout="this.style.color='#1677ff'"
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink: 0">
+          <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/>
+        </svg>
+        不想上传服务器？试试离线裁剪 →
+      </router-link>
     </div>
 
     <div v-if="config.adminUploadEnabled" style="padding: 16px; border: 1px solid #e8e8e8; border-radius: 8px; margin-bottom: 16px">

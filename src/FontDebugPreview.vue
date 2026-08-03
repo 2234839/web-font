@@ -27,6 +27,16 @@ onMounted(async () => {
   }
 });
 
+/** 面板是否展开 */
+const expanded = ref(false);
+
+/** 所有字体的字体卡片是否展开（独立折叠） */
+const expandedFonts = ref<Record<string, boolean>>({});
+
+function toggleFont(name: string) {
+  expandedFonts.value[name] = !expandedFonts.value[name];
+}
+
 onUnmounted(() => {
   for (const loader of loaders.values()) loader.dispose();
   loaders.clear();
@@ -40,23 +50,34 @@ function fontFamily(font: FontInfo, ot: string) {
 
 <template>
   <section style="margin-bottom: 28px; padding: 16px; border: 2px dashed #e6a700; border-radius: 8px; background: #fffdf5">
-    <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 12px">
+    <div
+      @click="expanded = !expanded"
+      style="display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none"
+    >
       <span style="font-size: 13px; font-weight: 600; color: #e6a700">DEV 字体调试预览</span>
       <span style="font-size: 11px; color: #aaa">所有字体的 woff2 / ttf 渲染效果</span>
+      <span style="margin-left: auto; font-size: 12px; color: #e6a700">{{ expanded ? '收起 ▲' : '展开 ▼' }}</span>
     </div>
-    <div v-for="font in fonts" :key="font.name" style="margin-bottom: 12px; padding: 8px 12px; background: #fff; border: 1px solid #e8e8e8; border-radius: 6px">
-      <div style="font-size: 11px; color: #999; margin-bottom: 6px; display: flex; justify-content: space-between">
-        <span style="font-weight: 500; color: #555">{{ font.name }}</span>
-        <span style="color: #bbb">{{ font.dir }}</span>
-      </div>
-      <div v-for="ot in (['woff2', 'ttf'] as const)" :key="ot" style="margin-bottom: 4px; display: flex; align-items: baseline; gap: 8px">
-        <span style="font-size: 11px; color: #bbb; min-width: 40px; flex: none">{{ ot }}</span>
-        <div
-          :style="{ fontSize: '22px', lineHeight: '1.5', color: '#1a1a1a', minHeight: '36px', fontFamily: fontFamily(font, ot) }"
-        >
-          {{ PREVIEW_TEXT }}
+    <template v-if="expanded">
+      <div v-for="font in fonts" :key="font.name" style="margin-top: 12px; padding: 8px 12px; background: #fff; border: 1px solid #e8e8e8; border-radius: 6px">
+        <div @click="toggleFont(font.name)" style="font-size: 11px; color: #999; margin-bottom: 6px; display: flex; justify-content: space-between; cursor: pointer; user-select: none">
+          <span style="font-weight: 500; color: #555">{{ font.name }}</span>
+          <span style="display: flex; align-items: center; gap: 8px">
+            <span style="color: #bbb">{{ font.dir }}</span>
+            <span style="color: #e6a700">{{ expandedFonts[font.name] ? '▲' : '▼' }}</span>
+          </span>
         </div>
+        <template v-if="expandedFonts[font.name]">
+          <div v-for="ot in (['woff2', 'ttf'] as const)" :key="ot" style="margin-bottom: 4px; display: flex; align-items: baseline; gap: 8px">
+            <span style="font-size: 11px; color: #bbb; min-width: 40px; flex: none">{{ ot }}</span>
+            <div
+              :style="{ fontSize: '22px', lineHeight: '1.5', color: '#1a1a1a', minHeight: '36px', fontFamily: fontFamily(font, ot) }"
+            >
+              {{ PREVIEW_TEXT }}
+            </div>
+          </div>
+        </template>
       </div>
-    </div>
+    </template>
   </section>
 </template>
