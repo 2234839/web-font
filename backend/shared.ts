@@ -30,6 +30,10 @@ export const stats = {
   totalChars: 0,
   /** 临时文件上传次数（持久化累计） */
   tempUploads: 0,
+  /** 离线裁剪完成次数（纯浏览器端裁剪的匿名上报；持久化累计） */
+  offlineSubsets: 0,
+  /** 离线裁剪字体下载次数（匿名上报；持久化累计） */
+  offlineDownloads: 0,
 };
 
 /**
@@ -46,6 +50,8 @@ export async function initStats(): Promise<void> {
   stats.subsetCacheHits = persisted.subsetCacheHits;
   stats.totalChars = persisted.totalChars;
   stats.tempUploads = persisted.tempUploads;
+  stats.offlineSubsets = persisted.offlineSubsets;
+  stats.offlineDownloads = persisted.offlineDownloads;
 }
 
 /** 取出需要持久化的累计计数字段 */
@@ -56,6 +62,8 @@ export function snapshotStats(): PersistedStats {
     subsetCacheHits: stats.subsetCacheHits,
     totalChars: stats.totalChars,
     tempUploads: stats.tempUploads,
+    offlineSubsets: stats.offlineSubsets,
+    offlineDownloads: stats.offlineDownloads,
   };
 }
 

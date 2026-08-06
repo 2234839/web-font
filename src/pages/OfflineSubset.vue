@@ -18,6 +18,7 @@ const fileInput = ref<HTMLInputElement | null>(null);
 const dragActive = ref(false);
 import { usePageSeo } from "../useSeo";
 import { t, toggleLocale, locale } from "../i18n";
+import { reportOfflineEvent } from "../api";
 
 usePageSeo({
   title: "离线字体裁剪 | 纯浏览器端 | 隐私安全",
@@ -178,6 +179,8 @@ async function doFullSubset() {
     const blob = new Blob([result.buffer as ArrayBuffer], { type: "font/ttf" });
     subsetUrl.value = URL.createObjectURL(blob);
     subsetSize.value = result.byteLength;
+    /** 匿名上报：一次完整裁剪完成（不含字体/文字内容） */
+    reportOfflineEvent("offline_subset");
   } catch (err) {
     errorMsg.value = `裁剪失败：${err instanceof Error ? err.message : String(err)}`;
     console.error("[offline-subset]", err);
@@ -207,6 +210,8 @@ function downloadSubset() {
   const baseName = fontFileName.value.replace(/\.[^.]+$/, "");
   a.download = `${baseName}_subset.ttf`;
   a.click();
+  /** 匿名上报：下载动作 */
+  reportOfflineEvent("offline_download");
 }
 
 /** 压缩率百分比 */

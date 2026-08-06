@@ -30,6 +30,12 @@ export interface ServerStats {
   totalChars: number;
   subsetCacheEntries: number;
   fontBufferCacheEntries: number;
+  /** 临时文件上传次数 */
+  tempUploads?: number;
+  /** 离线裁剪完成次数 */
+  offlineSubsets?: number;
+  /** 离线裁剪字体下载次数 */
+  offlineDownloads?: number;
 }
 
 /** 字符集覆盖率 */
@@ -131,4 +137,21 @@ export async function uploadFont(
 export async function fetchStats(): Promise<ServerStats> {
   const res = await fetch("/api/stats");
   return res.json();
+}
+
+/**
+ * 离线裁剪匿名事件上报
+ *
+ * 只发送事件类型（裁剪完成 / 下载），不包含字体、文字等任何内容数据。
+ * 用 sendBeacon 优先（页面卸载时也能送达），失败静默——统计不干扰主流程。
+ */
+export function reportOfflineEvent(event: "offline_subset" | "offline_download"): void {
+  const body = JSON.stringify({ event });
+  if (navigator.sendBeacon?.("/api/stats/event", new Blob([body], { type: "application/json" }))) return;
+  fetch("/api/stats/event", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body,
+    keepalive: true,
+  }).catch(() => {});
 }

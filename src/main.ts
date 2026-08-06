@@ -15,6 +15,7 @@ const routes = [
   { path: "/", component: () => import("./pages/Home.vue") },
   { path: "/offline-subset", component: () => import("./pages/OfflineSubset.vue") },
   { path: "/demo", component: () => import("./pages/Demo.vue") },
+  { path: "/docs", component: () => import("./pages/Docs.vue") },
   { path: "/fonts", component: () => import("./pages/FontList.vue") },
   /**
    * 字体详情页 —— SSG 构建时以 __FONT_NAME__ 占位符渲染模板 HTML，

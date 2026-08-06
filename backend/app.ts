@@ -7,7 +7,7 @@ import { flushStatsSyncSafe } from "./stats_store";
 import { enableTempUpload, adminApiKey } from "./config";
 import { handleListFonts } from "./routes/fonts";
 import { handleGetConfig } from "./routes/config";
-import { handleStats } from "./routes/stats";
+import { handleStats, handleStatsEvent } from "./routes/stats";
 import { handleUpload } from "./routes/upload";
 import { handleFontSubset } from "./routes/subset";
 import { handleFontDetail } from "./routes/font_detail";
@@ -156,6 +156,9 @@ const fontApiMiddleware: cMiddleware = async (req, res, next) => {
   }
   if (url.pathname === "/api/stats" && req.method === "GET") {
     return handleStats(req, res);
+  }
+  if (url.pathname === "/api/stats/event" && req.method === "POST") {
+    return handleStatsEvent(req, res);
   }
   if (url.pathname === "/api/upload" && req.method === "POST") {
     return handleUpload(req, res);

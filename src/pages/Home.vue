@@ -103,15 +103,7 @@ const cssStyle = computed(() => {
 }`;
 });
 
-/** 基础用法代码示例（依赖 origin，需 computed） */
-const basicUsageCode = computed(() => {
-  return '<style>\n@font-face {\n  font-family: "MyFont";\n  src: url("' + origin.value + '/api?font=\u5b57\u4f53\u540d&text=\u4f60\u7684\u6587\u5b57") format("woff2");\n}\n.title { font-family: "MyFont"; }\n</style>\n<h1 class="title">\u4f60\u7684\u6587\u5b57</h1>';
-});
-
-/** JS SDK 代码示例 */
-const jsSdkCode = computed(() => {
-  return '<script src="' + origin.value + '/webfont-sdk.js"><\/script>\n\n<h1 class="title">你的文字</h1>\n<p class="content">输入任意文字，SDK 自动裁剪加载</p>\n\n<script>\n  WebFont.loadFont({\n    fontName: "字体文件名.ttf",\n    selector: ".title, .content",\n    family: "MyFont",\n    interval: 1000,\n  });\n<\/script>';
-});
+/** 基础用法代码示例已迁移至 /docs 页面 */
 
 let textLoader: { update: (text: string) => void; dispose: () => void } | null = null;
 
@@ -237,7 +229,7 @@ async function refreshFonts() {
     <section style="margin-bottom: 28px">
       <label style="display: block; font-size: 13px; color: #555; margin-bottom: 6px">
         {{ t('inputLabel') }}
-        <span style="font-size: 12px; color: #999; font-weight: 400">— 输入即时触发<a href="#sdk-doc" style="color: #1677ff; text-decoration: none">增量加载</a>，只裁剪用到的字符，非全量下载</span>
+        <span style="font-size: 12px; color: #999; font-weight: 400">— {{ t('inputHintIncremental') }}<router-link to="/docs" style="color: #1677ff; text-decoration: none">{{ t('docsEntryLink') }}</router-link></span>
       </label>
       <textarea
         id="webfont-preview"
@@ -274,13 +266,35 @@ async function refreshFonts() {
 
     <StatsPanel />
 
-    <section id="sdk-doc" style="margin-bottom: 28px; font-size: 12px; color: #aaa; line-height: 1.8">
-      <p><b>{{ t('principle') }}</b>{{ t('principleText') }}</p>
-      <p><b>{{ t('basicUsage') }}</b>{{ t('basicUsageText') }}</p>
-      <div style="margin-top: 4px"><CodeBlock :code="basicUsageCode" lang="html" /></div>
-      <p style="margin-top: 12px"><b>{{ t('jsSdk') }}</b>{{ t('jsSdkText') }}<a href="/webfont-sdk.js" download="webfont-sdk.js">{{ t('downloadSdk') }}</a></p>
-      <div style="margin-top: 4px"><CodeBlock :code="jsSdkCode" lang="html" /></div>
-      <p style="margin-top: 8px">{{ t('sdkModes') }}<code>WebFont.observeFont()</code>{{ t('observeFont') }}<code>WebFont.loadText()</code>{{ t('loadText') }}</p>
+    <!-- SDK 集成：首页简要提及，跳转独立文档页 -->
+    <section style="margin-bottom: 28px; font-size: 13px; color: #888; line-height: 1.8">
+      <b style="color: #555">{{ t('docsEntryTitle') }}</b>{{ t('docsEntryText') }}
+      <router-link to="/docs" style="color: #1677ff; text-decoration: none">{{ t('docsEntryLink') }}</router-link>
+    </section>
+
+    <!-- 企业服务：讲清商业价值，为作者带来收入的付费支持入口 -->
+    <section style="margin-bottom: 28px; padding: 16px; border: 1px solid #f0e6d2; border-radius: 8px; background: #fffdf8">
+      <div style="font-size: 14px; font-weight: 600; color: #333; margin-bottom: 6px">{{ t('enterpriseTitle') }}</div>
+      <p style="font-size: 13px; color: #666; line-height: 1.8; margin: 0 0 10px 0">{{ t('enterpriseValue') }}</p>
+      <ul style="font-size: 13px; color: #555; line-height: 2; margin: 0 0 10px 0; padding-left: 20px">
+        <li>{{ t('enterprisePoint1') }}</li>
+        <li>{{ t('enterprisePoint2') }}</li>
+        <li>{{ t('enterprisePoint3') }}</li>
+      </ul>
+      <p style="font-size: 13px; color: #666; line-height: 1.8; margin: 0 0 6px 0; font-weight: 500">{{ t('enterpriseDesc') }}</p>
+      <ul style="font-size: 13px; color: #555; line-height: 2; margin: 0 0 12px 0; padding-left: 20px">
+        <li>{{ t('enterpriseItem1') }}</li>
+        <li>{{ t('enterpriseItem2') }}</li>
+        <li>{{ t('enterpriseItem3') }}</li>
+        <li>{{ t('enterpriseItem4') }}</li>
+      </ul>
+      <div style="display: flex; gap: 10px; flex-wrap: wrap; align-items: center; font-size: 13px; color: #8b7355">
+        <a
+          href="mailto:admin@shenzilong.cn"
+          style="padding: 6px 16px; font-size: 13px; background: #1677ff; color: #fff; border-radius: 6px; text-decoration: none"
+        >{{ t('enterpriseContact') }}</a>
+        <span>{{ t('enterpriseEmailHint') }} <a href="mailto:admin@shenzilong.cn" style="color: #8b7355; text-decoration: underline">admin@shenzilong.cn</a></span>
+      </div>
     </section>
 
     <footer style="margin-top: 48px; padding-top: 16px; border-top: 1px solid #eee; font-size: 12px; color: #999; text-align: center">

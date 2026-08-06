@@ -106,6 +106,30 @@ const messages = {
     chars: "文字",
     charUnit: "字",
     cacheHit: "缓存命中",
+    offlineSubset: "离线裁剪",
+    offlineDownload: "离线下载",
+
+    // 企业服务板块
+    enterpriseTitle: "企业技术支持与服务",
+    enterpriseValue: "中文字体动辄 5～20MB，用户首屏要白等好几秒。裁剪后只剩页面实际用到的几十 KB，为你的业务带来实实在在的价值：",
+    enterprisePoint1: "💰 省流量费：字体体积减少 95%+，高流量站点的 CDN / 带宽成本大幅下降",
+    enterprisePoint2: "⚡ 首屏秒开：字体不再阻塞渲染，告别文字闪烁（FOIT/FOUT），移动端体验大幅提升",
+    enterprisePoint3: "📈 提升转化：加载更快 → 跳出率更低 → 留存与转化随之提升",
+    enterpriseDesc: "本项目免费开源，同时提供付费的企业级支持，助力你的业务稳定落地：",
+    enterpriseItem1: "私有部署 / 企业内网部署与调优",
+    enterpriseItem2: "字体子集化方案定制与授权合规咨询",
+    enterpriseItem3: "SDK 集成、性能优化与故障排查技术支持",
+    enterpriseItem4: "功能定制开发",
+    enterpriseContact: "联系崮生洽谈",
+    enterpriseEmailHint: "或发邮件至",
+
+    // 文档页 / 首页文档入口
+    docsTitle: "SDK 集成文档",
+    docsSubtitle: "为你的网站接入中文字体按需加载",
+    docsEntryTitle: "接入你的网站：",
+    docsEntryText: "支持 @font-face 与 JS SDK 增量加载，只加载页面用到的字符。",
+    docsEntryLink: "查看集成文档 →",
+    inputHintIncremental: "输入即时触发增量加载，只裁剪用到的字符，非全量下载。",
 
     // TypographyDemo.vue
     demoSlogan: "字体不同，体验天壤之别",
@@ -183,6 +207,30 @@ const messages = {
     chars: "Chars",
     charUnit: "chars",
     cacheHit: "Cache Hit",
+    offlineSubset: "Offline Subset",
+    offlineDownload: "Offline Download",
+
+    // Enterprise services section
+    enterpriseTitle: "Enterprise Support & Services",
+    enterpriseValue: "Chinese fonts are often 5–20MB, forcing users to wait seconds on a blank first screen. After subsetting, only the tens of KB actually used remain — bringing real value to your business:",
+    enterprisePoint1: "💰 Cut bandwidth costs: 95%+ smaller fonts dramatically reduce CDN / traffic bills for high-traffic sites",
+    enterprisePoint2: "⚡ Instant first paint: fonts no longer block rendering — no FOIT/FOUT flash, far better mobile UX",
+    enterprisePoint3: "📈 Boost conversion: faster load → lower bounce → higher retention & conversion",
+    enterpriseDesc: "This project is free and open source. Paid enterprise-grade support is also available to help your business land smoothly:",
+    enterpriseItem1: "Private / intranet deployment and tuning",
+    enterpriseItem2: "Font subsetting solution customization & license compliance consulting",
+    enterpriseItem3: "SDK integration, performance optimization & troubleshooting",
+    enterpriseItem4: "Custom feature development",
+    enterpriseContact: "Contact Gushsheng",
+    enterpriseEmailHint: "or email",
+
+    // Docs page / home docs entry
+    docsTitle: "SDK Integration Docs",
+    docsSubtitle: "Add on-demand Chinese font loading to your site",
+    docsEntryTitle: "Integrate into your site: ",
+    docsEntryText: "Supports @font-face and JS SDK incremental loading — only the characters used on the page are loaded.",
+    docsEntryLink: "View integration docs →",
+    inputHintIncremental: "Typing triggers incremental loading — only the characters used are subset, not the full font.",
 
     // TypographyDemo.vue
     demoSlogan: "Same content, different fonts, completely different feel",

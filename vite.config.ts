@@ -20,6 +20,7 @@ import type {} from "vite-ssg";
 const sitemapRoutes = [
   { path: "/", changefreq: "weekly" as const, priority: 1.0 },
   { path: "/offline-subset", changefreq: "weekly" as const, priority: 0.8 },
+  { path: "/docs", changefreq: "weekly" as const, priority: 0.8 },
   { path: "/demo", changefreq: "monthly" as const, priority: 0.6 },
 ];
 
@@ -172,7 +173,7 @@ export default { isInited: () => false, init: () => Promise.resolve(), encode: (
      * vite-ssg 默认会过滤掉动态路由、保留静态路由，
      * 这里显式返回需要 SSG 的路由清单，新增内容页（/blog 等）时在此追加。
      */
-    includedRoutes: () => ["/", "/offline-subset", "/demo", "/fonts", "/fonts/__FONT_NAME__"],
+    includedRoutes: () => ["/", "/offline-subset", "/demo", "/docs", "/fonts", "/fonts/__FONT_NAME__"],
     /**
      * 构建期（Node 环境）模拟浏览器全局变量，
      * 防止第三方库在 SSG 阶段访问 window/document 时崩溃。
