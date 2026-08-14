@@ -102,9 +102,9 @@ function runTsdown() {
 
 /** woff2 已使用纯 JS 实现（vendor/fonteditor-core/woff2/index.js），无需复制 wasm */
 
-/** 使用 LLRT compile 生成 .lrt 文件 */
+/** 使用 LLRT compile 生成 .lrt 文件（仅 LLRT 构建需要） */
 function runLlrtCompile() {
-  console.log("\n--- Running LLRT compile ---");
+  console.log("\n--- Running LLRT compile (LLRT only) ---");
   execSync(`${LLRT_BIN} compile ./dist_backend/app.cjs ./dist_backend/app.lrt`, {
     stdio: "inherit",
     cwd: ROOT_DIR,

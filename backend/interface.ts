@@ -18,20 +18,34 @@ export let mkdir: (path: string) => Promise<void>;
 
 export let unlink: (path: string) => Promise<void>;
 
+/** LLRT 专用：保存 rm 函数引用，避免闭包问题 */
+let llrtRm: ((path: string) => Promise<void>) | undefined;
+
 export const implInterface = (options: {
   stat: typeof stat;
   readFile: typeof readFile;
   writeFile: typeof writeFile;
   readdir: typeof readdir;
   mkdir: typeof mkdir;
-  unlink: typeof unlink;
+  unlink?: typeof unlink;
+  /** LLRT 没有 unlink，提供 rm 作为替代 */
+  rm?: (path: string) => Promise<void>;
 }) => {
   stat = options.stat;
   readFile = options.readFile;
   writeFile = options.writeFile;
   readdir = options.readdir;
   mkdir = options.mkdir;
-  unlink = options.unlink;
+  // 保存 rm 引用到模块级变量
+  llrtRm = options.rm;
+  /** LLRT 的 fs/promises 没有 unlink，需要用 rm 代替 */
+  unlink = async (path) => {
+    if (options.unlink) {
+      await options.unlink(path);
+    } else if (llrtRm) {
+      await llrtRm(path);
+    }
+  };
 };
 
 export function path_join(...paths: string[]) {

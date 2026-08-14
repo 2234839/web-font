@@ -1,3 +1,10 @@
+/** 首先加载 fs 适配层，必须在所有其他导入之前！仅在 LLRT 运行时引入 */
+(() => {
+  if (typeof __RUNTIME__ !== "undefined" && __RUNTIME__ === "llrt") {
+    require("./server/llrt");
+  }
+})();
+
 import { mimeTypes } from "./server/mime_type";
 import type { cMiddleware } from "./server/req_res";
 import { SimpleHttpServer } from "./server/server";
@@ -15,8 +22,6 @@ import { handleFontMeta } from "./routes/font_meta";
 import { startTempCleaner } from "./temp_cleaner";
 import { initMemoryGate } from "./subset_queue";
 import { subsetConcurrency } from "./config";
-import "./server/node";
-import "./server/llrt";
 
 const ROOT_DIR = "dist";
 

@@ -30,6 +30,7 @@ app
 *.tar
 
 dist_backend
+dist_backend_node
 .pilot
 
 verify_font_baseline
