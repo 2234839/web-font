@@ -11,7 +11,7 @@
 import { readFile, stat } from "../interface";
 import { path_join } from "../interface";
 import { fontDirs } from "../config";
-import { FONT_NAME, FONT_SLUG, type PlaceholderValues } from "../../src/placeholders";
+import { FONT_NAME, FONT_SLUG, ORIGIN, type PlaceholderValues } from "../../src/placeholders";
 
 const ROOT_DIR = "dist";
 
@@ -69,6 +69,7 @@ export async function handleFontDetail(pathname: string): Promise<Response | nul
   const values: PlaceholderValues = {
     [FONT_NAME]: slug,
     [FONT_SLUG]: slug,
+    [ORIGIN]: "",
   };
 
   /** 解码模板为字符串，替换所有占位符 */

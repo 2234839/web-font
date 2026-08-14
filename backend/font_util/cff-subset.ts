@@ -183,7 +183,7 @@ function encodeDictInt(v: number): number[] {
 
 /** Type 2 charstring 操作码（Adobe Type 2 Charstring Format）。 */
 const T2_CALLSUBR = 10;
-const T2_RETURN = 11;
+// const T2_RETURN = 11; // 未使用，保留注释
 const T2_ENDCHAR = 14;
 const T2_HSTEM = 1;
 const T2_VSTEM = 3;

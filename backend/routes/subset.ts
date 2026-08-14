@@ -3,7 +3,7 @@ import type { FontEditor } from "../../vendor/fonteditor-core/lib/ttf/font.js";
 import { parseUrl, stats, subsetCache, findFontPath, readFontBuffer, markStatsDirty } from "../shared";
 import { markFontUsed } from "../temp_cleaner";
 import { withMemoryGate } from "../subset_queue";
-import { subsetConcurrency, subsetQueueTimeoutSeconds } from "../config";
+import { subsetQueueTimeoutSeconds } from "../config";
 
 /**
  * 进程启动时戳（模块加载时取一次，进程重启即变化）
@@ -142,13 +142,13 @@ export async function handleFontSubset(req: Request, res: Response) {
   const t3 = Date.now();
 
   /** 写入裁剪结果缓存 */
-  subsetCache.set(cacheKey, newFont as ArrayBuffer);
+  subsetCache.set(cacheKey, newFont as unknown as ArrayBuffer);
 
   const contentTypes: Record<string, string> = { ttf: "font/ttf", woff2: "font/woff2" };
 
   return {
     req,
-    res: new Response(newFont, {
+    res: new Response(newFont as unknown as BodyInit, {
       status: 200,
       headers: {
         "Content-Type": contentTypes[outType] || "font/ttf",

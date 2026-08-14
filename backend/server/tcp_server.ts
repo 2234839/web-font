@@ -11,7 +11,7 @@ export function createTcpServer(
   const server = createServer((socket) => {
     const readable = new ReadableStream<Uint8Array>({
       start(controller) {
-        socket.on("data", (chunk) => {
+        socket.on("data", (chunk: Buffer) => {
           controller.enqueue(new Uint8Array(chunk));
         });
         socket.on("error", (err) => {
@@ -29,8 +29,9 @@ export function createTcpServer(
     // 创建 WritableStream
     const writable = new WritableStream<Uint8Array>({
       write(chunk) {
-        return new Promise((resolve, reject) => {
-          socket.write(chunk, (err) => {
+        return new Promise<void>((resolve, reject) => {
+          const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+          socket.write(buffer, (err) => {
             if (err) reject(err);
             else resolve();
           });

@@ -17,11 +17,15 @@ implInterface({
     return Promise.all(
       names.map(async (name) => {
         const s = await fs.stat(`${path}/${name}`);
-        return { name, isFile: () => s.isFile() };
+        return { name, isFile: () => s.isFile(), isDirectory: () => s.isDirectory() };
       })
     );
   },
-  mkdir: (path) => fs.mkdir(path, { recursive: true }),
-  /** LLRT 没有 unlink，用箭头函数包装 rm 避免 this 问题 */
-  rm: (path: string) => fs.rm(path),
+  mkdir: async (path) => {
+    await fs.mkdir(path, { recursive: true });
+  },
+  /** LLRT 没有 unlink，用 rm 代替，忽略返回值 */
+  rm: async (path: string) => {
+    await fs.rm(path);
+  },
 });

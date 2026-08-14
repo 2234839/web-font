@@ -76,7 +76,7 @@ const staticFileMiddleware: cMiddleware = async function (req, _res, next) {
       }
       const fileContent = await readFile(resolvedPath);
       const extname = resolvedPath.split(".").pop() ?? "";
-      newRes = new Response(fileContent, {
+      newRes = new Response(fileContent as unknown as BodyInit, {
         status: 200,
         headers: {
           "Content-Type": mimeTypes[extname] || "application/octet-stream",
@@ -109,7 +109,7 @@ const staticFileMiddleware: cMiddleware = async function (req, _res, next) {
         });
       } else {
         const fallbackContent = await readFile(path_join(ROOT_DIR, "index.html"));
-        newRes = new Response(fallbackContent, {
+        newRes = new Response(fallbackContent as unknown as BodyInit, {
           status: 200,
           headers: {
             "Content-Type": "text/html; charset=utf-8",

@@ -1,5 +1,6 @@
 export let stat: (path: string) => Promise<{
   isFile: () => boolean;
+  isDirectory: () => boolean;
   size: number;
   /** 最后修改时间戳（毫秒），用于文件变更检测 */
   mtimeMs: number;
@@ -18,6 +19,8 @@ export let mkdir: (path: string) => Promise<void>;
 
 export let unlink: (path: string) => Promise<void>;
 
+export let rm: (path: string) => Promise<void>;
+
 /** LLRT 专用：保存 rm 函数引用，避免闭包问题 */
 let llrtRm: ((path: string) => Promise<void>) | undefined;
 
@@ -28,8 +31,7 @@ export const implInterface = (options: {
   readdir: typeof readdir;
   mkdir: typeof mkdir;
   unlink?: typeof unlink;
-  /** LLRT 没有 unlink，提供 rm 作为替代 */
-  rm?: (path: string) => Promise<void>;
+  rm?: typeof rm;
 }) => {
   stat = options.stat;
   readFile = options.readFile;
@@ -44,6 +46,12 @@ export const implInterface = (options: {
       await options.unlink(path);
     } else if (llrtRm) {
       await llrtRm(path);
+    }
+  };
+  /** 同时暴露 rm 方法 */
+  rm = async (path) => {
+    if (options.rm) {
+      await options.rm(path);
     }
   };
 };

@@ -1,10 +1,10 @@
 import { implInterface } from "../interface";
-import { stat as fsStat, readFile, writeFile, readdir as fsReaddir, mkdir, unlink } from "fs/promises";
+import { stat as fsStat, readFile, writeFile, readdir as fsReaddir, mkdir, unlink, rm } from "fs/promises";
 
 implInterface({
   async stat(path) {
     const r = await fsStat(path);
-    return r;
+    return { ...r, isDirectory: () => r.isDirectory() };
   },
   readFile(path) {
     return readFile(path);
@@ -21,11 +21,11 @@ implInterface({
    */
   async readdir(path) {
     const names = await fsReaddir(path);
-    const results: { isFile: () => boolean; name: string }[] = [];
+    const results: { isFile: () => boolean; isDirectory: () => boolean; name: string }[] = [];
     for (const name of names) {
       try {
         const s = await fsStat(path + "/" + name);
-        results.push({ name, isFile: () => s.isFile() });
+        results.push({ name, isFile: () => s.isFile(), isDirectory: () => s.isDirectory() });
       } catch {
         /** stat 失败（符号链接断裂等）跳过 */
       }
@@ -37,5 +37,8 @@ implInterface({
   },
   unlink(path) {
     return unlink(path);
+  },
+  rm(path) {
+    return rm(path);
   },
 });
