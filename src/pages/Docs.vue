@@ -40,6 +40,41 @@ const basicUsageCode = computed(() => {
 const jsSdkCode = computed(() => {
   return '<script src="' + origin.value + '/webfont-sdk.js"><\/script>\n\n<h1 class="title">你的文字</h1>\n<p class="content">输入任意文字，SDK 自动裁剪加载</p>\n\n<script>\n  WebFont.observeFont({\n    fontName: "字体文件名.ttf",\n    selector: ".title, .content",\n    family: "MyFont",\n  });\n<\/script>';
 });
+/** npm 安装命令 */
+const npmSdkCode = `npm install webfont-sdk`;
+
+/** npm 包用法示例（CSS 模式 + Canvas 模式），依赖 origin 需 computed */
+const npmSdkUsageCode = computed(() => {
+  return `import { WebFont, WebFontCanvas } from 'webfont-sdk'
+
+// DOM 场景：自动观察元素内文字，增量加载
+const obs = WebFont.observeFont({
+  fontName: '字体文件名.ttf',
+  selector: '.title',
+  family: 'MyFont',
+  baseUrl: '${origin.value}',
+})
+
+// Canvas 场景（leafer / fabric / 原生 canvas）
+const face = WebFontCanvas.loadFontFace(
+  { fontName: '字体文件名.ttf' },
+  () => redraw(), /* 片段就绪，重绘 */
+)
+face.update('画布上的文字')
+await WebFontCanvas.ready()`;
+});
+
+/** 服务端 API 客户端示例（webfont-sdk/api 子路径），依赖 origin 需 computed */
+const npmSdkApiCode = computed(() => {
+  return `import { createWebFontApi } from 'webfont-sdk/api'
+
+const api = createWebFontApi({ baseUrl: '${origin.value}' })
+
+const fonts = await api.fonts()          // 字体列表
+const meta = await api.fontMeta('字体名') // 覆盖率 / codepoint 区间
+const r = await api.upload({ data: file, filename: '我的字体.ttf' })
+if (!r.success) console.error(r.error)`;
+});
 </script>
 
 <template>
@@ -70,6 +105,13 @@ const jsSdkCode = computed(() => {
       <div style="margin-top: 4px"><CodeBlock :code="jsSdkCode" lang="html" /></div>
 
       <p style="margin-top: 12px">{{ t('sdkModes') }}<code>WebFont.observeFont()</code>{{ t('observeFont') }}<code>WebFont.loadText()</code>{{ t('loadText') }}</p>
+
+      <p style="margin-top: 20px"><b>{{ t('npmSdkTitle') }}</b>{{ t('npmSdkText') }}<code>webfont-sdk</code>{{ t('npmSdkText2') }}</p>
+      <div style="margin-top: 4px"><CodeBlock :code="npmSdkCode" lang="bash" /></div>
+      <div style="margin-top: 4px"><CodeBlock :code="npmSdkUsageCode" lang="ts" /></div>
+
+      <p style="margin-top: 20px"><b>{{ t('npmSdkApiTitle') }}</b>{{ t('npmSdkApiText') }}</p>
+      <div style="margin-top: 4px"><CodeBlock :code="npmSdkApiCode" lang="ts" /></div>
     </div>
   </div>
 </template>

@@ -20,7 +20,8 @@
   "dependencies": {
     "@unhead/vue": "^2.1.17",
     "pinyin-pro": "^3.29.1",
-    "web-streams-polyfill": "^4.3.0"
+    "web-streams-polyfill": "^4.3.0",
+    "webfont-sdk": "workspace:*"
   },
   "devDependencies": {
     "@leafer-ui/node": "2.2.9",

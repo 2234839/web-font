@@ -1,9 +1,9 @@
 import { defineConfig } from 'tsdown'
 
 export default [
-  /** ESM + d.ts —— npm 包主产物（leafer 插件 / bundler 用户） */
+  /** ESM + d.ts —— npm 包主产物（leafer 插件 / bundler 用户）；api 为服务端 REST 客户端子路径 */
   defineConfig({
-    entry: ['src/index.ts'],
+    entry: ['src/index.ts', 'src/api.ts'],
     format: 'esm',
     dts: true,
     clean: true,

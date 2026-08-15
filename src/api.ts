@@ -1,157 +1,80 @@
-export interface FontInfo {
-  name: string;
+/**
+ * 主站 API 适配层 —— 基于官方 SDK 客户端（webfont-sdk/api）的薄封装
+ *
+ * 所有类型与请求逻辑统一走 webfont-sdk：接口变更只改 SDK 一处，
+ * 主站（dogfooding）、leafer 插件 demo、npm 用户共享同一实现。
+ *
+ * 保留原有的函数签名与旧类型别名（FontInfo / FontMeta / ...），
+ * 组件层零改动即可切换；新代码建议直接 import SDK 类型。
+ *
+ * baseUrl 说明：主站与后端同源（dev 走 vite proxy /api → 8087），
+ * 传空串 baseUrl 后客户端拼出相对路径 "/api/..."，同源与代理都正确。
+ */
+import {
+  createWebFontApi,
+  type IApiFontInfo,
+  type IApiFontMeta,
+  type IApiServerConfig,
+  type IApiServerStats,
+  type IApiUploadResult,
+} from "webfont-sdk/api";
+
+const api = createWebFontApi({ baseUrl: "" });
+
+/** 字体列表项（旧名兼容；新代码用 IApiFontInfo） */
+export type FontInfo = IApiFontInfo & {
+  /** 旧字段（后端实际不返回，恒 undefined），dev 预览页模板引用，保留可选 */
   dir?: string;
-  /** 是否为临时上传的字体 */
-  temporary?: boolean;
-}
+};
 
-export interface ServerConfig {
-  enableTempUpload: boolean;
-  adminUploadEnabled: boolean;
-  supportedOutTypes: ("woff2" | "ttf")[];
-  /** 临时字体保留时限（秒） */
-  tempRetentionSeconds?: number;
-  /** 字体子集化最大并发数 */
-  subsetConcurrency?: number;
-  /** 队列等待超时（秒） */
-  subsetQueueTimeoutSeconds?: number;
-}
+/** 字体元数据（旧名兼容；新代码用 IApiFontMeta） */
+export type FontMeta = IApiFontMeta;
 
-export interface UploadResult {
-  success: boolean;
-  error?: string;
-}
+/** 服务公开配置（旧名兼容；新代码用 IApiServerConfig） */
+export type ServerConfig = IApiServerConfig;
 
-export interface ServerStats {
-  uptime: number;
-  totalRequests: number;
-  subsetRequests: number;
-  subsetCacheHits: number;
-  totalChars: number;
-  subsetCacheEntries: number;
-  fontBufferCacheEntries: number;
-  /** 临时文件上传次数 */
-  tempUploads?: number;
-  /** 离线裁剪完成次数 */
-  offlineSubsets?: number;
-  /** 离线裁剪字体下载次数 */
-  offlineDownloads?: number;
-}
+/** 上传结果（旧名兼容；新代码用 IApiUploadResult） */
+export type UploadResult = IApiUploadResult;
 
-/** 字符集覆盖率 */
-export interface CharsetCoverage {
-  /** 字符集标识，如 "ascii"、"cjkBasic" */
-  key: string;
-  name: string;
-  total: number;
-  covered: number;
-  percent: number;
-}
+/** 运行统计（旧名兼容；新代码用 IApiServerStats） */
+export type ServerStats = IApiServerStats;
 
-/** 字体基本信息（来自 OpenType name 表） */
-export interface FontInfo {
-  copyright?: string;
-  family?: string;
-  subfamily?: string;
-  uniqueId?: string;
-  fullName?: string;
-  version?: string;
-  postScript?: string;
-  trademark?: string;
-  manufacturer?: string;
-  designer?: string;
-  description?: string;
-  vendorUrl?: string;
-  designerUrl?: string;
-  license?: string;
-  licenseUrl?: string;
-}
-
-/** 人工配置项（来自 font-config.json，由用户维护） */
-export interface FontUserConfig {
-  /** 显示名称（优先于文件名） */
-  displayName?: string;
-  /** 描述/简介 */
-  description?: string;
-  /** 标签列表 */
-  tags?: string[];
-  /** 开源仓库地址（如 GitHub URL） */
-  homepage?: string;
-  /** 默认预览文字 */
-  previewText?: string;
-  /** 详情页正文标题 */
-  bodyTitle?: string;
-  /** 详情页正文段落 */
-  bodyText?: string;
-  /** 详情页字符预览行 */
-  charsetPreview?: string;
-}
-
-/** 字体元数据 */
-export interface FontMeta {
-  totalCodePoints: number;
-  coverage: CharsetCoverage[];
-  ranges: Array<[number, number]>;
-  /** 字体基本信息（版权、作者等） */
-  info: FontInfo;
-  /** 人工配置（来自 font-config.json） */
-  config?: FontUserConfig;
-}
+export { type IApiCharsetCoverage as CharsetCoverage, type IApiFontUserConfig as FontUserConfig } from "webfont-sdk/api";
 
 export async function fetchFonts(): Promise<FontInfo[]> {
-  const res = await fetch("/api/fonts");
-  return res.json();
+  return api.fonts();
 }
 
 export async function fetchFontMeta(fontName: string): Promise<FontMeta> {
-  const res = await fetch(`/api/font-meta?font=${encodeURIComponent(fontName)}`);
-  return res.json();
+  return api.fontMeta(fontName);
 }
 
 export async function fetchConfig(): Promise<ServerConfig> {
-  const res = await fetch("/api/config");
-  return res.json();
+  return api.config();
 }
 
+export async function fetchStats(): Promise<ServerStats> {
+  return api.stats();
+}
+
+/**
+ * 上传字体（临时 / 管理员）
+ *
+ * SDK 客户端用 FormData 上传，主站调用方传的是 File —— 直接透传，
+ * FormData.append(name, File) 会自动带上 filename。
+ */
 export async function uploadFont(
   file: File,
   mode: "temp" | "admin",
   apiKey?: string,
 ): Promise<UploadResult> {
-  const formData = new FormData();
-  formData.append("font", file);
-
-  const headers: Record<string, string> = {};
-  if (apiKey) {
-    headers["Authorization"] = `Bearer ${apiKey}`;
-  }
-
-  const res = await fetch(`/api/upload?mode=${mode}`, {
-    method: "POST",
-    body: formData,
-    headers,
-  });
-  return res.json();
-}
-
-export async function fetchStats(): Promise<ServerStats> {
-  const res = await fetch("/api/stats");
-  return res.json();
+  return api.upload({ data: file, filename: file.name, mode, apiKey });
 }
 
 /**
- * 离线裁剪匿名事件上报
- *
- * 只发送事件类型（裁剪完成 / 下载），不包含字体、文字等任何内容数据。
- * 用 sendBeacon 优先（页面卸载时也能送达），失败静默——统计不干扰主流程。
+ * 离线裁剪匿名事件上报 —— 透传 SDK 实现
+ * （sendBeacon 优先，页面卸载也能送达；只发事件类型，无内容数据）
  */
 export function reportOfflineEvent(event: "offline_subset" | "offline_download"): void {
-  const body = JSON.stringify({ event });
-  if (navigator.sendBeacon?.("/api/stats/event", new Blob([body], { type: "application/json" }))) return;
-  fetch("/api/stats/event", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body,
-    keepalive: true,
-  }).catch(() => {});
+  api.reportEvent(event);
 }

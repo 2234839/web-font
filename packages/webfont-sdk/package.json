@@ -1,7 +1,7 @@
 {
   "name": "webfont-sdk",
-  "version": "0.1.0",
-  "description": "Web 字体按需加载 SDK —— 只加载实际用到的字符，增量去重、无闪烁，支持 DOM(CSS) 与 Canvas(FontFace) 两种模式",
+  "version": "0.2.0",
+  "description": "Web 字体按需加载 SDK —— 只加载实际用到的字符，增量去重、无闪烁，支持 DOM(CSS) 与 Canvas(FontFace) 两种模式，内置服务端 REST API 客户端",
   "type": "module",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
@@ -11,6 +11,11 @@
       "types": "./dist/index.d.ts",
       "development": "./src/index.ts",
       "import": "./dist/index.js"
+    },
+    "./api": {
+      "types": "./dist/api.d.ts",
+      "development": "./src/api.ts",
+      "import": "./dist/api.js"
     }
   },
   "files": [
