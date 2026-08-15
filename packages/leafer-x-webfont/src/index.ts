@@ -32,6 +32,11 @@ export interface IWebFontPluginConfig {
   /** 子集化服务基地址，默认官方在线服务 */
   baseUrl?: string
   /**
+   * 自定义子集请求器（provider 抽象透传给 webfont-sdk）。
+   * 默认走 HTTP API；测试、私有部署、离线场景可替换
+   */
+  provider?: ((fontName: string, text: string, outType?: string) => Promise<{ url: string; format: string }>) | null
+  /**
    * fontFamily 属性的解析规则：
    * - 不传（默认）：任意 fontFamily 值（如 '令东齐伋复刻体.ttf'、'霞鹜文楷'）都尝试向 API 请求；
    *   失败字符自动记忆不重试（webfont-sdk 引擎层），不阻塞渲染
@@ -60,6 +65,13 @@ export interface IWebFontPluginConfig {
 const FONT_EXT_RE = /\.(ttf|otf|woff2?|ttc)$/i
 /** 泛型族名没有对应字体文件，跳过 */
 const GENERIC_FAMILY_RE = /^(sans-serif|serif|monospace|caption|system-ui|cursive|fantasy)$/i
+
+/**
+ * 脏节点溢出阈值：未 flush 脏节点超过该数（如模板整体替换）时
+ * 全量 walk 反而更省（Set 遍历退化），flush 退化为全量。
+ * 千级节点海报全量 walk 仅 ~1ms，阈值取个稳妥小值即可
+ */
+const FULL_SCAN_DIRTY_THRESHOLD = 512
 
 /** Leafer 节点最小结构（避免硬依赖 leafer-ui 类型，保持 peerDep 可选） */
 interface ILeaferNode {
@@ -101,6 +113,15 @@ export class WebFontPlugin {
   private eventIds: number[] = []
   /** 统一的事件解绑函数（on_/off_ 新旧版别名解析后的句柄） */
   private offEvents: ((ids: number[]) => void) | null = null
+  /**
+   * 脏节点集（增量模式核心）：property.change 的 target、child.add 的整棵子树。
+   * flush 时只 walk 这些节点，把 O(全树) 降为 O(改动)。
+   * Leafer 渲染管线自身就靠这套事件驱动（trackChanges 分支），
+   * 凡是被画出来的文字变化必然经过这里——增量不会漏
+   */
+  private dirty = new Set<ILeaferNode>()
+  /** 整树结构变化（首次扫描/模板替换）时置位，flush 退化为全量 walk */
+  private dirtyAll = false
 
   constructor(leafer: ILeaferNode, config: IWebFontPluginConfig = {}) {
     this.leafer = leafer
@@ -116,7 +137,7 @@ export class WebFontPlugin {
 
     this.mode = new WebFontFontFaceMode({
       baseUrl: config.baseUrl,
-      provider: null,
+      provider: config.provider ?? null,
     })
 
     this.bindEvents()
@@ -145,77 +166,150 @@ export class WebFontPlugin {
      * 直接 emit 到 leafer 根节点（见 leafer 源码 LeafDataProxy.emitPropertyEvent：
      * `leafer.emitEvent(event)`），在根上监听即可捕获所有子元素的 text / fontFamily
      * 变化。用字符串而非导入常量，保持对 leafer-ui 的 peerDep 可选。
+     * 事件携带 target / attrName / oldValue / newValue（PropertyEvent 五参构造），
+     * 增量模式下只需把 target 记入脏节点集，flush 时精确收集该节点的字符
      */
     this.eventIds.push(
       on!.call(leafer, 'property.change', (e) => {
-        const ev = e as { attrName?: string }
+        const ev = e as { attrName?: string; target?: ILeaferNode }
         if (ev.attrName === 'text' || ev.attrName === 'fontFamily') {
-          this.schedule()
+          if (ev.target) {
+            /** 增量路径：只记脏节点，不触发全量调度 */
+            this.dirty.add(ev.target)
+            this.schedule()
+          } else {
+            this.dirtyAll = true
+            this.schedule()
+          }
         }
       }),
     )
 
-    /** 布局结束（新增/删除节点都会触发布局）——覆盖新增 Text、海报模板切换等场景 */
-    this.eventIds.push(
-      on!.call(leafer, 'layout.end', () => this.schedule()),
-    )
+    /**
+     * 子树增删（ChildEvent.ADD/REMOVE = 'child.add'/'child.remove'）：携带 child。
+     * 新节点的初始属性是构造期直接写入 data，不走 setAttr，不触发 property.change；
+     * 因此新增必须整棵子树入脏集（子树内可能包含任意深度的 Text）。
+     * 删除的节点下次 walk 时靠 destroyed 标记跳过，无需单独处理
+     */
+    for (const type of ['child.add', 'child.remove'] as const) {
+      this.eventIds.push(
+        on!.call(leafer, type, (e) => {
+          const ev = e as { child?: ILeaferNode }
+          if (ev.child) {
+            this.dirty.add(ev.child)
+            this.schedule()
+          } else {
+            this.dirtyAll = true
+            this.schedule()
+          }
+        }),
+      )
+    }
+
+    /**
+     * 不订阅 layout.end：它每帧触发（拖拽/缩放也算布局），百万节点画布上
+     * 周期性全量 walk 会造成持续卡顿。结构与属性变化已由上面两个事件完整
+     * 覆盖——这正是 Leafer 自家 Watcher 的订阅集（源码 __listenEvents：
+     * [property.change] + [child.add, child.remove]），渲染可靠 = 事件可靠。
+     * 绕过事件直接改 __.text 的场景请手动调 refresh()
+     */
   }
 
   /* ============================================================
    * 扫描与调度
    * ============================================================ */
 
-  /** 全量扫描画布中所有 Text 的 text + fontFamily，按 family 聚合新字符 */
-  private scan(): void {
-    const groups = new Map<string, { loader: IFontFaceLoader; fontName: string; family: string; chars: Set<string> }>()
+  /** 判定节点是否 Text（__tag 或鸭子类型双保险，兼容第三方 Text 实现） */
+  private isTextNode(node: ILeaferNode): boolean {
+    return node.__tag === 'Text' || (typeof node.text === 'string' && typeof node.fontFamily === 'string')
+  }
 
-    const walk = (node: ILeaferNode | null | undefined): void => {
-      if (!node || node.destroyed) return
-      const isText = node.__tag === 'Text' || (typeof node.text === 'string' && typeof node.fontFamily === 'string')
-      if (isText) {
-        const fontFamily: string = node.fontFamily as string
-        const text: string = String(node.text ?? '')
-        if (fontFamily && text) {
-          const fontName = this.resolveFontName(fontFamily)
-          if (fontName) {
-            const family = normalizeFamily(fontName)
-            const entry = getOrCreate(groups, family, () => ({ loader: this.getLoader(fontName, family), fontName, family, chars: new Set() }))
-            /**
-             * 自动改写节点 fontFamily 为合法 CSS 名（canvas font 串要求）。
-             * 已是链形态（Node 模式 chunk 链）的节点跳过——否则链会被改回 base
-             * 名，丢掉已注册 chunk 的回退（layout.end 会再次触发 scan 的套娃场景）
-             */
-            if (this.config.rewriteFamily && node.fontFamily !== family && !isChunkChain(fontFamily)) {
-              ;(node as { fontFamily: string }).fontFamily = family
-            }
-            for (const ch of text) entry.chars.add(ch)
-          }
-        }
-      }
-      const children = node.children
-      if (Array.isArray(children)) {
-        for (const child of children as ILeaferNode[]) walk(child)
-      }
+  /**
+   * 收集单个 Text 节点的字符进聚合桶（含 fontFamily 规范化改写）。
+   * 全量 walk 与增量 flush 共用，保证两条路径行为一致
+   */
+  private collect(groups: Map<string, { loader: IFontFaceLoader; fontName: string; family: string; chars: Set<string> }>, node: ILeaferNode): void {
+    const fontFamily: string = node.fontFamily as string
+    const text: string = String(node.text ?? '')
+    if (!fontFamily || !text) return
+    const fontName = this.resolveFontName(fontFamily)
+    if (!fontName) return
+    const family = normalizeFamily(fontName)
+    const entry = getOrCreate(groups, family, () => ({ loader: this.getLoader(fontName, family), fontName, family, chars: new Set() }))
+    /**
+     * 自动改写节点 fontFamily 为合法 CSS 名（canvas font 串要求）。
+     * 已是链形态（Node 模式 chunk 链）的节点跳过——否则链会被改回 base
+     * 名，丢掉已注册 chunk 的回退。改写会触发 property.change → 该节点
+     * 入脏集 → 下轮 flush 幂等重扫（内容不变指纹短路，不会无限循环）
+     */
+    if (this.config.rewriteFamily && node.fontFamily !== family && !isChunkChain(fontFamily)) {
+      ;(node as { fontFamily: string }).fontFamily = family
     }
+    for (const ch of text) entry.chars.add(ch)
+  }
 
-    walk(this.leafer)
+  /** walk 子树收集 Text 字符：visited 防环/防重（脏子树交叉时幂等） */
+  private walkInto(node: ILeaferNode | null | undefined, groups: Map<string, { loader: IFontFaceLoader; fontName: string; family: string; chars: Set<string> }>, visited: Set<ILeaferNode>): void {
+    if (!node || node.destroyed || visited.has(node)) return
+    visited.add(node)
+    if (this.isTextNode(node)) this.collect(groups, node)
+    const children = node.children
+    if (Array.isArray(children)) {
+      for (const child of children as ILeaferNode[]) this.walkInto(child, groups, visited)
+    }
+  }
 
+  /** 全量扫描（安全网）：初始扫描 / 脏节点溢出退化路径。直接调用时复位增量状态 */
+  private scan(): void {
+    this.dirtyAll = false
+    const groups = new Map<string, { loader: IFontFaceLoader; fontName: string; family: string; chars: Set<string> }>()
+    this.walkInto(this.leafer, groups, new Set())
+    this.commit(groups)
+  }
+
+  /** 提交聚合桶：内容指纹短路（字符串精确相等），无变化时 loader.update 调用归零 */
+  private commit(groups: Map<string, { loader: IFontFaceLoader; fontName: string; family: string; chars: Set<string> }>): void {
     for (const [family, { loader, chars }] of groups) {
-      /** 内容指纹短路：本轮收集到的字符集与上次提交一致（拖拽等无文字变化的场景）时，跳过 loader.update */
+      /** 指纹相等 = 这段字符集已提交过（SDK 三态过滤兜底），跳过本次 update */
       const collected = charsToString(chars)
       if (this.committed.get(family) === collected) continue
       this.committed.set(family, collected)
+      this.updateCalls++
       loader.update(collected)
     }
   }
 
-  /** 防抖触发扫描 */
+  /** 累计实际提交给 loader 的 update 次数（性能/调试指标：指纹短路越有效增长越慢） */
+  public updateCalls = 0
+  /** 防抖触发扫描：增量优先，脏节点占比过高时退化全量 */
   private schedule(): void {
     if (this.debounceTimer) clearTimeout(this.debounceTimer)
     this.debounceTimer = setTimeout(() => {
       this.debounceTimer = null
-      this.scan()
+      this.flush()
     }, this.config.debounceMs)
+  }
+
+  /** flush：增量 walk 脏节点集（或 dirtyAll 时全量），提交后清空脏集 */
+  private flush(): void {
+    /** 脏节点积累过多（如模板整体替换）：全量 walk 一次更省，顺带复位增量状态 */
+    if (this.dirtyAll || this.dirty.size > FULL_SCAN_DIRTY_THRESHOLD) {
+      this.dirty.clear()
+      this.dirtyAll = false
+      this.scan()
+      return
+    }
+
+    const groups = new Map<string, { loader: IFontFaceLoader; fontName: string; family: string; chars: Set<string> }>()
+
+    /** 每次 flush 的 visited 必须新建：跨 flush 的同一节点内容可能已变 */
+    const visited = new Set<ILeaferNode>()
+    for (const node of this.dirty) {
+      /** 脏节点本身 + 其子树都可能有 Text：child.add 只给根，子节点构造期赋值无事件 */
+      this.walkInto(node, groups, visited)
+    }
+    this.dirty.clear()
+    this.commit(groups)
   }
 
   /* ============================================================
@@ -290,7 +384,20 @@ export class WebFontPlugin {
 
   /** 立即做一次全量扫描（外部手动改完画布内容后调用） */
   public refresh(): void {
+    this.dirty.clear()
     this.scan()
+  }
+
+  /**
+   * 立即执行一次增量 flush（跳过防抖等待）：emit 后同步验证、
+   * 导出前能尽快提交新字符。自动调度下无需手动调用
+   */
+  public flushNow(): void {
+    if (this.debounceTimer) {
+      clearTimeout(this.debounceTimer)
+      this.debounceTimer = null
+    }
+    this.flush()
   }
 
   /**
@@ -319,6 +426,8 @@ export class WebFontPlugin {
     for (const loader of this.loaders.values()) loader.dispose()
     this.loaders.clear()
     this.committed.clear()
+    this.dirty.clear()
+    this.dirtyAll = false
     this.leafer = null
   }
 }

@@ -1,10 +1,13 @@
 /**
- * 首先加载 fs 适配层，必须在所有其他 import 之前！
- * 静态 import 依赖 ESM hoisting：无论源码书写顺序，llrt/node 适配器都会最先执行
- * （implInterface 直接给 interface.ts 的导出变量赋值，注册必须先于任何使用）。
+ * fs 适配层必须在所有其他 import 之前加载！
+ * 静态 import 依赖 ESM hoisting：无论源码书写顺序，llrt/node 适配器都会先于
+ * 本模块其余 import 执行（implInterface 直接给 interface.ts 的导出变量赋值，
+ * 注册必须先于任何使用）。
+ * - 构建（tsdown define __RUNTIME__）：裸 require 内联适配器，fsReady 已 resolve。
+ * - dev（tsx ESM）：fsReady = import("./node")，由 main() 开头 await（见下）。
  * 不能用 top-level await import —— tsdown 的 CJS 产物不支持。
  */
-import "./server/llrt_lr";
+import { fsReady } from "./server/llrt_lr";
 
 import { mimeTypes } from "./server/mime_type";
 import type { cMiddleware } from "./server/req_res";
@@ -196,6 +199,9 @@ const uploadSizeMiddleware: cMiddleware = async (req, res, next) => {
 };
 
 async function main() {
+  /** dev（tsx ESM）下适配器经动态 import 注册，必须先等它完成 */
+  await fsReady;
+
   /** 最早期恢复累计计数：之后的请求计数会累加在历史值之上 */
   await initStats();
 
