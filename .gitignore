@@ -43,3 +43,4 @@ packages/leafer-x-webfont/demo/vendor
 
 # leafer 插件类型声明的 vendor（从 npm @leafer-ui/interface 拷贝，体积大）
 packages/leafer-x-webfont/vendor
+doc/
