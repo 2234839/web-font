@@ -9,7 +9,7 @@
  *
  * 去重 / 并发池 / 失败字符记忆 / provider 抽象全部在 webfont-sdk 引擎层实现，
  * 本插件只做 Leafer 桥接：
- *   - 树扫描（walk）聚合同 family 字符
+ *   - 树扫描（walk）聚合同 family 字符，按 family 内容指纹短路无变化的重算
  *   - property.change + layout.end 事件订阅（防抖）
  *   - fontFamily 规范化改写（'xx.ttf' → 'xx'，canvas font 串要求合法标识符）
  *   - 片段就绪后 forceRender
@@ -88,6 +88,13 @@ export class WebFontPlugin {
   private mode: WebFontFontFaceMode
   /** family -> 增量加载器（由 SDK 管理） */
   private loaders = new Map<string, IFontFaceLoader>()
+  /**
+   * family -> 上次提交给 loader 的字符集串（内容指纹）。
+   * 拖拽/缩放等操作每帧触发布局，内容没变时靠它短路掉
+   * 「字符集收集 + loader.update 内部 diff」这两个大头，update 调用归零。
+   * 存字符串本身而非 hash：比较成本是 memcmp 级且零碰撞风险
+   */
+  private committed = new Map<string, string>()
   /** 防抖定时器 */
   private debounceTimer: ReturnType<typeof setTimeout> | null = null
   /** 解绑事件用的 id 列表 */
@@ -193,8 +200,12 @@ export class WebFontPlugin {
 
     walk(this.leafer)
 
-    for (const [, { loader, chars }] of groups) {
-      loader.update(charsToString(chars))
+    for (const [family, { loader, chars }] of groups) {
+      /** 内容指纹短路：本轮收集到的字符集与上次提交一致（拖拽等无文字变化的场景）时，跳过 loader.update */
+      const collected = charsToString(chars)
+      if (this.committed.get(family) === collected) continue
+      this.committed.set(family, collected)
+      loader.update(collected)
     }
   }
 
@@ -307,6 +318,7 @@ export class WebFontPlugin {
     this.offEvents = null
     for (const loader of this.loaders.values()) loader.dispose()
     this.loaders.clear()
+    this.committed.clear()
     this.leafer = null
   }
 }
