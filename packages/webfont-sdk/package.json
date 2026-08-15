@@ -38,7 +38,6 @@
   },
   "author": "崮生（子虚）",
   "license": "MIT",
-  "license": "MIT",
   "peerDependencies": {
     "@napi-rs/canvas": ">=0.1"
   },
@@ -48,7 +47,7 @@
     }
   },
   "devDependencies": {
-    "tsdown": "^0.22.13",
+    "tsdown": "^0.22.14",
     "typescript": "^7.0.2"
   }
 }
