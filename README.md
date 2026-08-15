@@ -28,6 +28,7 @@
 - 品牌官网 — 高级字体不再受限于体积
 - 小程序 / PWA — 流量敏感，按需加载
 - 静态博客 / CMS — 文字内容确定，CSS 直出即可
+- LeaferJS 画布 / 设计工具 — [leafer-x-webfont](https://www.npmjs.com/package/leafer-x-webfont) 插件，画布 Text 用什么字体就加载那几个字（[在线 demo](https://webfont.shenzilong.cn/leafer-demo/)）
 - AI 生成网页 — 让 AI 也能输出有设计感的中文字体方案
 
 ## 核心能力

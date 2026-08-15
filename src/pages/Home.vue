@@ -272,6 +272,12 @@ async function refreshFonts() {
       <router-link to="/docs" style="color: #1677ff; text-decoration: none">{{ t('docsEntryLink') }}</router-link>
     </section>
 
+    <!-- LeaferJS 插件入口：中文述设计工具生态是子集化的重要场景，导流到在线 demo -->
+    <section style="margin-bottom: 28px; font-size: 13px; color: #888; line-height: 1.8">
+      <b style="color: #555">{{ t('leaferEntryTitle') }}</b>{{ t('leaferEntryText') }}
+      <a href="/leafer-demo/" target="_blank" style="color: #1677ff; text-decoration: none">{{ t('leaferEntryLink') }}</a>
+    </section>
+
     <!-- 企业服务：讲清商业价值，为作者带来收入的付费支持入口 -->
     <section style="margin-bottom: 28px; padding: 16px; border: 1px solid #f0e6d2; border-radius: 8px; background: #fffdf8">
       <div style="font-size: 14px; font-weight: 600; color: #333; margin-bottom: 6px">{{ t('enterpriseTitle') }}</div>

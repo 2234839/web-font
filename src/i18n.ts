@@ -129,6 +129,9 @@ const messages = {
     docsEntryTitle: "接入你的网站：",
     docsEntryText: "支持 @font-face 与 JS SDK 增量加载，只加载页面用到的字符。",
     docsEntryLink: "查看集成文档 →",
+    leaferEntryTitle: "LeaferJS 生态：",
+    leaferEntryText: "官方插件 leafer-x-webfont —— 画布 Text 用什么字体就加载那几个字的子集（6 字 ≈ 6KB）。",
+    leaferEntryLink: "在线体验 →",
     inputHintIncremental: "输入即时触发增量加载，只裁剪用到的字符，非全量下载。",
 
     // TypographyDemo.vue
@@ -230,6 +233,9 @@ const messages = {
     docsEntryTitle: "Integrate into your site: ",
     docsEntryText: "Supports @font-face and JS SDK incremental loading — only the characters used on the page are loaded.",
     docsEntryLink: "View integration docs →",
+    leaferEntryTitle: "LeaferJS ecosystem: ",
+    leaferEntryText: "Official plugin leafer-x-webfont — loads subsets of only the characters used by canvas Text (6 chars ≈ 6KB).",
+    leaferEntryLink: "Try the live demo →",
     inputHintIncremental: "Typing triggers incremental loading — only the characters used are subset, not the full font.",
 
     // TypographyDemo.vue
