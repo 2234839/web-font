@@ -18,6 +18,9 @@ importers:
         specifier: ^4.3.0
         version: 4.3.0
     devDependencies:
+      '@leafer-ui/node':
+        specifier: 2.2.9
+        version: 2.2.9
       '@types/node':
         specifier: ^26.1.1
         version: 26.1.1
@@ -66,6 +69,10 @@ importers:
       vue-router:
         specifier: ^5.2.0
         version: 5.2.0(@vue/compiler-sfc@3.5.40)(esbuild@0.27.7)(rolldown@1.2.0)(vite@8.1.5(@types/node@26.1.1)(esbuild@0.27.7)(terser@5.49.0)(yaml@2.9.0))(vue@3.6.0-beta.17(typescript@7.0.2))
+    optionalDependencies:
+      '@napi-rs/canvas':
+        specifier: ^1.0.6
+        version: 1.0.6
 
   packages/leafer-x-webfont:
     dependencies:
@@ -77,6 +84,10 @@ importers:
         version: link:../webfont-sdk
 
   packages/webfont-sdk:
+    dependencies:
+      '@napi-rs/canvas':
+        specifier: '>=0.1'
+        version: 1.0.6
     devDependencies:
       tsdown:
         specifier: ^0.22.13
@@ -394,6 +405,13 @@ packages:
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
 
+  '@leafer-in/export@2.2.9':
+    resolution: {integrity: sha512-18kOtU7vqfTjBAENc20TcB9aAYOpEzcvuaMTZPpMQS3PvX/1HddPijU/2vmzZhj+SvWwKtPnPUDOzsD2goePAw==}
+    peerDependencies:
+      '@leafer-in/interface': ^2.2.9
+      '@leafer-ui/draw': ^2.2.9
+      '@leafer-ui/interface': ^2.2.9
+
   '@leafer-in/interface@2.2.9':
     resolution: {integrity: sha512-6T0Gf1EDKxS4a8sZCT8Q2PZ0a5JhHWswyWfsSXNHrvdJvapHcUE4YordpzXFQeki0KcCiAy2HIrOZ7mvFJ9spQ==}
     peerDependencies:
@@ -448,6 +466,9 @@ packages:
   '@leafer-ui/interface@2.2.9':
     resolution: {integrity: sha512-AWnRhnQOaMk8kNOJwzymuZpNb4b28CsMUxvr4pVjGwmlXWG1qINJrlWYWrXbV3R44+zhK0VIJ8T7szsoO2qj7Q==}
 
+  '@leafer-ui/node@2.2.9':
+    resolution: {integrity: sha512-WwXlrBlM8YJ4kNDjvjKZFx3xK6F/imz0gtww+gLFuTav1I3IM8Cs6dx48rzN7GEcDLN8WFJ1TwOB55ifu9OY7w==}
+
   '@leafer-ui/paint@2.2.9':
     resolution: {integrity: sha512-/scOodHPSs3hJo73Scvk556ntXn9dJI8/7GlaWRMbprruvB+ujc/vyWUc5DInOqikxxAQb9eEfnKX3GoFUGiSA==}
 
@@ -462,6 +483,9 @@ packages:
 
   '@leafer-ui/web@2.2.9':
     resolution: {integrity: sha512-0QgYEK3wuUFWHz0BM6HPMboh0uiRR5fRLqrPEopO+ofJLygWi0v6FIjU3OE4pOsHRdqrbBIuhOioRmIasBBgmg==}
+
+  '@leafer/canvas-node@2.2.9':
+    resolution: {integrity: sha512-2b1zPjVt5+vnxHChEJs8o6hZq+ARNA8dF07tsWWQsAEZixZDOTV4vzE8KL4myNGEn8qATNmPhq0eVOxNH4VA+A==}
 
   '@leafer/canvas-web@2.2.9':
     resolution: {integrity: sha512-kj58yyHdqXq7VnZm18aYzXBTX8HrGooPOunBsQwbEnUn8bVe4JtkNaUgAWIjaDIJT0TuMwQ5kH/9E+6hpwHEPA==}
@@ -496,6 +520,9 @@ packages:
   '@leafer/helper@2.2.9':
     resolution: {integrity: sha512-OVMB9k3IP5w2ARrKIzrDhrc2PTjFppIKtZpvLIFf24tH6Itq0/Hn6J8pa7gKEzdltpgOJD5lYT7IQNtVbJQVXg==}
 
+  '@leafer/image-node@2.2.9':
+    resolution: {integrity: sha512-st5Nau27rFLVXPOjIt07OBtPoHvk/CN21xLZrVGyvkVur3DWD0jRQt0mY9y+chwK8sJIqrZFnuuMWlf011OUbA==}
+
   '@leafer/image-web@2.2.9':
     resolution: {integrity: sha512-ctMDVYoDi16rniIOffrqXGfOR1qWJe+lm185l+mjsqfcQo//QZ9cml4m+FfChnzwUqB6yuJvhaP3idg59ARFVA==}
 
@@ -516,6 +543,9 @@ packages:
 
   '@leafer/math@2.2.9':
     resolution: {integrity: sha512-kkybyaR+76e0dsgAxk0Mpeb1coMNM3/mR/JvDBNzcF2iFCemYcOFCiI8+uhJyqUKLfYzLjD7CW5gFa0NmtbgDQ==}
+
+  '@leafer/node-core@2.2.9':
+    resolution: {integrity: sha512-/e8t2jRFJJzy/u7jWlNQ0Nl5QRqIHiCJe2O1O3QTa/aw601ya0gIQjaiKImmcZBzZZ7e5PPttHSuagMqvOZ64w==}
 
   '@leafer/partner@2.2.9':
     resolution: {integrity: sha512-W2CcbVPoGomvVQNve1CWdhq1B5zOmUKUJqKssO8eBZF6cIXtFW9Ab1CxZR1CcLCi+OelDUvcYFhjU3keLCnNdg==}
@@ -540,6 +570,81 @@ packages:
 
   '@leafer/web-core@2.2.9':
     resolution: {integrity: sha512-d/m46qw6zjAjf+X/MBx4q0ztd5SxSs/mYORdaNjiOZRg6qFXsBGtUUSUyN5dIprCjKFkdVge4ow3yLxv2RvdMw==}
+
+  '@napi-rs/canvas-android-arm64@1.0.6':
+    resolution: {integrity: sha512-CZUmZEyN/cmSN1OhRJ44vBE6xyb5ekBbsIF8dqNgizbnAiHSFNi8eAA4oyyIAe5KzJ72K16OKC2lAynZLhv32Q==}
+    engines: {node: '>= 10'}
+    cpu: [arm64]
+    os: [android]
+
+  '@napi-rs/canvas-darwin-arm64@1.0.6':
+    resolution: {integrity: sha512-FGJsIngRfS9LDaX4t/lFthqn2Km6b61ONzjJFC6+yuabL1NgaK7x0fwrj8276OQFkjCvSpJZ7+CeZWgcy03F2w==}
+    engines: {node: '>= 10'}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@napi-rs/canvas-darwin-x64@1.0.6':
+    resolution: {integrity: sha512-wLDrtfX9V4bu6O55/WwGvPVCjfunL2bEm59lzIFk9ZQOt7oJrPzdx/ytZiQr6bMZ9XOFwvXujszYtpoCK7yUbg==}
+    engines: {node: '>= 10'}
+    cpu: [x64]
+    os: [darwin]
+
+  '@napi-rs/canvas-linux-arm-gnueabihf@1.0.6':
+    resolution: {integrity: sha512-8TllEP/9UPDVxrBN/tnbGBsxxwG8Eo2tgyW8wDy+Gi9rm9si2I6MsDv9MlfI3a7JOuzkBcurHYDHZxwLgzAIdA==}
+    engines: {node: '>= 10'}
+    cpu: [arm]
+    os: [linux]
+
+  '@napi-rs/canvas-linux-arm64-gnu@1.0.6':
+    resolution: {integrity: sha512-YF15AKoGrgU7aoA03CR+cATCRPQcVt6L14Lb/a9hqK7pT7/DhIkqh4qyl+a2GLfqx++yIIJfBuZ3sHM3zlXM1Q==}
+    engines: {node: '>= 10'}
+    cpu: [arm64]
+    os: [linux]
+    libc: [glibc]
+
+  '@napi-rs/canvas-linux-arm64-musl@1.0.6':
+    resolution: {integrity: sha512-zXeVWNFpj720HZln0bfAs+1/nP3Wy6Z5hUw60UJu+cvgips5jZtuX2+EjDHFk98q3BY35GaE1TQLwE9S244vPA==}
+    engines: {node: '>= 10'}
+    cpu: [arm64]
+    os: [linux]
+    libc: [musl]
+
+  '@napi-rs/canvas-linux-riscv64-gnu@1.0.6':
+    resolution: {integrity: sha512-kvy1Ypq4ODEI2WRNGvs588qTMcWCjlEIuZRyW8JXpiBnMUirgxQukIDFVDQEcrLlHP5cqZ9cvvfOkBJ7koOktA==}
+    engines: {node: '>= 10'}
+    cpu: [riscv64]
+    os: [linux]
+    libc: [glibc]
+
+  '@napi-rs/canvas-linux-x64-gnu@1.0.6':
+    resolution: {integrity: sha512-czHnfLgSCl48iluS6bNrytGYhsbSTUuIvMucAwO0mPEj1uhkHk6SUiRI0xoqv0PSFzpGFfSnQvFpm7vV+tDO+A==}
+    engines: {node: '>= 10'}
+    cpu: [x64]
+    os: [linux]
+    libc: [glibc]
+
+  '@napi-rs/canvas-linux-x64-musl@1.0.6':
+    resolution: {integrity: sha512-afsg6GyfUx8qZzjsywjimXUEWcSWETY5F80hmMb2FWVSXkRbor8IpftY2gXnasq+Y42Xug/76qTHwqvti7HRTw==}
+    engines: {node: '>= 10'}
+    cpu: [x64]
+    os: [linux]
+    libc: [musl]
+
+  '@napi-rs/canvas-win32-arm64-msvc@1.0.6':
+    resolution: {integrity: sha512-byzha357piy0wgK6IZOQtU4plpt94f6CxHFS7LhJpWYrDWWT/AitQNxRMfCNNaQHZXUB3BwNhQSfH2RpiZ0WaQ==}
+    engines: {node: '>= 10'}
+    cpu: [arm64]
+    os: [win32]
+
+  '@napi-rs/canvas-win32-x64-msvc@1.0.6':
+    resolution: {integrity: sha512-gWLOgKGZz3hZhzg49q2PJIURwy2pCWh1zvNFXmLO1yineOPhEpoL3EV6/VIjOiKa1l2P6ieP12Eo385u1MLLVQ==}
+    engines: {node: '>= 10'}
+    cpu: [x64]
+    os: [win32]
+
+  '@napi-rs/canvas@1.0.6':
+    resolution: {integrity: sha512-Ud4d0jLr9vSaakvfOTIjgP3hoY8kMIYgHC4mtE4L0bP3St9lf6TyCVsInvFIOEofzcUeMfDydHDy8Fs2WuWz+A==}
+    engines: {node: '>= 10'}
 
   '@napi-rs/wasm-runtime@1.1.6':
     resolution: {integrity: sha512-ZLv/JdUfkvOy9eCnnBaGfiO+XimbjebAeO+MRQqD/B+FR1tnRN0tpKSJHRbE8sFfS6aqsXZ67TQjfwfsxULVbg==}
@@ -2501,6 +2606,12 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
 
+  '@leafer-in/export@2.2.9(@leafer-in/interface@2.2.9(@leafer-ui/interface@2.2.9)(@leafer/interface@2.2.9))(@leafer-ui/draw@2.2.9)(@leafer-ui/interface@2.2.9)':
+    dependencies:
+      '@leafer-in/interface': 2.2.9(@leafer-ui/interface@2.2.9)(@leafer/interface@2.2.9)
+      '@leafer-ui/draw': 2.2.9
+      '@leafer-ui/interface': 2.2.9
+
   '@leafer-in/interface@2.2.9(@leafer-ui/interface@2.2.9)(@leafer/interface@2.2.9)':
     dependencies:
       '@leafer-ui/interface': 2.2.9
@@ -2593,6 +2704,18 @@ snapshots:
     dependencies:
       '@leafer/interface': 2.2.9
 
+  '@leafer-ui/node@2.2.9':
+    dependencies:
+      '@leafer-in/export': 2.2.9(@leafer-in/interface@2.2.9(@leafer-ui/interface@2.2.9)(@leafer/interface@2.2.9))(@leafer-ui/draw@2.2.9)(@leafer-ui/interface@2.2.9)
+      '@leafer-in/interface': 2.2.9(@leafer-ui/interface@2.2.9)(@leafer/interface@2.2.9)
+      '@leafer-ui/core': 2.2.9
+      '@leafer-ui/draw': 2.2.9
+      '@leafer-ui/interface': 2.2.9
+      '@leafer-ui/partner': 2.2.9
+      '@leafer/interface': 2.2.9
+      '@leafer/node-core': 2.2.9
+      '@leafer/partner': 2.2.9
+
   '@leafer-ui/paint@2.2.9':
     dependencies:
       '@leafer-ui/draw': 2.2.9
@@ -2625,6 +2748,10 @@ snapshots:
       '@leafer/interface': 2.2.9
       '@leafer/partner': 2.2.9
       '@leafer/web-core': 2.2.9
+
+  '@leafer/canvas-node@2.2.9':
+    dependencies:
+      '@leafer/core': 2.2.9
 
   '@leafer/canvas-web@2.2.9':
     dependencies:
@@ -2713,6 +2840,10 @@ snapshots:
       '@leafer/math': 2.2.9
       '@leafer/platform': 2.2.9
 
+  '@leafer/image-node@2.2.9':
+    dependencies:
+      '@leafer/core': 2.2.9
+
   '@leafer/image-web@2.2.9':
     dependencies:
       '@leafer/core': 2.2.9
@@ -2741,6 +2872,14 @@ snapshots:
   '@leafer/list@2.2.9': {}
 
   '@leafer/math@2.2.9': {}
+
+  '@leafer/node-core@2.2.9':
+    dependencies:
+      '@leafer/canvas-node': 2.2.9
+      '@leafer/core': 2.2.9
+      '@leafer/image-node': 2.2.9
+      '@leafer/interface': 2.2.9
+      '@leafer/partner': 2.2.9
 
   '@leafer/partner@2.2.9':
     dependencies:
@@ -2787,6 +2926,53 @@ snapshots:
       '@leafer/image-web': 2.2.9
       '@leafer/interface': 2.2.9
       '@leafer/partner': 2.2.9
+
+  '@napi-rs/canvas-android-arm64@1.0.6':
+    optional: true
+
+  '@napi-rs/canvas-darwin-arm64@1.0.6':
+    optional: true
+
+  '@napi-rs/canvas-darwin-x64@1.0.6':
+    optional: true
+
+  '@napi-rs/canvas-linux-arm-gnueabihf@1.0.6':
+    optional: true
+
+  '@napi-rs/canvas-linux-arm64-gnu@1.0.6':
+    optional: true
+
+  '@napi-rs/canvas-linux-arm64-musl@1.0.6':
+    optional: true
+
+  '@napi-rs/canvas-linux-riscv64-gnu@1.0.6':
+    optional: true
+
+  '@napi-rs/canvas-linux-x64-gnu@1.0.6':
+    optional: true
+
+  '@napi-rs/canvas-linux-x64-musl@1.0.6':
+    optional: true
+
+  '@napi-rs/canvas-win32-arm64-msvc@1.0.6':
+    optional: true
+
+  '@napi-rs/canvas-win32-x64-msvc@1.0.6':
+    optional: true
+
+  '@napi-rs/canvas@1.0.6':
+    optionalDependencies:
+      '@napi-rs/canvas-android-arm64': 1.0.6
+      '@napi-rs/canvas-darwin-arm64': 1.0.6
+      '@napi-rs/canvas-darwin-x64': 1.0.6
+      '@napi-rs/canvas-linux-arm-gnueabihf': 1.0.6
+      '@napi-rs/canvas-linux-arm64-gnu': 1.0.6
+      '@napi-rs/canvas-linux-arm64-musl': 1.0.6
+      '@napi-rs/canvas-linux-riscv64-gnu': 1.0.6
+      '@napi-rs/canvas-linux-x64-gnu': 1.0.6
+      '@napi-rs/canvas-linux-x64-musl': 1.0.6
+      '@napi-rs/canvas-win32-arm64-msvc': 1.0.6
+      '@napi-rs/canvas-win32-x64-msvc': 1.0.6
 
   '@napi-rs/wasm-runtime@1.1.6(@emnapi/core@1.10.0)(@emnapi/runtime@1.10.0)':
     dependencies:

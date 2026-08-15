@@ -22,6 +22,8 @@ import { createServer, type Server, type IncomingMessage, type ServerResponse } 
 import { performance } from "node:perf_hooks";
 import puppeteer, { type Page } from "puppeteer";
 import { fontSubset } from "./backend/font_util/font.js";
+import { testCases } from "./基准测试用例.js";
+import { calculateSSIM } from "./scripts/ssim.js";
 import { PNG } from "pngjs";
 
 const BENCHMARK_DIR = "benchmark_results";
@@ -143,162 +145,8 @@ async function renderTextViaBrowser(
   return { pixels, screenshot: Buffer.from(screenshot), inkPixels, width, height };
 }
 
-/**
- * 计算两张图片的标准 SSIM (Wang et al. 2004)
- * 使用 11x11 均匀滑动窗口 + 积分图加速，返回 0~1
- *
- * 修复：原实现用 Math.sqrt(像素数) 推断 width，假设图片为正方形。
- * 但渲染截图是宽长条（如 740×72），sqrt 会得到错误 width（230），
- * 导致像素坐标错位、SSIM 系统性偏低（尤其 OTF 用例被放大偏差）。
- * 改为由调用方传入真实 width/height。
- */
-function calculateSSIM(a: Uint8Array, b: Uint8Array, width: number, height: number): number {
-  if (a.length !== b.length) return 0;
-  if (width * height * 4 !== a.length) return 0;
-  if (width === 0 || height === 0) return 0;
+// ======== 测试配置（用例表见 基准测试用例.ts，与 leafer 版共享） ========
 
-  /** 转灰度并提取到独立数组 */
-  const N = width * height;
-  const grayA = new Float64Array(N);
-  const grayB = new Float64Array(N);
-  for (let i = 0; i < N; i++) {
-    const idx = i * 4;
-    grayA[i] = 0.299 * a[idx] + 0.587 * a[idx + 1] + 0.114 * a[idx + 2];
-    grayB[i] = 0.299 * b[idx] + 0.587 * b[idx + 1] + 0.114 * b[idx + 2];
-  }
-
-  /** 构建积分图: S(x,y) = sum of gray[0..x-1, 0..y-1] */
-  const w1 = width + 1;
-  const intA = new Float64Array(w1 * (height + 1));
-  const intA2 = new Float64Array(w1 * (height + 1));
-  const intB = new Float64Array(w1 * (height + 1));
-  const intB2 = new Float64Array(w1 * (height + 1));
-  const intAB = new Float64Array(w1 * (height + 1));
-
-  for (let y = 0; y < height; y++) {
-    const rowOff = y * width;
-    const irowOff = (y + 1) * w1;
-    for (let x = 0; x < width; x++) {
-      const va = grayA[rowOff + x];
-      const vb = grayB[rowOff + x];
-      const ip = irowOff + x + 1;
-      intA[ip] = va + intA[ip - 1] + intA[ip - w1] - intA[ip - w1 - 1];
-      intA2[ip] = va * va + intA2[ip - 1] + intA2[ip - w1] - intA2[ip - w1 - 1];
-      intB[ip] = vb + intB[ip - 1] + intB[ip - w1] - intB[ip - w1 - 1];
-      intB2[ip] = vb * vb + intB2[ip - 1] + intB2[ip - w1] - intB2[ip - w1 - 1];
-      intAB[ip] = va * vb + intAB[ip - 1] + intAB[ip - w1] - intAB[ip - w1 - 1];
-    }
-  }
-
-  /**
-   * 从积分图计算矩形区域 [x1, x2) x [y1, y2) 的和
-   * 矩形包含 (x2-x1) * (y2-y1) 个像素
-   */
-  const rectSum = (img: Float64Array, x1: number, y1: number, x2: number, y2: number) =>
-    img[y2 * w1 + x2] - img[y1 * w1 + x2] - img[y2 * w1 + x1] + img[y1 * w1 + x1];
-
-  /** 11x11 窗口, 半径=5 */
-  const R = 5;
-  const C1 = 6.5025;   // (0.01 * 255)^2
-  const C2 = 58.5225;  // (0.03 * 255)^2
-
-  let ssimSum = 0;
-  let windowCount = 0;
-
-  for (let y = R; y < height - R; y++) {
-    for (let x = R; x < width - R; x++) {
-      const x1 = x - R, x2 = x + R + 1;
-      const y1 = y - R, y2 = y + R + 1;
-      const n = (2 * R + 1) * (2 * R + 1);
-
-      const sA = rectSum(intA, x1, y1, x2, y2);
-      const sA2 = rectSum(intA2, x1, y1, x2, y2);
-      const sB = rectSum(intB, x1, y1, x2, y2);
-      const sB2 = rectSum(intB2, x1, y1, x2, y2);
-      const sAB = rectSum(intAB, x1, y1, x2, y2);
-
-      const muA = sA / n;
-      const muB = sB / n;
-      const sigmaA2 = sA2 / n - muA * muA;
-      const sigmaB2 = sB2 / n - muB * muB;
-      const sigmaAB = sAB / n - muA * muB;
-
-      const num = (2 * muA * muB + C1) * (2 * sigmaAB + C2);
-      const den = (muA * muA + muB * muB + C1) * (sigmaA2 + sigmaB2 + C2);
-      ssimSum += num / den;
-      windowCount++;
-    }
-  }
-
-  return windowCount > 0 ? ssimSum / windowCount : 0;
-}
-
-// ======== 测试配置 ========
-
-/**
- * 千字文中段（接续前段，用于更长文本压力测试）
- */
-const QIANZIWEN_MID = "墨悲丝染诗赞羔羊景行维贤克念作圣德建名立形端表正空谷传声虚堂习听祸因恶积福缘善庆尺璧非宝寸阴是竞资父事君曰严与敬孝当竭力忠则尽命临深履薄夙兴温凊似兰斯馨如松之盛川流不息渊澄取映";
-
-const testCases = [
-  /** ===== 令东齐伋复刻体（TTF，楷书复古字体，主基准） ===== */
-  { label: "8个汉字", fontPath: "font/令东齐伋复刻体.ttf", fontName: "令东齐伋复刻体", text: "天地玄黄宇宙洪荒", sourceType: "ttf" as const, outType: "ttf" as const, fullFormat: "truetype" },
-  { label: "8个汉字", fontPath: "font/令东齐伋复刻体.ttf", fontName: "令东齐伋复刻体", text: "天地玄黄宇宙洪荒", sourceType: "ttf" as const, outType: "woff2" as const, fullFormat: "truetype" },
-  { label: "拉丁+数字", fontPath: "font/令东齐伋复刻体.ttf", fontName: "令东齐伋复刻体", text: "Hello World 123", sourceType: "ttf" as const, outType: "ttf" as const, fullFormat: "truetype" },
-  { label: "拉丁+数字", fontPath: "font/令东齐伋复刻体.ttf", fontName: "令东齐伋复刻体", text: "Hello World 123", sourceType: "ttf" as const, outType: "woff2" as const, fullFormat: "truetype" },
-  { label: "千字文前段", fontPath: "font/令东齐伋复刻体.ttf", fontName: "令东齐伋复刻体", text: "天地玄黄宇宙洪荒日月盈昃辰宿列张寒来暑往秋收冬藏闰余成岁律吕调阳云腾致雨露结为霜金生丽水玉出昆冈剑号巨阙珠称夜光果珍李柰菜重芥姜海咸河淡鳞潜羽翔", sourceType: "ttf" as const, outType: "ttf" as const, fullFormat: "truetype" },
-  { label: "千字文前段", fontPath: "font/令东齐伋复刻体.ttf", fontName: "令东齐伋复刻体", text: "天地玄黄宇宙洪荒日月盈昃辰宿列张寒来暑往秋收冬藏闰余成岁律吕调阳云腾致雨露结为霜金生丽水玉出昆冈剑号巨阙珠称夜光果珍李柰菜重芥姜海咸河淡鳞潜羽翔", sourceType: "ttf" as const, outType: "woff2" as const, fullFormat: "truetype" },
-  /** 重复字符：守护 codePoints 去重逻辑，相同字形不应重复输出 */
-  { label: "重复字符", fontPath: "font/令东齐伋复刻体.ttf", fontName: "令东齐伋复刻体", text: "天天天天地地地地", sourceType: "ttf" as const, outType: "woff2" as const, fullFormat: "truetype" },
-
-  /** ===== 思源黑体（TTF，无衬线黑体，字形简洁） ===== */
-  { label: "思源黑体-8字", fontPath: "font/思源黑体.ttf", fontName: "思源黑体", text: "天地玄黄宇宙洪荒", sourceType: "ttf" as const, outType: "ttf" as const, fullFormat: "truetype" },
-  { label: "思源黑体-8字", fontPath: "font/思源黑体.ttf", fontName: "思源黑体", text: "天地玄黄宇宙洪荒", sourceType: "ttf" as const, outType: "woff2" as const, fullFormat: "truetype" },
-  /** 纯标点：非汉字字形 + 组合标记的渲染守护 */
-  { label: "思源黑体-标点", fontPath: "font/思源黑体.ttf", fontName: "思源黑体", text: "，。！？、；：“”‘’", sourceType: "ttf" as const, outType: "woff2" as const, fullFormat: "truetype" },
-  /** CJK 扩展 B 罕见字（代理对）：守护 textToCodePoints 的代理对跳过逻辑 */
-  { label: "思源黑体-扩展B", fontPath: "font/思源黑体.ttf", fontName: "思源黑体", text: "𠮷𡧑𢀖𤍤𥝹", sourceType: "ttf" as const, outType: "woff2" as const, fullFormat: "truetype" },
-  /** 千字文中段：超长文本压力测试（>100 字） */
-  { label: "思源黑体-千字文中段", fontPath: "font/思源黑体.ttf", fontName: "思源黑体", text: QIANZIWEN_MID, sourceType: "ttf" as const, outType: "woff2" as const, fullFormat: "truetype" },
-
-  /** ===== Yi山碑篆体（TTF，笔画极其复杂的篆书，字形数据量大） ===== */
-  { label: "篆体-8字", fontPath: "font/temp/YiShanBeiZhuanTi.ttf", fontName: "Yi山碑篆体", text: "天地玄黄宇宙洪荒", sourceType: "ttf" as const, outType: "ttf" as const, fullFormat: "truetype" },
-  { label: "篆体-8字", fontPath: "font/temp/YiShanBeiZhuanTi.ttf", fontName: "Yi山碑篆体", text: "天地玄黄宇宙洪荒", sourceType: "ttf" as const, outType: "woff2" as const, fullFormat: "truetype" },
-
-  /** ===== OTF 字体（含三点水等复杂笔画字，守护 OTF→TTF 转换正确性） ===== */
-  { label: "otf-五个汉字", fontPath: "font/temp/BaiHuOTFJiaoYuHanZi-2.otf", fontName: "白狐教育汉字", text: "天地黄宇宙法海波", sourceType: "otf" as const, outType: "ttf" as const, fullFormat: "opentype" },
-  /** OTF→woff2 输出路径守护（之前仅测 ttf 输出） */
-  { label: "otf-五个汉字", fontPath: "font/temp/BaiHuOTFJiaoYuHanZi-2.otf", fontName: "白狐教育汉字", text: "天地黄宇宙法海波", sourceType: "otf" as const, outType: "woff2" as const, fullFormat: "opentype" },
-  { label: "otf-思源黑体", fontPath: "font/temp/SourceHanSans-Regular.otf", fontName: "思源黑体", text: "天地玄黄宇宙洪法海波", sourceType: "otf" as const, outType: "ttf" as const, fullFormat: "opentype" },
-  { label: "otf-思源黑体", fontPath: "font/temp/SourceHanSans-Regular.otf", fontName: "思源黑体", text: "天地玄黄宇宙洪法海波", sourceType: "otf" as const, outType: "woff2" as const, fullFormat: "opentype" },
-  /** 白狐千字文长文本：触发 type3 AlternateSubst 大 coverage（千 gid）反转路径 + 守护
-   *  serializeAlternateSubst 越界 coverage gid 正确性（白狐含损坏 coverage，原 undefined 漏网 bug） */
-  { label: "otf-白狐千字文", fontPath: "font/temp/BaiHuOTFJiaoYuHanZi-2.otf", fontName: "白狐教育汉字", text: "天地玄黄宇宙洪荒日月盈昃辰宿列张寒来暑往秋收冬藏闰余成岁律吕调阳", sourceType: "otf" as const, outType: "woff2" as const, fullFormat: "opentype" },
-
-  /** ===== 小字号渲染（size=24，守护 SSIM 在小字号下不退化） ===== */
-  { label: "小字号-8字", fontPath: "font/令东齐伋复刻体.ttf", fontName: "令东齐伋复刻体", text: "天地玄黄宇宙洪荒", sourceType: "ttf" as const, outType: "woff2" as const, fullFormat: "truetype", fontSize: 24 },
-  { label: "小字号-篆体", fontPath: "font/temp/YiShanBeiZhuanTi.ttf", fontName: "Yi山碑篆体", text: "天地玄黄宇宙洪荒", sourceType: "ttf" as const, outType: "woff2" as const, fullFormat: "truetype", fontSize: 24 },
-
-  /**
-   * ===== D:\字体资源 多字体扩展覆盖 =====
-   * 用「汉字+标点」混合文本，最能暴露 GPOS 标点压缩丢失问题。
-   * 覆盖不同 GPOS lookup 类型：得意黑仅 PairPos(完全支持)，霞鹜文楷含 ChainedContextPos(type8，降级)，
-   * 思源宋体(OTF)含 MarkBasePos(type4，降级)。降级时保留原始 GPOS 字节，验证不劣于子集化前。
-   */
-  { label: "得意黑-汉字标点", fontPath: "/mnt/d/字体资源/得意黑/SmileySans-Oblique.ttf", fontName: "得意黑", text: "你好，世界！今天天气不错。", sourceType: "ttf" as const, outType: "woff2" as const, fullFormat: "truetype" },
-  { label: "霞鹜文楷-汉字标点", fontPath: "/mnt/d/字体资源/霞鹜文楷/LXGWWenKai-Regular.ttf", fontName: "霞鹜文楷", text: "你好，世界！今天天气不错。", sourceType: "ttf" as const, outType: "woff2" as const, fullFormat: "truetype" },
-  /** 初夏明朝（TTF，宋体/明朝风格衬线字，含标点压缩） */
-  { label: "初夏明朝-汉字标点", fontPath: "/mnt/d/字体资源/初夏明朝/初夏明朝-Regular.ttf", fontName: "初夏明朝", text: "你好，世界！今天天气不错。", sourceType: "ttf" as const, outType: "woff2" as const, fullFormat: "truetype" },
-  { label: "霞鹜文楷-纯标点", fontPath: "/mnt/d/字体资源/霞鹜文楷/LXGWWenKai-Regular.ttf", fontName: "霞鹜文楷", text: "，。！？、；：“”‘’", sourceType: "ttf" as const, outType: "woff2" as const, fullFormat: "truetype" },
-  { label: "初夏明朝-纯标点", fontPath: "/mnt/d/字体资源/初夏明朝/初夏明朝-Regular.ttf", fontName: "初夏明朝", text: "，。！？、；：“”‘’", sourceType: "ttf" as const, outType: "woff2" as const, fullFormat: "truetype" },
-  { label: "得意黑-纯标点", fontPath: "/mnt/d/字体资源/得意黑/SmileySans-Oblique.ttf", fontName: "得意黑", text: "，。！？、；：“”‘’", sourceType: "ttf" as const, outType: "woff2" as const, fullFormat: "truetype" },
-  /** 鸿蒙黑体（TTF，现代无衬线，GPOS 仅 SinglePos/PairPos） */
-  { label: "鸿蒙黑体-汉字标点", fontPath: "/mnt/d/字体资源/鸿蒙字体/HarmonyOS_Sans_SC_Black.ttf", fontName: "鸿蒙黑体", text: "你好，世界！今天天气不错。", sourceType: "ttf" as const, outType: "woff2" as const, fullFormat: "truetype" },
-  /** 优设标题黑（TTF，艺术黑体） */
-  { label: "优设标题黑-汉字标点", fontPath: "/mnt/d/字体资源/优设标题黑/优设标题黑.ttf", fontName: "优设标题黑", text: "你好，世界！今天天气不错。", sourceType: "ttf" as const, outType: "woff2" as const, fullFormat: "truetype" },
-  /** FiraCode（拉丁等宽，GPOS 做 ligature，非 CJK 标点，验证降级路径不破坏拉丁字体） */
-  { label: "FiraCode-代码", fontPath: "/mnt/d/字体资源/FiraCode/FiraCode-Medium.ttf", fontName: "FiraCode", text: "=> !== >= <= ===", sourceType: "ttf" as const, outType: "woff2" as const, fullFormat: "truetype" },
-];
 
 // ======== 主测试 ========
 await mkdir(`${BENCHMARK_DIR}/json`, { recursive: true });

@@ -44,9 +44,10 @@
   <div id="canvas-host"></div>
 </div>
 
-<script src="vendor/leafer-ui.min.js"></script>
+<!-- leafer-ui 2.2.9（与项目 @leafer-ui/node 版本对齐），CDN 版本与原 vendor 文件逐字节一致 -->
+<script src="https://cdn.jsdelivr.net/npm/leafer-ui@2.2.9/dist/web.min.js"></script>
 <!-- leafer 导出 PNG 需要额外插件（画布转 blob） -->
-<script src="vendor/leafer-in-export.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@leafer-in/export@2.2.9/dist/export.min.js"></script>
 <!-- demo 引插件构建产物（dist ESM），webfont-sdk 由相对路径 importmap 解析到同级包的 dist -->
 <script type="importmap">
   {

@@ -14,6 +14,8 @@ import { WebFontFontFaceMode } from './fontface-mode'
 export { WebFontCSSMode, WebFontFontFaceMode }
 export { IncrementalEngine, createHttpProvider } from './engine'
 export type { SubsetProvider, LoadedChunk, IFontState, IEngineConfig } from './engine'
+export { NodeFontRegistry, loadGlobalFonts, isNodeEnvironment } from './node-registry'
+export type { IGlobalFontsLike, INodeRegistryEntry } from './node-registry'
 export type {
   IWebFontOptions, ILoadFontOptions, IObserveFontOptions, ILoadTextOptions,
   ITextLoader, IObserveTask,

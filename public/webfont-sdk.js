@@ -377,6 +377,95 @@
 	}
 
 //#endregion
+//#region src/node-registry.ts
+/**
+	* 动态 import 的模块 specifier（包未安装时不参与类型解析，运行时 catch 返回 null）。
+	* 用变量间接引用，打包器不会尝试静态解析该路径。
+	*/
+	const NAPI_CANVAS_MODULE = "@napi-rs/canvas";
+	/** 一个逻辑字体（用户视角的 family）的 Node 端注册表 */
+	var NodeFontRegistry = class {
+		constructor(base) {
+			this.entries = [];
+			this.familyIndex = /* @__PURE__ */ new Map();
+			this.globalFonts = null;
+			this.base = base;
+		}
+		/** 绑定 GlobalFonts（懒加载 @napi-rs/canvas 成功后调用） */
+		bind(globalFonts) {
+			this.globalFonts = globalFonts;
+		}
+		/** 是否已绑定（未绑定时 registerChunk 会抛错） */
+		get bound() {
+			return this.globalFonts !== null;
+		}
+		/**
+		* 注册一个新 chunk：唯一 family 名 + 逗号链回退
+		* @returns 新的 fontFamily 链（调用方把它设置到 Text 节点上）
+		*/
+		registerChunk(chunk, buffer) {
+			if (!this.globalFonts) throw new Error("NodeFontRegistry not bound to GlobalFonts");
+			const index = this.entries.length;
+			const family = `${this.base}__${index}`;
+			const entry = {
+				index,
+				family,
+				fontKey: this.globalFonts.register(buffer, family),
+				chars: chunk.chars
+			};
+			this.entries.push(entry);
+			this.familyIndex.set(family, entry);
+			return this.fontChain();
+		}
+		/**
+		* 当前完整的 fontFamily 链（逗号分隔，带引号防中文名/特殊字符问题）：
+		* `"base__0", "base__1", ...`
+		* 最后追加原始 base 名（此时 base 未注册，仅作为语义占位/调试可读性）
+		*/
+		fontChain() {
+			if (this.entries.length === 0) return quote(this.base);
+			return this.entries.map((e) => quote(e.family)).join(", ");
+		}
+		/** 已注册 chunk 数（调试用） */
+		get size() {
+			return this.entries.length;
+		}
+		/**
+		* 卸载全部 chunk（dispose 用）。
+		* FontKey 为 null 的（woff2 首注册返回 null 的场景）跳过 remove。
+		*/
+		dispose() {
+			if (!this.globalFonts) return;
+			for (const entry of this.entries) if (entry.fontKey != null) try {
+				this.globalFonts.remove(entry.fontKey);
+			} catch {}
+			this.entries.length = 0;
+			this.familyIndex.clear();
+		}
+	};
+	/** family 名加引号（CSS font 串规范，中文名必须带引号） */
+	function quote(family) {
+		return `"${family}"`;
+	}
+	/** 动态加载 @napi-rs/canvas 的 GlobalFonts（未安装/非 Node 环境返回 null） */
+	async function loadGlobalFonts() {
+		try {
+			return (await import(
+				/* @vite-ignore */
+				/* webpackIgnore: true */
+				NAPI_CANVAS_MODULE
+)).GlobalFonts ?? null;
+		} catch {
+			return null;
+		}
+	}
+	/** 当前是否 Node 环境（无 document 且有 node 进程标记，用于模式分支） */
+	function isNodeEnvironment() {
+		const g = globalThis;
+		return typeof g.document === "undefined" && !!g.process?.versions?.node;
+	}
+
+//#endregion
 //#region src/fontface-mode.ts
 /**
 	* FontFace 模式 —— Canvas 场景（leafer / fabric / konva / 原生 canvas）
@@ -389,11 +478,14 @@
 		constructor(config = {}) {
 			this.defaultBaseUrl = "https://webfont.shenzilong.cn";
 			this.faces = /* @__PURE__ */ new Map();
+			this.nodeRegistries = /* @__PURE__ */ new Map();
+			this.globalFonts = null;
 			this.engine = new IncrementalEngine({
 				maxConcurrent: config.maxConcurrent ?? 4,
 				provider: config.provider ?? null
 			});
 			if (config.baseUrl) this.defaultBaseUrl = config.baseUrl;
+			this.nodeEnv = isNodeEnvironment();
 		}
 		getEngine() {
 			return this.engine;
@@ -402,17 +494,22 @@
 			this.engine.setProvider(provider);
 		}
 		/**
-		* 创建（或复用）一个字体的 FontFace 增量加载器
+		* 创建（或复用）一个字体的 FontFace 增量加载器。
+		* 自动按环境分支：浏览器走 FontFace(unicodeRange)；Node 走 @napi-rs/canvas
+		* GlobalFonts（每 chunk 唯一 family，调用方需读 fontFamilyChain 写回节点）。
 		*
 		* @param options 字体选项
-		* @param onChunk 单个片段注册完成后回调（调用方在此触发画布重绘）
+		* @param onChunk 单个片段注册完成后回调（调用方在此触发画布重绘 / 更新 fontFamily 链）
 		*/
 		loadFontFace(options, onChunk) {
 			const fontName = options.fontName;
 			const family = options.family ?? fontName.replace(/\.(ttf|otf|woff2?|ttc)$/i, "").trim();
 			const key = IncrementalEngine.fontKey(fontName, family);
 			const baseUrl = options.baseUrl ?? this.defaultBaseUrl;
-			const handleChunk = async (chunk) => {
+			/** Node 模式统一用 ttf：woff2 注册返回 null 不可靠（探针实证） */
+			const outType = this.nodeEnv ? "ttf" : options.outType ?? "woff2";
+			/** 浏览器分支：FontFace + unicodeRange（多 chunk 同 family 按字符精确生效） */
+			const handleChunkBrowser = async (chunk) => {
 				const unicodeRanges = chunk.chars.map((c) => "U+" + c.codePointAt(0).toString(16).padStart(4, "0")).join(", ");
 				const buffer = await (await fetch(chunk.url)).arrayBuffer();
 				const face = new FontFace(family, buffer, { unicodeRange: unicodeRanges });
@@ -423,10 +520,28 @@
 				this.faces.set(family, list);
 				onChunk?.(chunk);
 			};
+			/**
+			* Node 分支：GlobalFonts.register（每 chunk 唯一 family，逗号链回退）。
+			* 首次调用时懒加载 @napi-rs/canvas；未安装则抛错（开发期 fail fast）。
+			*/
+			const handleChunkNode = async (chunk) => {
+				if (!this.globalFonts) this.globalFonts = await loadGlobalFonts();
+				if (!this.globalFonts) throw new Error("Node 环境未安装 @napi-rs/canvas，无法注册字体（pnpm add @napi-rs/canvas）");
+				let registry = this.nodeRegistries.get(family);
+				if (!registry || !registry.bound) {
+					registry = new NodeFontRegistry(family);
+					registry.bind(this.globalFonts);
+					this.nodeRegistries.set(family, registry);
+				}
+				const res = await fetch(chunk.url);
+				const buffer = new Uint8Array(await res.arrayBuffer());
+				registry.registerChunk(chunk, buffer);
+				onChunk?.(chunk);
+			};
 			this.engine.ensureState(key, fontName, {
 				baseUrl,
-				outType: options.outType ?? "woff2",
-				onLoadChunk: (chunk) => handleChunk(chunk)
+				outType,
+				onLoadChunk: (chunk) => this.nodeEnv ? handleChunkNode(chunk) : handleChunkBrowser(chunk)
 			});
 			let disposed = false;
 			return {
@@ -443,7 +558,12 @@
 					if (disposed) return;
 					disposed = true;
 					this.engine.removeState(key);
-					/** FontFace 不主动删除：其他画布可能还在用同 family（保守策略） */
+					/** 浏览器 FontFace 不主动删除：其他画布可能还在用同 family（保守策略）。
+					*  Node 端 GlobalFonts 进程级共享，同样保留（进程退出自然释放） */
+				},
+				fontFamilyChain: () => {
+					if (!this.nodeEnv) return null;
+					return this.nodeRegistries.get(family)?.fontChain() ?? null;
 				}
 			};
 		}

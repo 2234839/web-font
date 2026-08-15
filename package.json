@@ -23,6 +23,7 @@
     "web-streams-polyfill": "^4.3.0"
   },
   "devDependencies": {
+    "@leafer-ui/node": "2.2.9",
     "@types/node": "^26.1.1",
     "@vitejs/plugin-vue": "^6.0.8",
     "@xmldom/xmldom": "^0.9.10",
@@ -39,5 +40,8 @@
     "vitest": "^4.1.10",
     "vue": "3.6.0-beta.17",
     "vue-router": "^5.2.0"
+  },
+  "optionalDependencies": {
+    "@napi-rs/canvas": "^1.0.6"
   }
 }

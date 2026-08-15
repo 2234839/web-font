@@ -173,8 +173,12 @@ export class WebFontPlugin {
           if (fontName) {
             const family = normalizeFamily(fontName)
             const entry = getOrCreate(groups, family, () => ({ loader: this.getLoader(fontName, family), fontName, family, chars: new Set() }))
-            /** 自动改写节点 fontFamily 为合法 CSS 名（canvas font 串要求） */
-            if (this.config.rewriteFamily && node.fontFamily !== family) {
+            /**
+             * 自动改写节点 fontFamily 为合法 CSS 名（canvas font 串要求）。
+             * 已是链形态（Node 模式 chunk 链）的节点跳过——否则链会被改回 base
+             * 名，丢掉已注册 chunk 的回退（layout.end 会再次触发 scan 的套娃场景）
+             */
+            if (this.config.rewriteFamily && node.fontFamily !== family && !isChunkChain(fontFamily)) {
               ;(node as { fontFamily: string }).fontFamily = family
             }
             for (const ch of text) entry.chars.add(ch)
@@ -224,7 +228,8 @@ export class WebFontPlugin {
       loader = this.mode.loadFontFace(
         { fontName, family },
         () => {
-          /** 字体注册成功后强制重绘整个画布（文本 metrics 需要重新计算） */
+          /** 字体注册成功后：Node 端更新 fontFamily 链，浏览器端仅重绘 */
+          this.applyNodeFontChain(family)
           this.leafer?.forceRender?.()
         },
       )
@@ -232,6 +237,36 @@ export class WebFontPlugin {
       this.log('new font loader:', fontName, '->', family)
     }
     return loader
+  }
+
+  /**
+   * Node 模式：把 SDK 返回的 fontFamily 链（chunk 唯一 family 逗号链）
+   * 写回所有使用该 family 的 Text 节点。浏览器模式 fontFamilyChain 恒为
+   * null，此函数为 no-op。
+   */
+  private applyNodeFontChain(family: string): void {
+    const loader = this.loaders.get(family)
+    const chain = loader?.fontFamilyChain()
+    if (!chain) return
+
+    /** 预编译匹配：原始 family 名或已改写链（链首 chunk family 以 `${family}__` 开头） */
+    const chainHead = new RegExp(`^["']?${escapeRegExp(family)}__\\d`)
+
+    const walk = (node: ILeaferNode | null | undefined): void => {
+      if (!node || node.destroyed) return
+      const fontFamily = node.fontFamily
+      if (typeof fontFamily === 'string' && fontFamily) {
+        const usesFamily = fontFamily === family || fontFamily.trim() === family || chainHead.test(fontFamily)
+        if (usesFamily && node.fontFamily !== chain) {
+          ;(node as { fontFamily: string }).fontFamily = chain
+        }
+      }
+      const children = node.children
+      if (Array.isArray(children)) {
+        for (const child of children as ILeaferNode[]) walk(child)
+      }
+    }
+    walk(this.leafer)
   }
 
   private log(...args: unknown[]): void {
@@ -280,9 +315,37 @@ export class WebFontPlugin {
  * 辅助函数
  * ============================================================ */
 
-/** fontFamily 原始值 -> 合法 CSS family 名（去除文件后缀与首尾空白） */
+/** 正则元字符转义（family 名可能含中文/特殊符号，构造匹配器前先转义） */
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+/**
+ * chunk family 后缀（Node 模式每 chunk 唯一 family：`base__0`、`base__1`…）。
+ * 用于把链形态还原为 base family，避免 scan 把改写后的链当成新字体。
+ */
+const CHUNK_SUFFIX_RE = /__(\d+)$/
+
+/**
+ * 判断 fontFamily 是否已是 Node 模式改写后的 chunk 链形态
+ *（含 `"base__0"` 引号或 `"base__0", "base__1"` 逗号链）。
+ * scan 时遇到链形态直接跳过改写，防止链被抹回 base 名。
+ */
+function isChunkChain(fontFamily: string): boolean {
+  return fontFamily.includes('__') && /__\d+["']?$/.test(fontFamily.split(',')[0]!.trim())
+}
+
+/**
+ * fontFamily 原始值 -> 合法 CSS family 名。
+ * - 去除文件后缀与首尾空白（含引号）
+ * - Node 模式改写后的 chunk 链（`"base__0", "base__1"`）还原为 base 名，
+ *   防止 scan 把链当作新 family 反复创建 loader（套娃 bug）
+ */
 function normalizeFamily(fontFamily: string): string {
-  return fontFamily.replace(FONT_EXT_RE, '').trim()
+  /** 取链首成员（逗号分隔），去掉首尾引号 */
+  const first = fontFamily.split(',')[0]!.trim().replace(/^["']|["']$/g, '')
+  const bare = first.replace(FONT_EXT_RE, '').trim()
+  return bare.replace(CHUNK_SUFFIX_RE, '')
 }
 
 /** Map 的 get-or-create 惯用封装 */

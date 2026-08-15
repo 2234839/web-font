@@ -32,6 +32,14 @@
   ],
   "repository": "https://github.com/2234839/web-font",
   "license": "MIT",
+  "peerDependencies": {
+    "@napi-rs/canvas": ">=0.1"
+  },
+  "peerDependenciesMeta": {
+    "@napi-rs/canvas": {
+      "optional": true
+    }
+  },
   "devDependencies": {
     "tsdown": "^0.22.13",
     "typescript": "^7.0.2"
