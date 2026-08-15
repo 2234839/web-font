@@ -15,6 +15,7 @@
   },
   "files": [
     "dist",
+    "dist-iife",
     "README.md",
     "LICENSE"
   ],
@@ -30,7 +31,13 @@
     "canvas-font",
     "chinese-font"
   ],
-  "repository": "https://github.com/2234839/web-font",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/2234839/web-font.git",
+    "directory": "packages/webfont-sdk"
+  },
+  "author": "崮生（子虚）",
+  "license": "MIT",
   "license": "MIT",
   "peerDependencies": {
     "@napi-rs/canvas": ">=0.1"
