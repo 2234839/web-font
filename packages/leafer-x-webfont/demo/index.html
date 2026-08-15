@@ -50,17 +50,18 @@
 <script src="https://cdn.jsdelivr.net/npm/leafer-ui@2.2.9/dist/web.min.js"></script>
 <!-- leafer 导出 PNG 需要额外插件（画布转 blob） -->
 <script src="https://cdn.jsdelivr.net/npm/@leafer-in/export@2.2.9/dist/export.min.js"></script>
-<!-- demo 全 CDN 化：leafer-ui / export 插件走 jsDelivr IIFE，插件与 SDK 走 jsDelivr ESM（importmap 解析裸导入 webfont-sdk） -->
+<!-- demo 全 CDN 化：leafer-ui / export 插件走 jsDelivr IIFE，插件与 SDK 走 jsDelivr ESM @latest（importmap 统一解析裸导入：插件 dist 内部裸导入 webfont-sdk，也必须在此映射） -->
 <script type="importmap">
   {
     "imports": {
-      "webfont-sdk": "https://cdn.jsdelivr.net/npm/webfont-sdk@0.2.0/dist/index.js",
-      "webfont-sdk/api": "https://cdn.jsdelivr.net/npm/webfont-sdk@0.2.0/dist/api.js"
+      "leafer-x-webfont": "https://cdn.jsdelivr.net/npm/leafer-x-webfont@latest/dist/index.js",
+      "webfont-sdk": "https://cdn.jsdelivr.net/npm/webfont-sdk@latest/dist/index.js",
+      "webfont-sdk/api": "https://cdn.jsdelivr.net/npm/webfont-sdk@latest/dist/api.js"
     }
   }
 </script>
 <script type="module">
-  import { WebFontPlugin } from 'https://cdn.jsdelivr.net/npm/leafer-x-webfont@0.1.0/dist/index.js'
+  import { WebFontPlugin } from 'leafer-x-webfont'
   import { createWebFontApi } from 'webfont-sdk/api'
 
   const { Leafer, Text, Rect, Ellipse, Image } = LeaferUI

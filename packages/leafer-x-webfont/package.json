@@ -1,6 +1,6 @@
 {
   "name": "leafer-x-webfont",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "LeaferJS 字体插件 —— Text 元素自动按需加载字体子集（6 字 ≈ 6KB），让画布与导出图用上任意中文字体",
   "type": "module",
   "main": "./dist/index.js",
