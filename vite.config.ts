@@ -4,6 +4,7 @@ import vue from "@vitejs/plugin-vue";
 import { pilot } from "vite-plugin-pilot";
 import commonjs from "vite-plugin-commonjs";
 import { sitemapPlugin } from "./scripts/sitemap-plugin";
+import { leaferDemoPlugin } from "./scripts/leafer-demo-plugin";
 /**
  * 引入 vite-ssg 的类型声明 ——
  * vite-ssg 内部通过 declaration merging 给 vite 的 UserConfig 扩展了 ssgOptions 字段，
@@ -22,6 +23,7 @@ const sitemapRoutes = [
   { path: "/offline-subset", changefreq: "weekly" as const, priority: 0.8 },
   { path: "/docs", changefreq: "weekly" as const, priority: 0.8 },
   { path: "/demo", changefreq: "monthly" as const, priority: 0.6 },
+  { path: "/leafer-demo/", changefreq: "monthly" as const, priority: 0.6 },
 ];
 
 export default defineConfig({
@@ -132,6 +134,8 @@ export default { isInited: () => false, init: () => Promise.resolve(), encode: (
       },
     },
     sitemapPlugin(sitemapRoutes),
+    /** 把 leafer 插件 demo 复制进 dist/leafer-demo/（纯静态单文件，不走 vite-ssg 管线） */
+    leaferDemoPlugin(),
     /**
      * 构建时替换 index.html 中的时间戳占位符
      *
