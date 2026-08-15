@@ -73,6 +73,20 @@ const GENERIC_FAMILY_RE = /^(sans-serif|serif|monospace|caption|system-ui|cursiv
  */
 const FULL_SCAN_DIRTY_THRESHOLD = 512
 
+/**
+ * family 聚合桶：chars 为本轮字符集，nodes 为贡献节点（注册成功后回记
+ * 脏集——只有这些节点可能用到新 chunk，链应用范围从全树缩小到贡献者）
+ */
+interface IGroup {
+  loader: IFontFaceLoader
+  fontName: string
+  family: string
+  chars: Set<string>
+  nodes: ILeaferNode[]
+  /** 贡献者超过阈值：注册后直接 dirtyAll（全量应用链更省） */
+  overflow: boolean
+}
+
 /** Leafer 节点最小结构（避免硬依赖 leafer-ui 类型，保持 peerDep 可选） */
 interface ILeaferNode {
   __tag?: string
@@ -80,8 +94,8 @@ interface ILeaferNode {
   fontFamily?: unknown
   children?: unknown
   destroyed?: boolean
-  forceRender?: () => void
-  /** on_ 为公开事件订阅（返回 id）；旧版 leafer 用 on__（下划线为内部 id 绑定） */
+  forceRender?: () => void  /** 代理数据标记：leafer 编辑器场景节点属性存 proxy（__ 直写会丢），存在时静默写回退 setter */
+  __proxyData?: unknown  /** on_ 为公开事件订阅（返回 id）；旧版 leafer 用 on__（下划线为内部 id 绑定） */
   on_?: (type: string, listener: (e: unknown) => void, bind?: unknown) => number
   off_?: (ids: number[]) => void
   /** 旧版 API 兼容（on__ 在新版本已更名 on_） */
@@ -122,6 +136,22 @@ export class WebFontPlugin {
   private dirty = new Set<ILeaferNode>()
   /** 整树结构变化（首次扫描/模板替换）时置位，flush 退化为全量 walk */
   private dirtyAll = false
+  /**
+   * 待应用 chunk 链的 family → 链值（Node 模式）。
+   * 字体注册成功的回调里不再立即全树改写——百万节点下百万次 fontFamily
+   * 赋值会触发百万次 property.change，把 dirty 集污染成全量（实测打字场景
+   * 退化到 20s）。改为标记待应用，下一次 walk（scan/flush）时顺路写入
+   * 目标节点，零额外遍历。注册后仅 forceRender 触发重绘
+   */
+  private pendingChains = new Map<string, { chain: string; silent: boolean }>()
+  /**
+   * family → 待应用的贡献节点（合并累加，不覆盖：前一轮 commit 的节点
+   * 在其 chunk 迟到时仍需要链，覆盖会丢节点导致字符回退系统字体）。
+   * chunk 回调后清除。溢出（贡献者>阈值，如初始全量）时 silent 全量应用
+   */
+  private pendingApply = new Map<string, { nodes: ILeaferNode[]; overflow: boolean }>()
+  /** 字体就绪待重绘（或本轮 flush 有链静默落地）；无 in-flight chunk 时尾部一次 forceRender */
+  private renderPending = false
 
   constructor(leafer: ILeaferNode, config: IWebFontPluginConfig = {}) {
     this.leafer = leafer
@@ -228,28 +258,65 @@ export class WebFontPlugin {
    * 收集单个 Text 节点的字符进聚合桶（含 fontFamily 规范化改写）。
    * 全量 walk 与增量 flush 共用，保证两条路径行为一致
    */
-  private collect(groups: Map<string, { loader: IFontFaceLoader; fontName: string; family: string; chars: Set<string> }>, node: ILeaferNode): void {
+  private collect(groups: Map<string, IGroup>, node: ILeaferNode): void {
     const fontFamily: string = node.fontFamily as string
     const text: string = String(node.text ?? '')
     if (!fontFamily || !text) return
     const fontName = this.resolveFontName(fontFamily)
     if (!fontName) return
     const family = normalizeFamily(fontName)
-    const entry = getOrCreate(groups, family, () => ({ loader: this.getLoader(fontName, family), fontName, family, chars: new Set() }))
+    const entry = getOrCreate(groups, family, () => ({ loader: this.getLoader(fontName, family), fontName, family, chars: new Set<string>(), nodes: [], overflow: false }))
+    if (!entry.overflow) {
+      if (entry.nodes.length >= FULL_SCAN_DIRTY_THRESHOLD) entry.overflow = true
+      else entry.nodes.push(node)
+    }
     /**
-     * 自动改写节点 fontFamily 为合法 CSS 名（canvas font 串要求）。
-     * 已是链形态（Node 模式 chunk 链）的节点跳过——否则链会被改回 base
-     * 名，丢掉已注册 chunk 的回退。改写会触发 property.change → 该节点
-     * 入脏集 → 下轮 flush 幂等重扫（内容不变指纹短路，不会无限循环）
+     * 待应用链优先（新注册 chunk 链），其次规范化改写（去 .ttf 后缀）。
+     * 写入方式按 pendingChains 的 silent 标记分流：
+     * - 静默写（直接写 __ 数据层）：溢出/初始全量场景，公共 setter 的完整
+     *   属性变更管线百万次 = 实测 2.2s 风暴；静默写 ~50ns/次，且 family 名
+     *   替换不改字形 metrics（同一字体子集），bounds 不变无需重排
+     * - 公共 setter：少量贡献者（打字等），leafer 自己会失效重绘该节点，
+     *   无需 forceRender
+     * 静默写不触发重绘，由 flush 尾部统一 forceRender 补上
      */
-    if (this.config.rewriteFamily && node.fontFamily !== family && !isChunkChain(fontFamily)) {
-      ;(node as { fontFamily: string }).fontFamily = family
+    const pending = this.pendingChains.get(family)
+    if (pending && node.fontFamily !== pending.chain) {
+      if (pending.silent) {
+        this.writeFamilySilently(node, pending.chain)
+        this.renderPending = true
+      } else {
+        /** 公共 setter：leafer 自动失效并局部重绘该节点，无需 forceRender */
+        ;(node as { fontFamily: string }).fontFamily = pending.chain
+      }
+    } else if (this.config.rewriteFamily && node.fontFamily !== family && !isChunkChain(fontFamily)) {
+      if (pending?.silent) {
+        this.writeFamilySilently(node, family)
+        this.renderPending = true
+      } else {
+        ;(node as { fontFamily: string }).fontFamily = family
+      }
     }
     for (const ch of text) entry.chars.add(ch)
   }
 
+  /**
+   * 静默写入 fontFamily（直接写 __ 数据层，不触发 property.change）。
+   * leafer 渲染读的正是它（__getAttr → __.__get），下一帧生效；
+   * 不触发事件 = 不污染 dirty 集 = 无风暴。若未来 leafer 改为只认
+   * setter 路径，退化为公共 setter（行为仍正确，仅多一轮调度）
+   */
+  private writeFamilySilently(node: ILeaferNode, value: string): void {
+    const data = (node as { __?: Record<string, unknown> }).__
+    if (data && typeof data === 'object' && !node.__proxyData) {
+      data.fontFamily = value
+    } else {
+      ;(node as { fontFamily: string }).fontFamily = value
+    }
+  }
+
   /** walk 子树收集 Text 字符：visited 防环/防重（脏子树交叉时幂等） */
-  private walkInto(node: ILeaferNode | null | undefined, groups: Map<string, { loader: IFontFaceLoader; fontName: string; family: string; chars: Set<string> }>, visited: Set<ILeaferNode>): void {
+  private walkInto(node: ILeaferNode | null | undefined, groups: Map<string, IGroup>, visited: Set<ILeaferNode>): void {
     if (!node || node.destroyed || visited.has(node)) return
     visited.add(node)
     if (this.isTextNode(node)) this.collect(groups, node)
@@ -262,54 +329,82 @@ export class WebFontPlugin {
   /** 全量扫描（安全网）：初始扫描 / 脏节点溢出退化路径。直接调用时复位增量状态 */
   private scan(): void {
     this.dirtyAll = false
-    const groups = new Map<string, { loader: IFontFaceLoader; fontName: string; family: string; chars: Set<string> }>()
+    const groups = new Map<string, IGroup>()
     this.walkInto(this.leafer, groups, new Set())
     this.commit(groups)
   }
 
   /** 提交聚合桶：内容指纹短路（字符串精确相等），无变化时 loader.update 调用归零 */
-  private commit(groups: Map<string, { loader: IFontFaceLoader; fontName: string; family: string; chars: Set<string> }>): void {
-    for (const [family, { loader, chars }] of groups) {
+  private commit(groups: Map<string, IGroup>): void {
+    for (const [family, entry] of groups) {
       /** 指纹相等 = 这段字符集已提交过（SDK 三态过滤兜底），跳过本次 update */
-      const collected = charsToString(chars)
+      const collected = charsToString(entry.chars)
       if (this.committed.get(family) === collected) continue
       this.committed.set(family, collected)
+      /** 贡献者合并累加（不覆盖）：迟到的 chunk 仍能找到它的贡献节点 */
+      const prev = this.pendingApply.get(family)
+      this.pendingApply.set(family, {
+        nodes: prev ? prev.nodes.concat(entry.nodes) : entry.nodes,
+        overflow: (prev?.overflow ?? false) || entry.overflow,
+      })
       this.updateCalls++
-      loader.update(collected)
+      entry.loader.update(collected)
     }
   }
 
   /** 累计实际提交给 loader 的 update 次数（性能/调试指标：指纹短路越有效增长越慢） */
   public updateCalls = 0
-  /** 防抖触发扫描：增量优先，脏节点占比过高时退化全量 */
+  /**
+   * 调度一次防抖 flush：窗口内已有待触发任务时直接复用（trailing 语义）。
+   * 不用 clear+set 重置式 debounce：百万节点初始改写会触发百万次事件，
+   * 重置式每次都 clear+set（~1μs/次，累计秒级浪费）；且 trailing 保证
+   * 连续打字时每 debounceMs 必有一次 flush（字体更及时），不会无限推迟
+   */
   private schedule(): void {
-    if (this.debounceTimer) clearTimeout(this.debounceTimer)
+    if (this.debounceTimer) return
     this.debounceTimer = setTimeout(() => {
       this.debounceTimer = null
       this.flush()
     }, this.config.debounceMs)
   }
 
-  /** flush：增量 walk 脏节点集（或 dirtyAll 时全量），提交后清空脏集 */
+  /** flush：增量 walk 脏节点集（或 dirtyAll 时全量），链落地后尾部统一重绘 */
   private flush(): void {
     /** 脏节点积累过多（如模板整体替换）：全量 walk 一次更省，顺带复位增量状态 */
     if (this.dirtyAll || this.dirty.size > FULL_SCAN_DIRTY_THRESHOLD) {
       this.dirty.clear()
       this.dirtyAll = false
       this.scan()
-      return
-    }
+    } else {
+      const groups = new Map<string, IGroup>()
 
-    const groups = new Map<string, { loader: IFontFaceLoader; fontName: string; family: string; chars: Set<string> }>()
-
-    /** 每次 flush 的 visited 必须新建：跨 flush 的同一节点内容可能已变 */
-    const visited = new Set<ILeaferNode>()
-    for (const node of this.dirty) {
-      /** 脏节点本身 + 其子树都可能有 Text：child.add 只给根，子节点构造期赋值无事件 */
-      this.walkInto(node, groups, visited)
+      /** 每次 flush 的 visited 必须新建：跨 flush 的同一节点内容可能已变 */
+      const visited = new Set<ILeaferNode>()
+      for (const node of this.dirty) {
+        /** 脏节点本身 + 其子树都可能有 Text：child.add 只给根，子节点构造期赋值无事件 */
+        this.walkInto(node, groups, visited)
+      }
+      this.dirty.clear()
+      this.commit(groups)
     }
-    this.dirty.clear()
-    this.commit(groups)
+    /**
+     * 字体就绪或有链静默落地：合并成一次 forceRender。
+     * 仍有 in-flight chunk 时推迟（renderPending 保持 true），等最后一个
+     * chunk 落地后一并重绘——否则每个 chunk 回调都全画布重绘一次，
+     * 百万节点下 N 个 chunk = N 次秒级重绘
+     */
+    if (this.renderPending && !this.hasPendingLoads()) {
+      this.renderPending = false
+      this.leafer?.forceRender?.()
+    }
+  }
+
+  /** 是否仍有 in-flight 的子集请求 */
+  private hasPendingLoads(): boolean {
+    for (const loader of this.loaders.values()) {
+      if (loader.isPending()) return true
+    }
+    return false
   }
 
   /* ============================================================
@@ -326,52 +421,47 @@ export class WebFontPlugin {
     return fontFamily
   }
 
-  /** 获取（或创建）family 对应的 SDK 增量加载器；注册成功后重绘画布 */
+  /** 获取（或创建）family 对应的 SDK 增量加载器；注册成功后按模式分流处理 */
   private getLoader(fontName: string, family: string): IFontFaceLoader {
     let loader = this.loaders.get(family)
     if (!loader) {
       loader = this.mode.loadFontFace(
         { fontName, family },
         () => {
-          /** 字体注册成功后：Node 端更新 fontFamily 链，浏览器端仅重绘 */
-          this.applyNodeFontChain(family)
-          this.leafer?.forceRender?.()
+          const chain = loader!.fontFamilyChain()
+          const apply = this.pendingApply.get(family)
+          if (chain) {
+            /**
+             * Node 模式：chunk 注册在 `${family}__N` 唯一名下，节点需链回退。
+             * 溢出（初始全量等）→ 静默链 + dirtyAll，下轮全量 walk 顺路写；
+             * 少量贡献者（打字）→ 公共 setter（leafer 自动失效重绘该节点）。
+             * 不在这里立即全树改写（百万节点 O(全树) 风暴 + dirty 污染）
+             */
+            this.pendingChains.set(family, { chain, silent: !apply || apply.overflow })
+            if (apply) {
+              this.pendingApply.delete(family)
+              if (apply.overflow) {
+                this.dirtyAll = true
+                /** 静默链路径：leafer 不知情，标记待重绘（尾部一次 forceRender） */
+                this.renderPending = true
+              } else {
+                for (const n of apply.nodes) this.dirty.add(n)
+              }
+            }
+          } else {
+            /**
+             * 浏览器模式（无链）：FontFace(unicodeRange) 就绪不触发画布重绘，
+             * 标记待重绘，由 flush 尾部合并执行
+             */
+            this.renderPending = true
+          }
+          this.schedule()
         },
       )
       this.loaders.set(family, loader)
       this.log('new font loader:', fontName, '->', family)
     }
     return loader
-  }
-
-  /**
-   * Node 模式：把 SDK 返回的 fontFamily 链（chunk 唯一 family 逗号链）
-   * 写回所有使用该 family 的 Text 节点。浏览器模式 fontFamilyChain 恒为
-   * null，此函数为 no-op。
-   */
-  private applyNodeFontChain(family: string): void {
-    const loader = this.loaders.get(family)
-    const chain = loader?.fontFamilyChain()
-    if (!chain) return
-
-    /** 预编译匹配：原始 family 名或已改写链（链首 chunk family 以 `${family}__` 开头） */
-    const chainHead = new RegExp(`^["']?${escapeRegExp(family)}__\\d`)
-
-    const walk = (node: ILeaferNode | null | undefined): void => {
-      if (!node || node.destroyed) return
-      const fontFamily = node.fontFamily
-      if (typeof fontFamily === 'string' && fontFamily) {
-        const usesFamily = fontFamily === family || fontFamily.trim() === family || chainHead.test(fontFamily)
-        if (usesFamily && node.fontFamily !== chain) {
-          ;(node as { fontFamily: string }).fontFamily = chain
-        }
-      }
-      const children = node.children
-      if (Array.isArray(children)) {
-        for (const child of children as ILeaferNode[]) walk(child)
-      }
-    }
-    walk(this.leafer)
   }
 
   private log(...args: unknown[]): void {
@@ -410,6 +500,17 @@ export class WebFontPlugin {
    */
   public async ready(): Promise<void> {
     await this.mode.ready()
+    /**
+     * 就绪语义闭环：字体/链全部落地后，同步消化残留的增量状态
+     * （dirtyAll / renderPending / 未消化的贡献者）。否则它们会被下一个
+     * 不相关的用户操作（如单点打字）捡走——百万节点下表现为「改一个字
+     * 卡 800ms」的全量 scan。ready 语义就是分界线：调用前插件内部事可以
+     * 慢慢消化，调用后外部预期画布已是终态
+     */
+    if (this.dirty.size > 0 || this.dirtyAll || this.renderPending) {
+      this.flushNow()
+      await this.mode.ready()
+    }
   }
 
   /** 已加载（或加载中）的字体 family 列表（调试 / 状态展示用） */
@@ -435,11 +536,6 @@ export class WebFontPlugin {
 /* ============================================================
  * 辅助函数
  * ============================================================ */
-
-/** 正则元字符转义（family 名可能含中文/特殊符号，构造匹配器前先转义） */
-function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-}
 
 /**
  * chunk family 后缀（Node 模式每 chunk 唯一 family：`base__0`、`base__1`…）。
