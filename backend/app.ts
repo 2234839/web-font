@@ -1,9 +1,10 @@
-/** 首先加载 fs 适配层，必须在所有其他导入之前！仅在 LLRT 运行时引入 */
-(() => {
-  if (typeof __RUNTIME__ !== "undefined" && __RUNTIME__ === "llrt") {
-    require("./server/llrt");
-  }
-})();
+/** 首先加载 fs 适配层，必须在 main() 之前完成！按运行时选择实现（top-level await 保证注册先于一切使用） */
+if (typeof __RUNTIME__ !== "undefined" && __RUNTIME__ === "llrt") {
+  await import("./server/llrt");
+} else {
+  /** Node.js（tsx 开发 / tsdown define "node" 构建）走 node 适配器 */
+  await import("./server/node");
+}
 
 import { mimeTypes } from "./server/mime_type";
 import type { cMiddleware } from "./server/req_res";

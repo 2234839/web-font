@@ -1,0 +1,47 @@
+{
+  "name": "leafer-x-webfont",
+  "version": "0.1.0",
+  "description": "LeaferJS 字体插件 —— Text 元素自动按需加载字体子集（6 字 ≈ 6KB），让画布与导出图用上任意中文字体",
+  "type": "module",
+  "main": "./dist/leafer-x-webfont.esm.js",
+  "module": "./dist/leafer-x-webfont.esm.js",
+  "types": "./types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./types/index.d.ts",
+      "import": "./dist/leafer-x-webfont.esm.js"
+    }
+  },
+  "files": [
+    "dist",
+    "types",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsdown",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "leafer",
+    "leaferjs",
+    "webfont",
+    "font-subset",
+    "canvas-font",
+    "chinese-font",
+    "poster"
+  ],
+  "repository": "https://github.com/2234839/web-font",
+  "license": "MIT",
+  "peerDependencies": {
+    "leafer-ui": "^2.0.0"
+  },
+  "peerDependenciesMeta": {
+    "leafer-ui": {
+      "optional": true
+    }
+  },
+  "dependencies": {
+    "webfont-sdk": "workspace:*"
+  }
+}

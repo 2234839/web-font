@@ -1,10 +1,10 @@
 /**
- * WebFont SDK — 按需增量加载字体片段，无闪烁
+ * WebFont SDK — 按需增量加载字体片段，无闪烁（本文件由 packages/webfont-sdk 构建，勿手改）
  *
- * 架构：核心增量引擎 + 多种触发方式
- *   - 核心：FontLoader 按 fontKey 管理已加载字符集，只生成增量 CSS
- *   - 触发器：loadFont（轮询）、observeFont（DOM 事件）、loadText（手动传文本）
- *   - 同一 fontKey 下所有触发器共享字符集，绝不会重复请求
+ * 架构：核心增量引擎 + 两种注册模式
+ *   - 核心：IncrementalEngine 按 fontKey 管理字符集，只请求增量；失败字符自动记忆不重试
+ *   - CSS 模式（WebFont）：loadFont（轮询）/ observeFont（DOM 事件）/ loadText（手动传文本）
+ *   - FontFace 模式（WebFontCanvas）：Canvas/canvas 场景，FontFace + unicodeRange 注册
  *
  * 用法：
  *   // 轮询模式
@@ -19,522 +19,477 @@
  *   loader.update("追加文字");
  *   loader.dispose();
  *
- *   // 清理全部
- *   WebFont.disposeAll();
+ *   // Canvas 模式（leafer / 原生 canvas）
+ *   var face = WebFontCanvas.loadFontFace({ fontName }, function (chunk) { 在此重绘 });
+ *   face.update("画布上的文字");
+ *   await WebFontCanvas.ready();
  */
-var WebFont = (function () {
-  /* ============================================================
-   * 核心增量引擎 — 按 fontKey 管理已加载字符集，生成增量 CSS
-   * ============================================================ */
 
-  /** @type {Object.<string, { loadedChars: Object.<string,boolean>, injectedStyles: Element[], applied: boolean, fontName: string, family: string, baseUrl: string }>} */
-  var loaders = {};
+(function() {
 
-  /**
-   * 全局并发请求池
-   *
-   * 字体 @font-face 注入 DOM 后浏览器立即发起请求。
-   * 页面同时加载多种字体（如列表页预览）时，短时间内大量请求打满服务端子集化队列。
-   * 通过排队控制同时挂载的 @font-face 数量，避免服务端过载。
-   *
-   * 默认 4：在浏览器同域 6 并发限制内留出余量给其他资源。
-   * 用户可通过 WebFont.setMaxConcurrent(n) 调整。
-   */
-  var maxConcurrent = 4;
-  /** 当前正在执行的字体加载任务数 */
-  var activeFontLoads = 0;
-  /** 待执行的字体加载任务队列（FIFO） */
-  var fontLoadQueue = [];
 
-  /**
-   * 子集化提供者 —— 决定如何获取增量字体片段
-   *
-   * 默认走 HTTP API（在线模式）。
-   * 离线模式下通过 setSubsetProvider 注入本地裁剪函数，
-   * SDK 负责增量管理（去重、unicode-range），provider 只管"给定文本→返回字体URL"。
-   *
-   * provider 签名：async function(fontName, text, outType) -> { url: string, format: string }
-   * - url：字体文件的 URL（HTTP URL 或 blob: URL）
-   * - format：字体格式（"woff2" / "truetype"）
-   */
-  var subsetProvider = null;
+//#region src/engine.ts
+	function createHttpProvider(baseUrl) {
+		return (fontName, text, outType) => {
+			const url = `${baseUrl}/api?font=${encodeURIComponent(fontName)}&text=${encodeURIComponent(text)}&outType=${outType}`;
+			return Promise.resolve({
+				url,
+				format: outType === "woff2" ? "woff2" : "truetype"
+			});
+		};
+	}
+	var IncrementalEngine = class {
+		constructor(config = {}) {
+			this.states = /* @__PURE__ */ new Map();
+			this.active = 0;
+			this.queue = [];
+			this.flying = 0;
+			this.config = {
+				maxConcurrent: config.maxConcurrent ?? 4,
+				provider: config.provider ?? null
+			};
+		}
+		/** fontKey：fontName + family 唯一确定一个增量组 */
+		static fontKey(fontName, family) {
+			return fontName + "|" + family;
+		}
+		setProvider(provider) {
+			this.config.provider = provider;
+		}
+		getState(key) {
+			return this.states.get(key);
+		}
+		/** 获取或创建字体状态；已存在时按传入项更新 baseUrl / outType / 回调 */
+		ensureState(key, fontName, options) {
+			let state = this.states.get(key);
+			if (!state) {
+				state = {
+					fontName,
+					baseUrl: options.baseUrl,
+					outType: options.outType,
+					loadedChars: /* @__PURE__ */ new Set(),
+					failedChars: /* @__PURE__ */ new Set(),
+					pendingChars: /* @__PURE__ */ new Set(),
+					onLoadChunk: options.onLoadChunk ?? null
+				};
+				this.states.set(key, state);
+				return state;
+			}
+			state.baseUrl = options.baseUrl;
+			state.outType = options.outType;
+			if (options.onLoadChunk) state.onLoadChunk = options.onLoadChunk;
+			return state;
+		}
+		/** 删除状态（销毁时） */
+		removeState(key) {
+			this.states.delete(key);
+		}
+		/** 是否还有在途任务（请求中或注册中，ready() 轮询用） */
+		hasPending() {
+			if (this.flying > 0) return true;
+			for (const s of this.states.values()) if (s.pendingChars.size > 0) return true;
+			return false;
+		}
+		/** 清除失败记录（下次遇到这些字符会重新请求） */
+		retryFailed(key) {
+			this.states.get(key)?.failedChars.clear();
+		}
+		/**
+		* 提交一批文本：过滤出新字符并异步请求子集。
+		* 乐观标记 pending，成功移入 loaded、失败移入 failed。
+		*/
+		submitText(key, text) {
+			const state = this.states.get(key);
+			if (!state) return;
+			const newChars = [];
+			for (const ch of text) {
+				if (state.loadedChars.has(ch) || state.pendingChars.has(ch) || state.failedChars.has(ch)) continue;
+				/** 跳过控制字符 */
+				if (ch.charCodeAt(0) < 32) continue;
+				newChars.push(ch);
+				state.pendingChars.add(ch);
+			}
+			if (newChars.length === 0) return;
+			this.enqueue(() => this.loadChunk(state, newChars));
+		}
+		/** 执行一次子集请求 + 注册（在并发槽内完成） */
+		async loadChunk(state, chars) {
+			this.flying++;
+			try {
+				const text = chars.join("");
+				const result = await (this.config.provider ?? createHttpProvider(state.baseUrl))(state.fontName, text, state.outType);
+				/** 注册完成后才把字符记为已加载：注册失败可走 failedChars 重试路径 */
+				await state.onLoadChunk?.({
+					fontName: state.fontName,
+					chars,
+					url: result.url,
+					format: result.format
+				});
+				for (const ch of chars) {
+					state.loadedChars.add(ch);
+					state.pendingChars.delete(ch);
+				}
+			} catch {
+				for (const ch of chars) {
+					state.pendingChars.delete(ch);
+					state.failedChars.add(ch);
+				}
+			} finally {
+				this.flying--;
+			}
+		}
+		/** 并发池：超出 maxConcurrent 的任务排队等待 */
+		enqueue(fn) {
+			const run = () => {
+				this.active++;
+				fn().finally(() => {
+					this.active--;
+					if (this.queue.shift()) run();
+				});
+			};
+			if (this.active < this.config.maxConcurrent) run();
+			else this.queue.push(() => void 0);
+		}
+		setMaxConcurrent(n) {
+			this.config.maxConcurrent = Math.max(1, n | 0);
+		}
+	};
 
-  /**
-   * 默认在线 provider —— 构造 HTTP API URL
-   */
-  function httpProvider(baseUrl) {
-    return function (fontName, text, outType) {
-      var url = baseUrl + "/api?font=" + encodeURIComponent(fontName) + "&text=" + encodeURIComponent(text) + "&outType=" + outType;
-      return Promise.resolve({ url: url, format: outType === "woff2" ? "woff2" : "truetype" });
-    };
-  }
+//#endregion
+//#region src/css-mode.ts
+/**
+	* CSS 模式 —— 注入 @font-face + unicode-range 样式（DOM 场景）
+	*
+	* 与原 public/webfont-sdk.js 行为一致：
+	* - 片段就绪时注入 <style>，按 unicode-range 精确生效
+	* - 用 document.fonts.load 追踪完成以释放并发槽
+	* - loadFont（轮询）/ observeFont（MutationObserver）/ loadText（手动）三种触发器
+	*/
+	/** 跨域 baseUrl 注入 preconnect，首个片段延迟从 ~90ms 降到 ~30ms */
+	const preconnectedOrigins = /* @__PURE__ */ new Set();
+	function ensurePreconnect(baseUrl) {
+		let origin;
+		try {
+			origin = new URL(baseUrl, location.href).origin;
+		} catch {
+			return;
+		}
+		if (origin === location.origin) return;
+		if (preconnectedOrigins.has(origin)) return;
+		preconnectedOrigins.add(origin);
+		const link = document.createElement("link");
+		link.rel = "preconnect";
+		link.crossOrigin = "anonymous";
+		link.href = origin;
+		document.head.appendChild(link);
+	}
+	var WebFontCSSMode = class {
+		constructor(config = {}) {
+			this.injectedStyles = /* @__PURE__ */ new Map();
+			this.pollTasks = /* @__PURE__ */ new Map();
+			this.observeTasks = /* @__PURE__ */ new Map();
+			this.engine = new IncrementalEngine({
+				maxConcurrent: config.maxConcurrent ?? 4,
+				provider: config.provider ?? null
+			});
+		}
+		/** 底层引擎（FontFace 模式共用场景） */
+		getEngine() {
+			return this.engine;
+		}
+		/** 注入自定义子集提供者（离线裁剪等），null 恢复 HTTP */
+		setSubsetProvider(provider) {
+			this.engine.setProvider(provider);
+		}
+		setMaxConcurrent(n) {
+			this.engine.setMaxConcurrent(n);
+		}
+		makeOnLoadChunk(key, family) {
+			return (chunk) => {
+				const unicodeRanges = chunk.chars.map((c) => "U+" + c.codePointAt(0).toString(16).padStart(4, "0")).join(", ");
+				const style = document.createElement("style");
+				style.textContent = `@font-face {
+  font-family: "${family}";\n  src: url("${chunk.url}") format("${chunk.format}");\n  unicode-range: ` + unicodeRanges + ";\n}\n";
+				document.head.appendChild(style);
+				const list = this.injectedStyles.get(key) ?? [];
+				list.push(style);
+				this.injectedStyles.set(key, list);
+				/** 注入后等待字体真正可用于渲染，让 document.fonts 状态机推进（无 API 时定时器兑底） */
+				this.waitFontLoaded(family);
+			};
+		}
+		/** 用 document.fonts.load 触发加载与就绪状态推进（无 API 时定时器兑底） */
+		waitFontLoaded(family) {
+			if (document.fonts && document.fonts.load) document.fonts.load(`16px "${family}"`);
+			else setTimeout(() => {}, 3e3);
+		}
+		resolveDefaults(options) {
+			const baseUrl = options.baseUrl ?? location.origin;
+			const family = options.family ?? options.fontName.replace(/\.[^.]+$/, "");
+			return {
+				baseUrl,
+				family,
+				key: IncrementalEngine.fontKey(options.fontName, family)
+			};
+		}
+		loadFont(options) {
+			const { baseUrl, family, key } = this.resolveDefaults(options);
+			ensurePreconnect(baseUrl);
+			this.engine.ensureState(key, options.fontName, {
+				baseUrl,
+				outType: options.outType ?? "woff2",
+				onLoadChunk: this.makeOnLoadChunk(key, family)
+			});
+			if (this.pollTasks.has(options.selector)) clearInterval(this.pollTasks.get(options.selector).timer);
+			let applied = false;
+			const tick = () => {
+				const charSet = collectChars(options.selector);
+				const had = this.engine.getState(key);
+				this.engine.submitText(key, charsToString(charSet));
+				if (had && !applied) {
+					applied = true;
+					applyFamily(options.selector, family);
+				}
+			};
+			tick();
+			const timer = setInterval(tick, options.interval ?? 1e3);
+			this.pollTasks.set(options.selector, { timer });
+		}
+		observeFont(options) {
+			const { baseUrl, family, key } = this.resolveDefaults(options);
+			ensurePreconnect(baseUrl);
+			this.engine.ensureState(key, options.fontName, {
+				baseUrl,
+				outType: options.outType ?? "woff2",
+				onLoadChunk: this.makeOnLoadChunk(key, family)
+			});
+			if (this.observeTasks.has(options.selector)) this.observeTasks.get(options.selector).dispose();
+			let applied = false;
+			let debounceTimer = null;
+			const doLoad = () => {
+				const had = this.engine.getState(key);
+				this.engine.submitText(key, charsToString(collectChars(options.selector)));
+				if (had && !applied) {
+					applied = true;
+					applyFamily(options.selector, family);
+				}
+			};
+			const debouncedLoad = () => {
+				if (debounceTimer) clearTimeout(debounceTimer);
+				debounceTimer = setTimeout(doLoad, options.debounceMs ?? 50);
+			};
+			const observer = new MutationObserver((mutations) => {
+				for (const m of mutations) if (m.type === "childList" || m.type === "characterData") {
+					debouncedLoad();
+					return;
+				}
+			});
+			const inputHandler = () => debouncedLoad();
+			const elements = document.querySelectorAll(options.selector);
+			observer.observe(document.body ?? document.documentElement, {
+				childList: true,
+				subtree: true,
+				characterData: true
+			});
+			for (const el of elements) if (el.tagName === "INPUT" || el.tagName === "TEXTAREA") el.addEventListener("input", inputHandler);
+			doLoad();
+			let disposed = false;
+			const task = { dispose: () => {
+				if (disposed) return;
+				disposed = true;
+				observer.disconnect();
+				for (const el of elements) if (el.tagName === "INPUT" || el.tagName === "TEXTAREA") el.removeEventListener("input", inputHandler);
+				if (debounceTimer) clearTimeout(debounceTimer);
+				this.observeTasks.delete(options.selector);
+			} };
+			this.observeTasks.set(options.selector, task);
+			return task;
+		}
+		loadText(options) {
+			const { baseUrl, family, key } = this.resolveDefaults(options);
+			ensurePreconnect(baseUrl);
+			this.engine.ensureState(key, options.fontName, {
+				baseUrl,
+				outType: options.outType ?? "woff2",
+				onLoadChunk: this.makeOnLoadChunk(key, family)
+			});
+			this.engine.submitText(key, options.text);
+			let disposed = false;
+			return {
+				update: (text) => {
+					if (disposed) return;
+					this.engine.submitText(key, text);
+				},
+				dispose: () => {
+					if (disposed) return;
+					disposed = true;
+					/** 移除该 loader 注入的所有 @font-face 样式，避免同名 family 的 CSS 优先级冲突 */
+					const styles = this.injectedStyles.get(key);
+					if (styles) {
+						for (const s of styles) s.remove();
+						this.injectedStyles.delete(key);
+					}
+					this.engine.removeState(key);
+				}
+			};
+		}
+		/** 清理所有任务与注入样式（页面卸载时调用） */
+		disposeAll() {
+			for (const { timer } of this.pollTasks.values()) clearInterval(timer);
+			for (const task of this.observeTasks.values()) task.dispose();
+			this.pollTasks.clear();
+			this.observeTasks.clear();
+			for (const styles of this.injectedStyles.values()) for (const s of styles) s.remove();
+			this.injectedStyles.clear();
+		}
+		static {
+			this.createHttpProvider = createHttpProvider;
+		}
+	};
+	/** 收集选择器匹配元素中的所有字符 */
+	function collectChars(selector) {
+		const charSet = /* @__PURE__ */ new Set();
+		const elements = document.querySelectorAll(selector);
+		for (const el of elements) {
+			const text = getText(el);
+			for (const ch of text) charSet.add(ch);
+		}
+		return charSet;
+	}
+	function charsToString(set) {
+		let s = "";
+		for (const c of set) s += c;
+		return s;
+	}
+	function getText(el) {
+		const tag = el.tagName;
+		if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") {
+			const input = el;
+			/** 同时收集 value 和 placeholder，确保占位文本的字体也被加载 */
+			return (input.value ?? "") + (input.placeholder ?? "");
+		}
+		return el.textContent ?? "";
+	}
+	/** 应用字体到元素 */
+	function applyFamily(selector, family) {
+		const elements = document.querySelectorAll(selector);
+		for (const el of elements) el.style.fontFamily = `"${family}", sans-serif`;
+	}
 
-  /**
-   * 设置最大并发请求数
-   *
-   * @param {number} n - 并发数，最小 1
-   */
-  function setMaxConcurrent(n) {
-    maxConcurrent = Math.max(1, n | 0);
-  }
+//#endregion
+//#region src/fontface-mode.ts
+/**
+	* FontFace 模式 —— Canvas 场景（leafer / fabric / konva / 原生 canvas）
+	*
+	* 与 CSS 模式的差异：不注入 <style>，直接 fetch 字体 buffer 用 FontFace API 注册，
+	* 且带 unicodeRange（多个片段同名注册时按字符精确生效，避免覆盖）。
+	* 注册完成后回调 onReady，由调用方触发画布重绘。
+	*/
+	var WebFontFontFaceMode = class {
+		constructor(config = {}) {
+			this.defaultBaseUrl = "https://webfont.shenzilong.cn";
+			this.faces = /* @__PURE__ */ new Map();
+			this.engine = new IncrementalEngine({
+				maxConcurrent: config.maxConcurrent ?? 4,
+				provider: config.provider ?? null
+			});
+			if (config.baseUrl) this.defaultBaseUrl = config.baseUrl;
+		}
+		getEngine() {
+			return this.engine;
+		}
+		setSubsetProvider(provider) {
+			this.engine.setProvider(provider);
+		}
+		/**
+		* 创建（或复用）一个字体的 FontFace 增量加载器
+		*
+		* @param options 字体选项
+		* @param onChunk 单个片段注册完成后回调（调用方在此触发画布重绘）
+		*/
+		loadFontFace(options, onChunk) {
+			const fontName = options.fontName;
+			const family = options.family ?? fontName.replace(/\.(ttf|otf|woff2?|ttc)$/i, "").trim();
+			const key = IncrementalEngine.fontKey(fontName, family);
+			const baseUrl = options.baseUrl ?? this.defaultBaseUrl;
+			const handleChunk = async (chunk) => {
+				const unicodeRanges = chunk.chars.map((c) => "U+" + c.codePointAt(0).toString(16).padStart(4, "0")).join(", ");
+				const buffer = await (await fetch(chunk.url)).arrayBuffer();
+				const face = new FontFace(family, buffer, { unicodeRange: unicodeRanges });
+				await face.load();
+				document.fonts.add(face);
+				const list = this.faces.get(family) ?? [];
+				list.push(face);
+				this.faces.set(family, list);
+				onChunk?.(chunk);
+			};
+			this.engine.ensureState(key, fontName, {
+				baseUrl,
+				outType: options.outType ?? "woff2",
+				onLoadChunk: (chunk) => handleChunk(chunk)
+			});
+			let disposed = false;
+			return {
+				update: (text) => {
+					if (disposed) return;
+					this.engine.submitText(key, text);
+				},
+				isPending: () => {
+					const s = this.engine.getState(key);
+					return !!s && s.pendingChars.size > 0;
+				},
+				retryFailed: () => this.engine.retryFailed(key),
+				dispose: () => {
+					if (disposed) return;
+					disposed = true;
+					this.engine.removeState(key);
+					/** FontFace 不主动删除：其他画布可能还在用同 family（保守策略） */
+				}
+			};
+		}
+		/** 是否有片段在请求/注册中（导出图片前轮询用） */
+		hasPending() {
+			return this.engine.hasPending();
+		}
+		/** 等待所有 pending 片段就绪（导出图片前调用） */
+		async ready() {
+			while (this.hasPending()) await new Promise((r) => setTimeout(r, 50));
+		}
+	};
 
-  /**
-   * 通过并发池执行字体加载
-   *
-   * @param {function} fn - 实际执行 loadChars 的函数
-   */
-  function enqueueFontLoad(fn) {
-    if (activeFontLoads < maxConcurrent) {
-      activeFontLoads++;
-      fn(doneFontLoad);
-    } else {
-      fontLoadQueue.push(fn);
-    }
-  }
+//#endregion
+//#region src/index.ts
+/**
+	* webfont-sdk —— Web 字体按需加载 SDK（不限中文：任何大字体都能按字符增量加载）
+	*
+	* 单包两种模式，共用同一增量引擎（去重 / 并发池 / 失败记忆 / provider 抽象）：
+	* - `WebFont`（CSS 模式）：DOM 场景，注入 @font-face + unicode-range，API 与
+	*   原线上 webfont-sdk.js 完全兼容（loadFont / observeFont / loadText / disposeAll /
+	*   setMaxConcurrent / setSubsetProvider）
+	* - `WebFontCanvas`（FontFace 模式）：Canvas 场景（leafer / fabric / 原生 canvas），
+	*   fetch buffer + FontFace(unicodeRange) 注册，onChunk 回调触发画布重绘
+	*/
+	/**
+	* CSS 模式默认实例 —— 与旧 webfont-sdk.js 的全局 WebFont 对象 API 兼容
+	*/
+	const WebFont = new WebFontCSSMode();
+	/** FontFace 模式默认实例（Canvas 场景） */
+	const WebFontCanvas = new WebFontFontFaceMode();
 
-  /** 一个加载完成，唤醒队列中下一个 */
-  function doneFontLoad() {
-    activeFontLoads--;
-    if (fontLoadQueue.length > 0 && activeFontLoads < maxConcurrent) {
-      var next = fontLoadQueue.shift();
-      activeFontLoads++;
-      next(doneFontLoad);
-    }
-  }
+//#endregion
+//#region src/iife.ts
+/**
+	* IIFE 入口 —— 构建为 public/webfont-sdk.js（script 标签直接引入）
+	*
+	* 全局暴露 WebFont，API 与历史版本完全兼容：
+	*   WebFont.loadFont / observeFont / loadText / disposeAll /
+	*   setMaxConcurrent / setSubsetProvider
+	* 另暴露 WebFont.canvas（FontFace 模式，高级场景可用）。
+	*/
+	const g = globalThis;
+	g.WebFont = WebFont;
+	g.WebFontCanvas = WebFontCanvas;
+	WebFont.canvas = WebFontCanvas;
 
-  /**
-   * 生成 fontKey，同一字体+family 归入同一组
-   */
-  function fontKey(fontName, family) {
-    return fontName + "|" + family;
-  }
-
-  /**
-   * 记录已注入 preconnect 的 origin，避免重复注入
-   *
-   * 跨域字体请求首次握手要付出 ~60ms（TCP+TLS）。
-   * preconnect 让浏览器在首个字体请求发出前就提前完成握手，
-   * 把首个增量片段的延迟从 ~90ms 降到 ~30ms（只剩 1 个 RTT + 服务端处理）。
-   * 同源时 location.origin === baseUrl，无需 preconnect。
-   */
-  var preconnectedOrigins = {};
-
-  /**
-   * 对跨域 baseUrl 注入 <link rel="preconnect">，提前建立 TCP+TLS 连接
-   *
-   * 仅在跨域且尚未注入时执行一次。浏览器会自行管理连接的生命周期，
-   * 即便字体请求迟迟不来，preconnect 的开销也极小（空闲握手）。
-   */
-  function ensurePreconnect(baseUrl) {
-    var origin;
-    try {
-      origin = new URL(baseUrl, location.href).origin;
-    } catch (e) {
-      return;
-    }
-    if (origin === location.origin) return;
-    if (preconnectedOrigins[origin]) return;
-    preconnectedOrigins[origin] = true;
-
-    var link = document.createElement("link");
-    link.rel = "preconnect";
-    link.href = origin;
-    /** crossorigin 必需：字体资源默认匿名请求，preconnect 需匹配否则连接无法复用 */
-    link.crossOrigin = "anonymous";
-    document.head.appendChild(link);
-  }
-
-  /**
-   * 获取或创建对应 fontKey 的加载器
-   */
-  function getLoader(fontName, baseUrl, family, outType) {
-    var key = fontKey(fontName, family);
-    if (!loaders[key]) {
-      ensurePreconnect(baseUrl);
-      loaders[key] = {
-        loadedChars: {},
-        injectedStyles: [],
-        applied: false,
-        fontName: fontName,
-        family: family,
-        baseUrl: baseUrl,
-        outType: outType || "woff2"
-      };
-    }
-    return loaders[key];
-  }
-
-  /**
-   * 差量加载新字符，生成 unicode-range CSS 并注入
-   *
-   * 通过并发队列控制：同时挂载的 @font-face 不超过 maxConcurrent，
-   * 避免页面同时加载大量字体时打满服务端子集化队列。
-   * @param {Object} loader - getLoader 返回的加载器对象
-   * @param {string[]} newChars - 待加载的新字符数组
-   */
-  function loadChars(loader, newChars) {
-    if (newChars.length === 0) return;
-
-    enqueueFontLoad(function (done) {
-      var fontName = loader.fontName;
-      var family = loader.family;
-      var baseUrl = loader.baseUrl;
-      var loadedChars = loader.loadedChars;
-
-      var text = newChars.join("");
-      var outType = loader.outType || "woff2";
-      var unicodeRanges = newChars
-        .map(function (c) { return "U+" + c.codePointAt(0).toString(16).padStart(4, "0"); })
-        .join(", ");
-
-      /**
-       * 通过 subsetProvider 获取字体片段 URL。
-       * 默认走 HTTP API；离线模式下由本地裁剪 provider 提供 blob: URL。
-       */
-      var provider = subsetProvider || httpProvider(baseUrl);
-      provider(fontName, text, outType).then(function (result) {
-        var style = document.createElement("style");
-        style.textContent =
-          '@font-face {\n' +
-          '  font-family: "' + family + '";\n' +
-          '  src: url("' + result.url + '") format("' + result.format + '");\n' +
-          '  unicode-range: ' + unicodeRanges + ';\n' +
-          '}\n';
-        document.head.appendChild(style);
-        loader.injectedStyles.push(style);
-
-        /**
-         * 释放并发槽位的策略：
-         *
-         * 优先用 FontFaceSet API 精确追踪字体加载完成；
-         * 不可用时退化为 setTimeout（3 秒兜底窗口，覆盖绝大多数裁剪+传输时间）。
-         */
-        if (document.fonts && document.fonts.load) {
-          document.fonts.load("16px \"" + family + "\"").then(done, function () { done(); });
-        } else {
-          setTimeout(done, 3000);
-        }
-      }).catch(function () {
-        done();
-      });
-    });
-  }
-
-  /**
-   * 从字符集中过滤出未加载的新字符，标记为已加载，并生成 CSS
-   * @param {Object} loader - getLoader 返回的加载器对象
-   * @param {Object.<string,boolean>} charSet - 待检查的字符集
-   * @returns {boolean} 是否有新字符被加载
-   */
-  function processChars(loader, charSet) {
-    var loadedChars = loader.loadedChars;
-    var newChars = [];
-    for (var c in charSet) {
-      if (!loadedChars[c]) {
-        loadedChars[c] = true;
-        newChars.push(c);
-      }
-    }
-    loadChars(loader, newChars);
-    return newChars.length > 0;
-  }
-
-  /**
-   * 从字符串中过滤出未加载的新字符，标记为已加载，并生成 CSS
-   * @param {Object} loader - getLoader 返回的加载器对象
-   * @param {string} text - 待检查的文本
-   * @returns {boolean} 是否有新字符被加载
-   */
-  function processText(loader, text) {
-    var loadedChars = loader.loadedChars;
-    var newChars = [];
-    for (var i = 0; i < text.length; i++) {
-      var c = text[i];
-      if (!loadedChars[c]) {
-        loadedChars[c] = true;
-        newChars.push(c);
-      }
-    }
-    loadChars(loader, newChars);
-    return newChars.length > 0;
-  }
-
-  /**
-   * 销毁加载器及其所有注入的样式
-   */
-  function destroyLoader(key) {
-    var loader = loaders[key];
-    if (!loader) return;
-    for (var i = 0; i < loader.injectedStyles.length; i++) {
-      loader.injectedStyles[i].remove();
-    }
-    delete loaders[key];
-  }
-
-  /* ============================================================
-   * 辅助函数
-   * ============================================================ */
-
-  /**
-   * 获取元素的文本内容
-   */
-  function getText(el) {
-    var tag = el.tagName;
-    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") {
-      /** 同时收集 value 和 placeholder，确保占位文本的字体也被加载 */
-      var val = el.value || "";
-      var ph = el.placeholder || "";
-      return val + ph;
-    }
-    return el.textContent || "";
-  }
-
-  /**
-   * 收集选择器匹配元素中的所有字符
-   */
-  function collectChars(selector) {
-    var charSet = {};
-    var elements = document.querySelectorAll(selector);
-    for (var i = 0; i < elements.length; i++) {
-      var text = getText(elements[i]);
-      for (var j = 0; j < text.length; j++) {
-        charSet[text[j]] = true;
-      }
-    }
-    return charSet;
-  }
-
-  /**
-   * 应用字体到元素
-   */
-  function applyFamily(selector, family) {
-    var elements = document.querySelectorAll(selector);
-    for (var i = 0; i < elements.length; i++) {
-      elements[i].style.fontFamily = '"' + family + '", sans-serif';
-    }
-  }
-
-  /* ============================================================
-   * 任务管理 — 各触发器的清理
-   * ============================================================ */
-
-  /** 按 selector 索引的 loadFont 任务 */
-  var pollTasks = {};
-
-  /** 按选择器索引的 observeFont 任务 */
-  var observeTasks = {};
-
-  /* ============================================================
-   * 1. loadFont — 定时器轮询模式
-   * ============================================================ */
-
-  /**
-   * @param {Object} options
-   * @param {string} options.fontName
-   * @param {string} options.selector
-   * @param {string} [options.baseUrl]
-   * @param {string} [options.family]
-   * @param {number} [options.interval=1000] - 轮询间隔（ms）
-   */
-  function loadFont(options) {
-    var selector = options.selector;
-    var fontName = options.fontName;
-    var baseUrl = options.baseUrl || location.origin;
-    var family = options.family || fontName.replace(/\.[^.]+$/, "");
-    var interval = options.interval || 1000;
-
-    /* 清理同一选择器的旧任务 */
-    if (pollTasks[selector]) {
-      clearInterval(pollTasks[selector].timer);
-    }
-
-    var outType = options.outType || "woff2";
-    var loader = getLoader(fontName, baseUrl, family, outType);
-    var applied = false;
-
-    function tick() {
-      var current = collectChars(selector);
-      if (processChars(loader, current) && !applied) {
-        applied = true;
-        applyFamily(selector, family);
-      }
-    }
-
-    tick();
-    var timer = setInterval(tick, interval);
-    pollTasks[selector] = { timer: timer };
-  }
-
-  /* ============================================================
-   * 2. observeFont — MutationObserver 事件驱动模式
-   * ============================================================ */
-
-  /**
-   * @param {Object} options
-   * @param {string} options.fontName
-   * @param {string} options.selector
-   * @param {string} [options.baseUrl]
-   * @param {string} [options.family]
-   * @param {number} [options.debounceMs=50] - 防抖间隔（ms）
-   * @returns {{ dispose: function }}
-   */
-  function observeFont(options) {
-    var selector = options.selector;
-    var fontName = options.fontName;
-    var baseUrl = options.baseUrl || location.origin;
-    var family = options.family || fontName.replace(/\.[^.]+$/, "");
-    var debounceMs = options.debounceMs || 50;
-
-    /* 清理同一选择器的旧任务 */
-    if (observeTasks[selector]) {
-      observeTasks[selector].dispose();
-    }
-
-    var outType = options.outType || "woff2";
-    var loader = getLoader(fontName, baseUrl, family, outType);
-    var applied = false;
-    var debounceTimer = null;
-
-    function doLoad() {
-      var current = collectChars(selector);
-      if (processChars(loader, current) && !applied) {
-        applied = true;
-        applyFamily(selector, family);
-      }
-    }
-
-    function debouncedLoad() {
-      if (debounceTimer) clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(doLoad, debounceMs);
-    }
-
-    var observer = new MutationObserver(function (mutations) {
-      for (var i = 0; i < mutations.length; i++) {
-        if (mutations[i].type === "childList" || mutations[i].type === "characterData") {
-          debouncedLoad();
-          return;
-        }
-      }
-    });
-
-    var inputHandler = function () { debouncedLoad(); };
-
-    var elements = document.querySelectorAll(selector);
-    observer.observe(document.body || document.documentElement, {
-      childList: true,
-      subtree: true,
-      characterData: true,
-    });
-    for (var i = 0; i < elements.length; i++) {
-      var el = elements[i];
-      if (el.tagName === "INPUT" || el.tagName === "TEXTAREA") {
-        el.addEventListener("input", inputHandler);
-      }
-    }
-
-    doLoad();
-
-    var disposed = false;
-
-    var task = {
-      dispose: function () {
-        if (disposed) return;
-        disposed = true;
-        observer.disconnect();
-        for (var j = 0; j < elements.length; j++) {
-          var el2 = elements[j];
-          if (el2.tagName === "INPUT" || el2.tagName === "TEXTAREA") {
-            el2.removeEventListener("input", inputHandler);
-          }
-        }
-        if (debounceTimer) clearTimeout(debounceTimer);
-        delete observeTasks[selector];
-      }
-    };
-
-    observeTasks[selector] = task;
-    return task;
-  }
-
-  /* ============================================================
-   * 3. loadText — 直接传文本模式
-   * ============================================================ */
-
-  /**
-   * @param {Object} options
-   * @param {string} options.fontName
-   * @param {string} options.text
-   * @param {string} [options.baseUrl]
-   * @param {string} [options.family]
-   * @returns {{ update: function(string): void, dispose: function(): void }}
-   */
-  function loadText(options) {
-    var fontName = options.fontName;
-    var baseUrl = options.baseUrl || location.origin;
-    var family = options.family || fontName.replace(/\.[^.]+$/, "");
-
-    var outType = options.outType || "woff2";
-    var loader = getLoader(fontName, baseUrl, family, outType);
-
-    processText(loader, options.text);
-
-    var disposed = false;
-
-    return {
-      update: function (text) {
-        if (disposed) return;
-        processText(loader, text);
-      },
-      dispose: function () {
-        if (disposed) return;
-        disposed = true;
-        /** 移除该 loader 注入的所有 @font-face 样式，避免同名 family 的 CSS 优先级冲突 */
-        destroyLoader(fontKey(fontName, family));
-      }
-    };
-  }
-
-  /* ============================================================
-   * 公共 API
-   * ============================================================ */
-
-  /**
-   * 清理所有任务和加载器（页面卸载时调用）
-   */
-  function disposeAll() {
-    for (var sel in pollTasks) {
-      clearInterval(pollTasks[sel].timer);
-    }
-    for (var oid in observeTasks) {
-      observeTasks[oid].dispose();
-    }
-    pollTasks = {};
-    observeTasks = {};
-
-    for (var key in loaders) {
-      destroyLoader(key);
-    }
-  }
-
-  /**
-   * 注入自定义子集化提供者（离线裁剪等场景）
-   *
-   * provider 签名：async function(fontName, text, outType) -> { url: string, format: string }
-   * - 离线场景：provider 调用本地裁剪函数，生成 blob: URL 返回
-   * - 传 null 恢复默认 HTTP 行为
-   */
-  function setSubsetProvider(provider) {
-    subsetProvider = provider;
-  }
-
-  return {
-    loadFont: loadFont,
-    observeFont: observeFont,
-    loadText: loadText,
-    disposeAll: disposeAll,
-    /** 设置客户端最大并发字体请求数（默认 4） */
-    setMaxConcurrent: setMaxConcurrent,
-    /** 注入自定义子集化提供者（离线裁剪等场景） */
-    setSubsetProvider: setSubsetProvider
-  };
+//#endregion
 })();

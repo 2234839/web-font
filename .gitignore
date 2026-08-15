@@ -36,3 +36,7 @@ dist_backend_node
 verify_font_baseline
 benchmark_results
 .claude
+# packages 构建产物与 demo vendor（可重建/可下载，不入库）
+packages/*/dist
+packages/*/dist-iife
+packages/leafer-x-webfont/demo/vendor

@@ -1,0 +1,39 @@
+{
+  "name": "webfont-sdk",
+  "version": "0.1.0",
+  "description": "Web 字体按需加载 SDK —— 只加载实际用到的字符，增量去重、无闪烁，支持 DOM(CSS) 与 Canvas(FontFace) 两种模式",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "development": "./src/index.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsdown && node scripts/sync-public.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "webfont",
+    "font-subset",
+    "font-face",
+    "incremental-font",
+    "canvas-font",
+    "chinese-font"
+  ],
+  "repository": "https://github.com/2234839/web-font",
+  "license": "MIT",
+  "devDependencies": {
+    "tsdown": "^0.22.13",
+    "typescript": "^7.0.2"
+  }
+}
