@@ -1,10 +1,10 @@
-/** 首先加载 fs 适配层，必须在 main() 之前完成！按运行时选择实现（top-level await 保证注册先于一切使用） */
-if (typeof __RUNTIME__ !== "undefined" && __RUNTIME__ === "llrt") {
-  await import("./server/llrt");
-} else {
-  /** Node.js（tsx 开发 / tsdown define "node" 构建）走 node 适配器 */
-  await import("./server/node");
-}
+/**
+ * 首先加载 fs 适配层，必须在所有其他 import 之前！
+ * 静态 import 依赖 ESM hoisting：无论源码书写顺序，llrt/node 适配器都会最先执行
+ * （implInterface 直接给 interface.ts 的导出变量赋值，注册必须先于任何使用）。
+ * 不能用 top-level await import —— tsdown 的 CJS 产物不支持。
+ */
+import "./server/llrt_lr";
 
 import { mimeTypes } from "./server/mime_type";
 import type { cMiddleware } from "./server/req_res";
