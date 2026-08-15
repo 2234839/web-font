@@ -48,16 +48,16 @@
 <script src="https://cdn.jsdelivr.net/npm/leafer-ui@2.2.9/dist/web.min.js"></script>
 <!-- leafer 导出 PNG 需要额外插件（画布转 blob） -->
 <script src="https://cdn.jsdelivr.net/npm/@leafer-in/export@2.2.9/dist/export.min.js"></script>
-<!-- demo 引插件构建产物（dist ESM），webfont-sdk 由相对路径 importmap 解析到同级包的 dist -->
+<!-- demo 全 CDN 化：leafer-ui / export 插件走 jsDelivr IIFE，插件与 SDK 走 jsDelivr ESM（importmap 解析裸导入 webfont-sdk） -->
 <script type="importmap">
   {
     "imports": {
-      "webfont-sdk": "../../webfont-sdk/dist/index.js"
+      "webfont-sdk": "https://cdn.jsdelivr.net/npm/webfont-sdk@0.1.0/dist/index.js"
     }
   }
 </script>
 <script type="module">
-  import { WebFontPlugin } from '../dist/index.js'
+  import { WebFontPlugin } from 'https://cdn.jsdelivr.net/npm/leafer-x-webfont@0.1.0/dist/index.js'
 
   const { Leafer, Text, Rect, Ellipse, Image } = LeaferUI
   const status = document.getElementById('status')
@@ -72,7 +72,10 @@
   ]
 
   const leafer = new Leafer({ view: 'canvas-host', fill: '#fafaf9' })
-  const webfont = new WebFontPlugin(leafer, { debug: true, baseUrl: 'http://localhost:8087' })
+  /** 字体子集化服务：本地开发连本地后端，任何部署环境（主站/GitHub Pages）一律走线上服务（后端 CORS 全开） */
+  const isDev = location.hostname === 'localhost' || location.hostname === '127.0.0.1'
+  const fontApi = isDev ? 'http://localhost:8087' : 'https://webfont.shenzilong.cn'
+  const webfont = new WebFontPlugin(leafer, { debug: true, baseUrl: fontApi })
 
   /* ---------- 海报场景 ---------- */
   const bg = new Rect({ x: 0, y: 0, width: 900, height: 480, fill: { type: 'linear', from: { x: 0, y: 0 }, to: { x: 1, y: 1 }, stops: [{ offset: 0, color: '#fef3c7' }, { offset: 1, color: '#fde68a' }] } })
