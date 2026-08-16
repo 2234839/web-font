@@ -1,0 +1,47 @@
+{
+  "name": "uni-webfont",
+  "version": "0.1.0",
+  "description": "uni-app 字体按需加载 —— 小程序/H5/App 任意中文字体，只加载页面实际用到的字符（10 字 ≈ 10KB），突破主包 2MB 与字体整包 10MB+ 限制",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "development": "./src/index.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "pnpm --filter webfont-sdk build && tsdown && node scripts/sync-uni-modules.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "uni-app",
+    "webfont",
+    "font-subset",
+    "loadFontFace",
+    "chinese-font",
+    "miniprogram"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/2234839/web-font.git",
+    "directory": "packages/uni-webfont"
+  },
+  "author": "崮生（子虚）",
+  "license": "MIT",
+  "dependencies": {
+    "webfont-sdk": "workspace:*"
+  },
+  "devDependencies": {
+    "tsdown": "^0.22.14",
+    "typescript": "^7.0.2"
+  }
+}

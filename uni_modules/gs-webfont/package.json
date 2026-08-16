@@ -1,0 +1,86 @@
+{
+  "id": "gs-webfont",
+  "version": "0.1.0",
+  "name": "字体按需加载（中文字体子集化）",
+  "description": "任意中文字体按实际字符动态裁剪加载：10 字 ≈ 10KB。突破小程序 2MB 主包限制，无需构建期裁字、无需整包下载。支持微信/支付宝/百度/抖音/QQ 小程序、H5、App。",
+  "keywords": [
+    "字体",
+    "webfont",
+    "子集化",
+    "loadFontFace",
+    "中文字体",
+    "小程序字体"
+  ],
+  "dcloudext": {
+    "type": "sdk",
+    "sale": {
+      "regular": {
+        "price": "0.00"
+      },
+      "sourcecode": {
+        "price": "0.00"
+      }
+    },
+    "contact": {
+      "qq": ""
+    },
+    "declaration": {
+      "ads": "无",
+      "data": "插件运行时会向子集化服务（webfont.shenzilong.cn）请求字体片段，仅传输待渲染字符与字体名，不含用户隐私数据。支持私有部署后零外部请求。",
+      "permissions": "无"
+    },
+    "npmurl": "https://www.npmjs.com/package/uni-webfont"
+  },
+  "uni_modules": {
+    "dependencies": [],
+    "uni-ext-api": {},
+    "encrypt": [],
+    "platforms": {
+      "cloud": {
+        "tcb": "y",
+        "aliyun": "y",
+        "alipay": "n"
+      },
+      "client": {
+        "Vue": {
+          "vue2": "y",
+          "vue3": "y"
+        },
+        "App": {
+          "app-vue": "y",
+          "app-nvue": "n",
+          "app-uvue": "y"
+        },
+        "小程序": {
+          "mp-weixin": "y",
+          "mp-alipay": "y",
+          "mp-baidu": "y",
+          "mp-toutiao": "y",
+          "mp-lark": "n",
+          "mp-qq": "y",
+          "mp-kuaishou": "n",
+          "mp-jd": "n",
+          "mp-360": "n"
+        },
+        "H5-mobile": {
+          "Safari": "y",
+          "Android Browser": "y",
+          "微信浏览器(Android)": "y",
+          "QQ浏览器(Android)": "y"
+        },
+        "H5-pc": {
+          "Chrome": "y",
+          "IE": "n",
+          "Edge": "y",
+          "Firefox": "y",
+          "Safari": "y"
+        },
+        "小程序/云厂商": {},
+        "快应用": {
+          "华为": "n",
+          "联盟": "n"
+        }
+      }
+    }
+  }
+}

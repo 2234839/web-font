@@ -16,6 +16,11 @@
       "types": "./dist/api.d.ts",
       "development": "./src/api.ts",
       "import": "./dist/api.js"
+    },
+    "./engine": {
+      "types": "./dist/engine.d.ts",
+      "development": "./src/engine.ts",
+      "import": "./dist/engine.js"
     }
   },
   "files": [

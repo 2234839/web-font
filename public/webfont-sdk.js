@@ -70,7 +70,8 @@
 					loadedChars: /* @__PURE__ */ new Set(),
 					failedChars: /* @__PURE__ */ new Set(),
 					pendingChars: /* @__PURE__ */ new Set(),
-					onLoadChunk: options.onLoadChunk ?? null
+					onLoadChunk: options.onLoadChunk ?? null,
+					provider: options.provider ?? null
 				};
 				this.states.set(key, state);
 				return state;
@@ -78,6 +79,7 @@
 			state.baseUrl = options.baseUrl;
 			state.outType = options.outType;
 			if (options.onLoadChunk) state.onLoadChunk = options.onLoadChunk;
+			if (options.provider !== void 0) state.provider = options.provider;
 			return state;
 		}
 		/** 删除状态（销毁时） */
@@ -97,8 +99,10 @@
 		/**
 		* 提交一批文本：过滤出新字符并异步请求子集。
 		* 乐观标记 pending，成功移入 loaded、失败移入 failed。
+		* 超过 maxCharsPerChunk 时自动分批（uni 小程序 loadFontFace 无 unicode-range，
+		* 单次需携带全量累积文本，长文本按批切分避免 URL 超限）。
 		*/
-		submitText(key, text) {
+		submitText(key, text, maxCharsPerChunk = Infinity) {
 			const state = this.states.get(key);
 			if (!state) return;
 			const newChars = [];
@@ -110,14 +114,17 @@
 				state.pendingChars.add(ch);
 			}
 			if (newChars.length === 0) return;
-			this.enqueue(() => this.loadChunk(state, newChars));
+			for (let i = 0; i < newChars.length; i += maxCharsPerChunk) {
+				const batch = newChars.slice(i, i + maxCharsPerChunk);
+				this.enqueue(() => this.loadChunk(state, batch));
+			}
 		}
 		/** 执行一次子集请求 + 注册（在并发槽内完成） */
 		async loadChunk(state, chars) {
 			this.flying++;
 			try {
 				const text = chars.join("");
-				const result = await (this.config.provider ?? createHttpProvider(state.baseUrl))(state.fontName, text, state.outType);
+				const result = await (state.provider ?? this.config.provider ?? createHttpProvider(state.baseUrl))(state.fontName, text, state.outType);
 				/** 注册完成后才把字符记为已加载：注册失败可走 failedChars 重试路径 */
 				await state.onLoadChunk?.({
 					fontName: state.fontName,
@@ -140,15 +147,21 @@
 		}
 		/** 并发池：超出 maxConcurrent 的任务排队等待 */
 		enqueue(fn) {
-			const run = () => {
-				this.active++;
-				fn().finally(() => {
-					this.active--;
-					if (this.queue.shift()) run();
-				});
-			};
-			if (this.active < this.config.maxConcurrent) run();
-			else this.queue.push(() => void 0);
+			if (this.active < this.config.maxConcurrent) this.execute(fn);
+			else this.queue.push(fn);
+		}
+		/**
+		* 执行一个任务，完成后从队列取下一个。
+		* 注意：这里必须直接调用 next（fn），不能递归调用外层 run 闭包——
+		* 那样会把下一个任务替换成本次任务重跑（闭包捕获），队列真身丢失
+		*/
+		execute(fn) {
+			this.active++;
+			fn().finally(() => {
+				this.active--;
+				const next = this.queue.shift();
+				if (next) this.execute(next);
+			});
 		}
 		setMaxConcurrent(n) {
 			this.config.maxConcurrent = Math.max(1, n | 0);

@@ -86,6 +86,19 @@ importers:
         specifier: workspace:*
         version: link:../webfont-sdk
 
+  packages/uni-webfont:
+    dependencies:
+      webfont-sdk:
+        specifier: workspace:*
+        version: link:../webfont-sdk
+    devDependencies:
+      tsdown:
+        specifier: ^0.22.14
+        version: 0.22.14(typescript@7.0.2)(unrun@0.2.37)
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+
   packages/webfont-sdk:
     dependencies:
       '@napi-rs/canvas':
