@@ -39,6 +39,7 @@ benchmark_results
 # packages 构建产物与 demo vendor（可重建/可下载，不入库）
 packages/*/dist
 packages/*/dist-iife
+packages/*/dist-bundle
 packages/leafer-x-webfont/demo/vendor
 
 # leafer 插件类型声明的 vendor（从 npm @leafer-ui/interface 拷贝，体积大）
