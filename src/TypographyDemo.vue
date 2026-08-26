@@ -26,7 +26,7 @@ onMounted(() => {
     fontName: "令东齐伋复刻体.ttf",
     selector: ".demo-after .zh-font",
     family: "ZenSerif",
-    outType: "woff2",
+    outType: "ttf",
   })
 })
 </script>

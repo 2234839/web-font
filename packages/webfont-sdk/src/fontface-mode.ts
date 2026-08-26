@@ -15,7 +15,7 @@ export interface IFontFaceOptions {
   baseUrl?: string
   /** 注册用的 family 名，默认去掉扩展名 */
   family?: string
-  /** 输出格式，默认 woff2（Node 端自动降级 ttf，见 loadFontFace） */
+  /** 输出格式，默认 ttf：子集场景无 brotli 编码/解码开销，端到端更快（Node 端也强制 ttf，见 loadFontFace） */
   outType?: 'woff2' | 'ttf'
 }
 
@@ -80,8 +80,8 @@ export class WebFontFontFaceMode {
     const family = options.family ?? fontName.replace(/\.(ttf|otf|woff2?|ttc)$/i, '').trim()
     const key = IncrementalEngine.fontKey(fontName, family)
     const baseUrl = options.baseUrl ?? this.defaultBaseUrl
-    /** Node 模式统一用 ttf：woff2 注册返回 null 不可靠（探针实证） */
-    const outType = this.nodeEnv ? 'ttf' : options.outType ?? 'woff2'
+    /** Node 模式统一用 ttf：woff2 注册返回 null 不可靠（探针实证）；浏览器默认也是 ttf（见 IFontFaceOptions.outType 注释） */
+    const outType = this.nodeEnv ? 'ttf' : options.outType ?? 'ttf'
 
     /** 浏览器分支：FontFace + unicodeRange（多 chunk 同 family 按字符精确生效） */
     const handleChunkBrowser = async (chunk: LoadedChunk): Promise<void> => {

@@ -48,7 +48,7 @@ const blob = await leafer.export('png', { pixelRatio: 2 })
 ```ts
 new WebFontPlugin(leafer, {
   baseUrl: 'https://webfont.shenzilong.cn', // 自部署时改这里
-  outType: 'woff2',
+  outType: 'ttf',        // 默认 ttf：子集场景无 brotli 编码/解码开销，端到端更快；流量敏感可改 'woff2'
   debounceMs: 120,
   watch: true,        // 持续监听画布变化；静态海报导出可关掉
   debug: false,

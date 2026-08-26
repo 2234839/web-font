@@ -8,7 +8,7 @@ export async function handleGetConfig(req: Request, _res: Response) {
     res: jsonResponse({
       enableTempUpload,
       adminUploadEnabled: !!adminApiKey,
-      supportedOutTypes: ["woff2", "ttf"],
+      supportedOutTypes: ["ttf", "woff2"],
       /** 临时字体保留时限（秒） */
       tempRetentionSeconds,
       /** 字体子集化最大并发数 */

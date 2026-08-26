@@ -84,8 +84,8 @@ const messages = {
     outputFormat: "输出格式",
     woff2Label: "WOFF2 体积更小",
     ttfLabel: "TTF 速度更快",
-    woff2Desc: "约压缩 50%，适合生产",
-    ttfDesc: "无编码开销，适合开发",
+    woff2Desc: "体积小约 50%，流量敏感时用",
+    ttfDesc: "无编码/解码开销，端到端更快",
 
     // UploadSection.vue
     uploadTip: "支持 .ttf 和 .otf 格式，建议上传 .ttf 字体文件以获得最佳兼容性",
@@ -194,8 +194,8 @@ const messages = {
     outputFormat: "Format",
     woff2Label: "WOFF2 Smaller",
     ttfLabel: "TTF Faster",
-    woff2Desc: "~50% smaller, for production",
-    ttfDesc: "No encoding overhead, for dev",
+    woff2Desc: "~50% smaller, for traffic-sensitive cases",
+    ttfDesc: "No encode/decode overhead, faster end-to-end",
 
     // UploadSection.vue
     uploadTip: "Supports .ttf and .otf. .ttf recommended for best compatibility",

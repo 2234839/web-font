@@ -116,16 +116,16 @@ const allPreviewText = computed(() => {
 /** 子集字体 URL（合并所有预览文字） */
 const subsetFontUrl = computed(() => {
   if (!allPreviewText.value) return "";
-  return `${origin.value}/api?font=${encodeURIComponent(fontName.value)}&text=${encodeURIComponent(allPreviewText.value)}&outType=woff2`;
+  return `${origin.value}/api?font=${encodeURIComponent(fontName.value)}&text=${encodeURIComponent(allPreviewText.value)}&outType=ttf`;
 });
 
-/** 动态注入 @font-face —— API 返回二进制 woff2，需用 @font-face 引入而非 <link rel=stylesheet> */
+/** 动态注入 @font-face —— API 返回二进制 ttf，需用 @font-face 引入而非 <link rel=stylesheet> */
 let injectedStyle: HTMLStyleElement | null = null;
 watchEffect(() => {
   /** SSG/SSR 阶段没有 document */
   if (typeof document === "undefined") return;
   const css = subsetFontUrl.value
-    ? `@font-face { font-family: "${fontName.value}"; src: url("${subsetFontUrl.value}") format("woff2"); }`
+    ? `@font-face { font-family: "${fontName.value}"; src: url("${subsetFontUrl.value}") format("truetype"); }`
     : "";
   if (!css) return;
   if (!injectedStyle) {
@@ -155,7 +155,7 @@ watchEffect(() => {
       fontName: font,
       text,
       family: font,
-      outType: "woff2",
+      outType: "ttf",
     }) ?? null;
   } else {
     charsetLoader.update(text);
@@ -167,7 +167,7 @@ const usageCode = computed(() =>
   `<style>
   @font-face {
     font-family: "${fontName.value}";
-    src: url("${origin.value}/api?font=${fontName.value}&text=你的文字&outType=woff2") format("woff2");
+    src: url("${origin.value}/api?font=${fontName.value}&text=你的文字&outType=ttf") format("truetype");
   }
   .my-title { font-family: "${fontName.value}"; }
 </style>`

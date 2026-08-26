@@ -13,7 +13,7 @@ This project subsets fonts on the server side — pass in the text you need, get
 <style>
 @font-face {
   font-family: "MyFont";
-  src: url("https://webfont.shenzilong.cn/api?font=令东齐伋复刻体&text=静心茶舍&outType=woff2") format("woff2");
+  src: url("https://webfont.shenzilong.cn/api?font=令东齐伋复刻体&text=静心茶舍&outType=ttf") format("truetype");
 }
 .title { font-family: "MyFont", serif; }
 </style>
@@ -97,7 +97,7 @@ No SDK needed. One CSS block to use any Chinese font. Server returns only the ch
 ```css
 @font-face {
   font-family: "MyFont";
-  src: url("https://webfont.shenzilong.cn/api?font=令东齐伋复刻体&text=你的文字&outType=woff2") format("woff2");
+  src: url("https://webfont.shenzilong.cn/api?font=令东齐伋复刻体&text=你的文字&outType=ttf") format("truetype");
 }
 ```
 

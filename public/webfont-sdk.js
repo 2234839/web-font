@@ -250,7 +250,7 @@
 			ensurePreconnect(baseUrl);
 			this.engine.ensureState(key, options.fontName, {
 				baseUrl,
-				outType: options.outType ?? "woff2",
+				outType: options.outType ?? "ttf",
 				onLoadChunk: this.makeOnLoadChunk(key, family)
 			});
 			if (this.pollTasks.has(options.selector)) clearInterval(this.pollTasks.get(options.selector).timer);
@@ -273,7 +273,7 @@
 			ensurePreconnect(baseUrl);
 			this.engine.ensureState(key, options.fontName, {
 				baseUrl,
-				outType: options.outType ?? "woff2",
+				outType: options.outType ?? "ttf",
 				onLoadChunk: this.makeOnLoadChunk(key, family)
 			});
 			if (this.observeTasks.has(options.selector)) this.observeTasks.get(options.selector).dispose();
@@ -323,7 +323,7 @@
 			ensurePreconnect(baseUrl);
 			this.engine.ensureState(key, options.fontName, {
 				baseUrl,
-				outType: options.outType ?? "woff2",
+				outType: options.outType ?? "ttf",
 				onLoadChunk: this.makeOnLoadChunk(key, family)
 			});
 			this.engine.submitText(key, options.text);
@@ -519,8 +519,8 @@
 			const family = options.family ?? fontName.replace(/\.(ttf|otf|woff2?|ttc)$/i, "").trim();
 			const key = IncrementalEngine.fontKey(fontName, family);
 			const baseUrl = options.baseUrl ?? this.defaultBaseUrl;
-			/** Node 模式统一用 ttf：woff2 注册返回 null 不可靠（探针实证） */
-			const outType = this.nodeEnv ? "ttf" : options.outType ?? "woff2";
+			/** Node 模式统一用 ttf：woff2 注册返回 null 不可靠（探针实证）；浏览器默认也是 ttf（见 IFontFaceOptions.outType 注释） */
+			const outType = this.nodeEnv ? "ttf" : options.outType ?? "ttf";
 			/** 浏览器分支：FontFace + unicodeRange（多 chunk 同 family 按字符精确生效） */
 			const handleChunkBrowser = async (chunk) => {
 				const unicodeRanges = chunk.chars.map((c) => "U+" + c.codePointAt(0).toString(16).padStart(4, "0")).join(", ");

@@ -44,7 +44,7 @@ const outType = ref<"woff2" | "ttf">("ttf");
 const serverConfig = ref<ServerConfig>({
   enableTempUpload: false,
   adminUploadEnabled: false,
-  supportedOutTypes: ["woff2", "ttf"],
+  supportedOutTypes: ["ttf", "woff2"],
 });
 
 onMounted(async () => {
@@ -60,7 +60,7 @@ onMounted(async () => {
 
   const [fontList, config] = await Promise.all([
     fetchFonts().catch(() => [] as FontInfo[]),
-    fetchConfig().catch((): ServerConfig => ({ enableTempUpload: false, adminUploadEnabled: false, supportedOutTypes: ["woff2", "ttf"] })),
+    fetchConfig().catch((): ServerConfig => ({ enableTempUpload: false, adminUploadEnabled: false, supportedOutTypes: ["ttf", "woff2"] })),
   ]);
   fonts.value = fontList;
   serverConfig.value = config;
@@ -220,7 +220,7 @@ async function refreshFonts() {
         :fonts="fonts"
         :selectedFont="selectedFont"
         :onFontChange="onFontChange"
-        :supportedOutTypes="serverConfig.supportedOutTypes || ['woff2', 'ttf']"
+        :supportedOutTypes="serverConfig.supportedOutTypes || ['ttf', 'woff2']"
         :outType="outType"
         :onOutTypeChange="(v: 'woff2' | 'ttf') => outType = v"
       />

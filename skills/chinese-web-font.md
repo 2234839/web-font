@@ -15,7 +15,7 @@ description: 中文字体按需裁剪与加载能力，可让 AI 在生成中文
 <style>
 @font-face {
   font-family: "MyFont";
-  src: url("https://webfont.shenzilong.cn/api?font=令东齐伋复刻体&text=静心茶舍&outType=woff2") format("woff2");
+  src: url("https://webfont.shenzilong.cn/api?font=令东齐伋复刻体&text=静心茶舍&outType=ttf") format("truetype");
 }
 </style>
 ```
@@ -33,13 +33,13 @@ GET https://webfont.shenzilong.cn/api/fonts
 ### 其他接口
 
 ```
-GET  https://webfont.shenzilong.cn/api?font={name}&text={chars}&outType=woff2  — 裁剪字体
+GET  https://webfont.shenzilong.cn/api?font={name}&text={chars}&outType=ttf  — 裁剪字体
 GET  https://webfont.shenzilong.cn/api/fonts                                    — 列出可用字体
 GET  https://webfont.shenzilong.cn/api/config                                   — 服务配置
 POST https://webfont.shenzilong.cn/api/upload?mode=temp                         — 临时上传字体
 ```
 
-字体名支持模糊匹配（精确 > 前缀 > 包含）。`outType` 支持 `woff2` 和 `ttf`。
+字体名支持模糊匹配（精确 > 前缀 > 包含）。`outType` 支持 `ttf`（默认，服务端裁剪快 2~6 倍，子集场景端到端更快）和 `woff2`（体积小 ~50%，流量敏感时用）。
 
 ### SDK 增量加载
 

@@ -13,7 +13,7 @@
 <style>
 @font-face {
   font-family: "MyFont";
-  src: url("https://webfont.shenzilong.cn/api?font=令东齐伋复刻体&text=静心茶舍&outType=woff2") format("woff2");
+  src: url("https://webfont.shenzilong.cn/api?font=令东齐伋复刻体&text=静心茶舍&outType=ttf") format("truetype");
 }
 .title { font-family: "MyFont", serif; }
 </style>
@@ -98,7 +98,7 @@ Prompt: "生成一个东方禅意风格的茶品牌官网"
 ```css
 @font-face {
   font-family: "MyFont";
-  src: url("https://webfont.shenzilong.cn/api?font=令东齐伋复刻体&text=你的文字&outType=woff2") format("woff2");
+  src: url("https://webfont.shenzilong.cn/api?font=令东齐伋复刻体&text=你的文字&outType=ttf") format("truetype");
 }
 ```
 

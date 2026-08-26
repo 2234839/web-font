@@ -16,7 +16,7 @@ export interface IWebFontOptions {
   baseUrl?: string
   /** CSS font-family 名，默认去掉扩展名的字体名 */
   family?: string
-  /** 输出格式，默认 woff2 */
+  /** 输出格式，默认 ttf：子集场景无 brotli 编码/解码开销，端到端更快（几 KB 的子集体积差异可忽略） */
   outType?: 'woff2' | 'ttf'
 }
 
@@ -145,7 +145,7 @@ export class WebFontCSSMode {
     ensurePreconnect(baseUrl)
     this.engine.ensureState(key, options.fontName, {
       baseUrl,
-      outType: options.outType ?? 'woff2',
+      outType: options.outType ?? 'ttf',
       onLoadChunk: this.makeOnLoadChunk(key, family),
     })
 
@@ -175,7 +175,7 @@ export class WebFontCSSMode {
     ensurePreconnect(baseUrl)
     this.engine.ensureState(key, options.fontName, {
       baseUrl,
-      outType: options.outType ?? 'woff2',
+      outType: options.outType ?? 'ttf',
       onLoadChunk: this.makeOnLoadChunk(key, family),
     })
 
@@ -248,7 +248,7 @@ export class WebFontCSSMode {
     ensurePreconnect(baseUrl)
     this.engine.ensureState(key, options.fontName, {
       baseUrl,
-      outType: options.outType ?? 'woff2',
+      outType: options.outType ?? 'ttf',
       onLoadChunk: this.makeOnLoadChunk(key, family),
     })
     this.engine.submitText(key, options.text)
