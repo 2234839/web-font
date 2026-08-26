@@ -15,6 +15,7 @@
  */
 
 import { OTWriter as Writer, OTReader as Reader, serializeScriptList, serializeFeatureList, scriptListSpan, featureListSpan } from "./ot-bytes.js";
+import { buildGidLookup } from "./gsub-subset.js";
 
 /** ValueFormat 位掩码 */
 const VF_X_PLACEMENT = 0x0001;
@@ -118,6 +119,7 @@ function writeEmptyCoverage(w: Writer): void {
 export function subsetGPOS(
   gposBytes: Uint8Array,
   origToNew: Map<number, number>,
+  sharedGidLookup?: GidLookup,
 ): Uint8Array | null {
   const dv = new DataView(gposBytes.buffer, gposBytes.byteOffset, gposBytes.byteLength);
   const r = new Reader(dv);
@@ -127,11 +129,9 @@ export function subsetGPOS(
    * 替代全模块的 origToNew.get/has（Map 查询 ~9ns vs 数组索引 ~1ns）。
    * coverage/ClassDef/PairPos 序列化每字形都查，CJK 标点字体调用密集。
    * 容量按 subsetGids 的最大原 gid 分配（远小于 65536，避免大数组 fill 抵消收益——
-   * GPOS coverage 常引用大于子集 maxGid 的 gid，remapGid 内做越界判定返回 -1）。 */
-  let maxOrigGid = 0;
-  for (const g of origToNew.keys()) if (g > maxOrigGid) maxOrigGid = g;
-  const gidLookup: GidLookup = new Int32Array(maxOrigGid + 1).fill(-1);
-  for (const [g, n] of origToNew) gidLookup[g] = n;
+   * GPOS coverage 常引用大于子集 maxGid 的 gid，remapGid 内做越界判定返回 -1）。
+   * 与 subsetGSUB 内容一致，调用方构造一次共享传入；未传时兜底自建。 */
+  const gidLookup: GidLookup = sharedGidLookup ?? buildGidLookup(origToNew);
 
   /** ---- GPOS Header ---- */
   const major = dv.getUint16(0, false);

@@ -39,10 +39,14 @@ const COV_RANGE = 2;
 /**
  * 重映射单个 gid。子集外的 gid 返回 null。
  * GSUB 中 coverage/ClassDef/替换目标引用的 gid 若不在子集内，该条目失效，调用方丢弃之。
+ * 优化342：gidLookup（Int32Array 索引 ~1ns）替代 origToNew.get（Map.get ~9ns），全字符集
+ * （27677 gid）下 coverage/ClassDef 逐 gid 重映射是 Map 残余热点。语义等价：
+ * Map.get 缺失返回 undefined→null；gidLookup 越界返回 undefined、子集外为 -1，均映射为 null。
  */
-function remapGid(origToNew: Map<number, number>, gid: number): number | null {
-  const m = origToNew.get(gid);
-  return m === undefined ? null : m;
+function remapGid(gidLookup: GidLookup, gid: number): number | null {
+  if (gid >= gidLookup.length) return null;
+  const m = gidLookup[gid];
+  return m < 0 ? null : m;
 }
 
 /** Coverage 表单个 range 展开为 gid 的上限保护：超出视为偏移错位读到垃圾数据。 */
@@ -82,6 +86,20 @@ const EMPTY_GIDS: number[] = [];
  * 越界访问（gid >= length）返回 undefined，>= 0 判定为不在子集，语义正确。
  */
 type GidLookup = Int32Array;
+
+/**
+ * 构造 原gid→新gid 的 Int32Array 查找表（下标=原gid，值=新gid，-1=不在子集）。
+ * subsetGPOS 与 subsetGSUB 用同一 origToNew，查表内容完全一致——由 rewriteLayoutTablesForSubset
+ * 构造一次共享传入，省掉每侧各自的 maxOrigGid 扫描 + fill + Map 遍历（全字符集 27677 gid
+ * 时两轮 Map 遍历 + 两次 fill 合计 ~1.6ms 量级）。
+ */
+export const buildGidLookup = (origToNew: Map<number, number>): GidLookup => {
+  let maxOrigGid = 0;
+  for (const g of origToNew.keys()) if (g > maxOrigGid) maxOrigGid = g;
+  const gidLookup: GidLookup = new Int32Array(maxOrigGid + 1).fill(-1);
+  for (const [g, n] of origToNew) gidLookup[g] = n;
+  return gidLookup;
+};
 
 /**
  * 当前 subsetGSUB 调用的子集原始 gid 升序数组，供 readClassDefMap format2 二分优化复用。
@@ -924,7 +942,7 @@ function serializeChainedContextSubst(
       rules: Array<{ back: number[]; input: number[]; look: number[]; records: Array<{ seq: number; lookup: number }> }>;
     }> = [];
     for (let i = 0; i < covGids.length && i < ruleSetCount; i++) {
-      const firstNew = remapGid(origToNew, covGids[i]);
+      const firstNew = remapGid(gidLookup, covGids[i]);
       if (firstNew === null) continue;
       const setOff = off + dv.getUint16(off + 6 + i * 2, false);
       const ruleCount = dv.getUint16(setOff, false);
@@ -932,7 +950,7 @@ function serializeChainedContextSubst(
       const validRules: Array<{ back: number[]; input: number[]; look: number[]; records: Array<{ seq: number; lookup: number }> }> = [];
       for (let j = 0; j < ruleCount; j++) {
         const ruleOff = setOff + dv.getUint16(setOff + 2 + j * 2, false);
-        const parsed = parseChainRuleFormat1or2(r, ruleOff, origToNew, true);
+        const parsed = parseChainRuleFormat1or2(r, ruleOff, gidLookup, true);
         if (parsed) validRules.push(parsed);
       }
       if (validRules.length > 0) entries.push({ firstGid: firstNew, rules: validRules });
@@ -984,7 +1002,7 @@ function serializeChainedContextSubst(
         const ruleOff = setOff + dv.getUint16(setOff + 2 + j * 2, false);
         /** format2 的元素是 class index（非 gid），原样保留，传 isGidFormat=false。
          *  class index 始终有效（ClassDef 重映射 gid 后 class 编号不变），规则恒保留。 */
-        const parsed = parseChainRuleFormat1or2(r, ruleOff, origToNew, false);
+        const parsed = parseChainRuleFormat1or2(r, ruleOff, gidLookup, false);
         if (!parsed) continue;
         const list = classToRules.get(i) ?? [];
         list.push(parsed);
@@ -1015,7 +1033,7 @@ function serializeChainedContextSubst(
 function parseChainRuleFormat1or2(
   r: Reader,
   ruleOff: number,
-  origToNew: Map<number, number>,
+  gidLookup: GidLookup,
   isGidFormat: boolean,
 ): { back: number[]; input: number[]; look: number[]; records: Array<{ seq: number; lookup: number }> } | null {
   const dv = r.dv;
@@ -1033,7 +1051,7 @@ function parseChainRuleFormat1or2(
     if (isGidFormat) {
       const out: number[] = [];
       for (let k = 0; k < count; k++) {
-        const m = remapGid(origToNew, dv.getUint16(p + k * 2, false));
+        const m = remapGid(gidLookup, dv.getUint16(p + k * 2, false));
         if (m === null) return null;
         out.push(m);
       }
@@ -1466,6 +1484,7 @@ function serializeSubtable(
 export function subsetGSUB(
   gsubBytes: Uint8Array,
   origToNew: Map<number, number>,
+  sharedGidLookup?: GidLookup,
 ): Uint8Array {
   const dv = new DataView(gsubBytes.buffer, gsubBytes.byteOffset, gsubBytes.byteLength);
   const r = new Reader(dv);
@@ -1475,11 +1494,9 @@ export function subsetGSUB(
   const covCache: CoverageCache = new Map();
 
   /** 原gid → 新gid 数组查找表（coverage 边解析边过滤的热路径用，数组索引比 Map.get 快数倍）。
-   *  下标=原gid，值=新gid，-1 表示不在子集。容量覆盖出现的最大原 gid。 */
-  let maxOrigGid = 0;
-  for (const g of origToNew.keys()) if (g > maxOrigGid) maxOrigGid = g;
-  const gidLookup: GidLookup = new Int32Array(maxOrigGid + 1).fill(-1);
-  for (const [g, n] of origToNew) gidLookup[g] = n;
+   *  下标=原gid，值=新gid，-1 表示不在子集。容量覆盖出现的最大原 gid。
+   *  与 subsetGPOS 内容一致，调用方（rewriteLayoutTablesForSubset）构造一次共享传入；未传时兜底自建。 */
+  const gidLookup: GidLookup = sharedGidLookup ?? buildGidLookup(origToNew);
 
   /** 升序子集原始 gid 数组（惰性）：供 readClassDefMap format2 / coverage range 二分优化。
    *  优化336：不在入口无条件 sort（全字符集 27677 gid 耗 ~3.2ms），改为设 source + 清缓存，

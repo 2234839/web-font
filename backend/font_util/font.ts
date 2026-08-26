@@ -1,7 +1,7 @@
 import { Font } from "../../vendor/fonteditor-core/lib/ttf/font.js";
 import type { FontEditor } from "../../vendor/fonteditor-core/lib/ttf/font.js";
 import { subsetGPOS } from "./gpos-subset.js";
-import { subsetGSUB } from "./gsub-subset.js";
+import { subsetGSUB, buildGidLookup } from "./gsub-subset.js";
 import { collectReachableGsubTargets } from "./gsub-reachable.js";
 import { probeGsubAndCmap } from "./gsub-probe.js";
 import { subsetOTF } from "./otf-subset.js";
@@ -80,12 +80,15 @@ const rewriteLayoutTablesForSubset = (
   const origToNew = new Map<number, number>();
   for (let i = 0; i < subsetGids.length; i++) origToNew.set(subsetGids[i], i);
 
+  /** GPOS/GSUB 的 origToNew 相同，gidLookup 只构造一次共享传入（省一次 maxOrigGid 扫描+fill+Map 遍历） */
+  const gidLookup = buildGidLookup(origToNew);
+
   /** GPOS 子集化 */
   const origGPOS = ttf.GPOS;
   if (origGPOS) {
     const gposBytes = origGPOS instanceof Uint8Array ? origGPOS : new Uint8Array(origGPOS);
     if (gposBytes.byteLength > 0) {
-      const rewritten = subsetGPOS(gposBytes, origToNew);
+      const rewritten = subsetGPOS(gposBytes, origToNew, gidLookup);
       if (rewritten) ttf.GPOS = rewritten;
       /** rewritten === null 表示含不支持的版本，保留原始 GPOS 字节（安全降级） */
     }
@@ -96,7 +99,7 @@ const rewriteLayoutTablesForSubset = (
   if (origGSUB) {
     const gsubBytes = origGSUB instanceof Uint8Array ? origGSUB : new Uint8Array(origGSUB);
     if (gsubBytes.byteLength > 0) {
-      ttf.GSUB = subsetGSUB(gsubBytes, origToNew);
+      ttf.GSUB = subsetGSUB(gsubBytes, origToNew, gidLookup);
     }
   }
 };

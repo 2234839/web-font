@@ -783,7 +783,9 @@ function encodeTTFToWOFF2(ttfBuffer) {
 
   /* glyf + loca 变换 */
   let glyfTransformed = null;
-  if (glyfTable && locaTable) {
+  /** 实验开关：WF2_NOTRANSFORM=1 时跳过 glyf/loca transform（规范允许，flags 置 0x40） */
+  const noTransform = typeof process !== "undefined" && process.env && process.env.WF2_NOTRANSFORM === "1";
+  if (glyfTable && locaTable && !noTransform) {
     const glyfData = data.subarray(glyfTable.offset, glyfTable.offset + glyfTable.length);
     const locaData = data.subarray(locaTable.offset, locaTable.offset + locaTable.length);
     const result = transformGlyfAndLoca(glyfData, locaData, indexToLocFormat, numGlyphs);
@@ -813,6 +815,19 @@ function encodeTTFToWOFF2(ttfBuffer) {
   for (var fi2 = 0, fl2 = filtered.length; fi2 < fl2; fi2++) {
     var t = filtered[fi2];
     if (t.tagU32 === TAG_loca) {
+      if (noTransform) {
+        /** untransformed：loca 原始字节保留（transform version 3，flags 置 0x40） */
+        dirEntries[dirIdx++] = {
+          tagU32: t.tagU32, tagIndex: t.tagIndex,
+          flags: t.tagIndex | 0x40,
+          origLength: t.length,
+          transformLength: t.length,
+          data: data.subarray(t.offset, t.offset + t.length),
+          hasTransform: false,
+        };
+        totalDirSize += entrySize(t.tagIndex, t.length, false, t.length);
+        continue;
+      }
       /** 优化：直接使用 transformGlyfAndLoca 返回的 locaOrigLength，避免重复计算 */
       const origLength = glyfTransformed ? glyfTransformed.locaOrigLength : t.length;
       dirEntries[dirIdx++] = {
@@ -837,6 +852,20 @@ function encodeTTFToWOFF2(ttfBuffer) {
         hasTransform: true,
       };
       totalDirSize += entrySize(t.tagIndex, t.length, true, glyfTransformed.transformedGlyf.length);
+      continue;
+    }
+
+    if (t.tagU32 === TAG_glyf && noTransform) {
+      /** untransformed glyf：原始字节直出 */
+      dirEntries[dirIdx++] = {
+        tagU32: t.tagU32, tagIndex: t.tagIndex,
+        flags: t.tagIndex | 0x40,
+        origLength: t.length,
+        transformLength: t.length,
+        data: data.subarray(t.offset, t.offset + t.length),
+        hasTransform: false,
+      };
+      totalDirSize += entrySize(t.tagIndex, t.length, false, t.length);
       continue;
     }
 
