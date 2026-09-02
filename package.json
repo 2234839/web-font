@@ -27,7 +27,7 @@
     "@leafer-ui/node": "2.2.9",
     "@types/node": "^26.2.0",
     "@vitejs/plugin-vue": "^6.0.8",
-    "@xmldom/xmldom": "^0.9.11",
+    "@xmldom/xmldom": "^0.9.12",
     "jsdom": "^30.0.1",
     "pngjs": "^7.0.0",
     "puppeteer": "^25.7.0",
