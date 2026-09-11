@@ -38,7 +38,7 @@
     "vite-plugin-commonjs": "^0.10.4",
     "vite-plugin-pilot": "^1.0.35",
     "vite-ssg": "^28.3.0",
-    "vitest": "^4.1.10",
+    "vitest": "^4.1.11",
     "vue": "3.6.0-beta.17",
     "vue-router": "^5.2.0"
   },
