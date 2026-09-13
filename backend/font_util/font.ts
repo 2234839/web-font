@@ -11,6 +11,50 @@ import { encodeTTFToWOFF2 } from "../../vendor/fonteditor-core/woff2/woff2-encod
 const textEncoder = new TextEncoder();
 
 /**
+ * FreeType CJK autohinter 的 blue zone 锚定字符集
+ * 根因：Linux/Android 下 Skia 用 FreeType 自动 hint 渲染 CJK 字体时，blue zone
+ * （横/竖笔量化线）由「字体 cmap 覆盖的全部 CJK 字符轮廓」统计得出。子集化后 cmap
+ * 只剩几个字，blue zone 计算偏差 → 字形亚像素偏移 → 与完整字体渲染 SSIM 仅 0.987~0.997。
+ * 修复：向子集注入 FreeType autofit blue zone 字符表（afblue.dat
+ * AF_BLUE_STRING_CJK_TOP/BOTTOM）中的锚定字符。
+ */
+/**
+ * 实测精简锚定集（32 字 = TOP 段前 26 字 + BOTTOM 段末 6 字「还进進過道還」）。
+ * 递减实验（EXP_LIMIT/EXP_OFFSET/EXP_TAIL 分段扫描，敏感用例 full vs subset SSIM）结论：
+ * - 78 字全集：SSIM 全 1.0000，但 8 字子集体积 ×8.7（75KB）、全量基准 Σmin 耗时 +153%。
+ * - TOP 段前 26 + BOTTOM 尾 6 是最小达标组合：敏感用例 SSIM 全部 ≥0.995（gs 验收线），
+ *   8 字 woff2 子集 34.8KB（全集 73.5KB）。
+ * - 中段（BOTTOM 前 24 字）与 TOP 尾段对 SSIM 无贡献，删除不影响达标。
+ * - 数量本身不是关键，字符选择才是（尾部「進過道還」等是霞鹜文楷纯标点用例达标的必要字符）。
+ */
+/** 实验开关：thin/empty/decim（验证完移除） */
+const BLUE_ZONE_ANCHORS_MINIMAL = [
+  0x4ED6, 0x4EEC, 0x4F60, 0x4F86, 0x5011, 0x5230, 0x548C, 0x5730,
+  0x5BF9, 0x5C0D, 0x5C31, 0x5E2D, 0x6211, 0x65F6, 0x6642, 0x6703,
+  0x6765, 0x70BA, 0x80FD, 0x8230, 0x8AAA, 0x8BF4, 0x8FD9, 0x9019,
+  0x9F4A, 0x519B,
+  0x8FD8, 0x8FDB, 0x9032, 0x904E, 0x9053, 0x9084,
+] as const;
+
+/**
+ * 判断码点集合是否需要注入 CJK blue zone 锚定字符
+ * 仅当子集包含 CJK 统一表意文字时注入（拉丁/符号子集不受 FreeType CJK hinter 影响）
+ */
+/** 判断是否含 CJK 码点 */
+const hasCJK = (codePoints: number[]) =>
+  codePoints.some((cp) => cp >= 0x2e80 && cp <= 0x9fff || (cp >= 0x3400 && cp <= 0x4dbf) || (cp >= 0xf900 && cp <= 0xfaff));
+
+/**
+ * 向码点数组注入 blue zone 锚定字符（去重；字体中不存在的码点会被子集管线自然忽略）
+ */
+const injectBlueZoneAnchors = (codePoints: number[]) => {
+  if (!hasCJK(codePoints)) return codePoints;
+  const set = new Set(codePoints);
+  for (const cp of BLUE_ZONE_ANCHORS_MINIMAL) set.add(cp);
+  return [...set];
+};
+
+/**
  * 字体裁剪的所有可配置步骤
  * 每个步骤独立导出，方便组合使用和单独测试
  */
@@ -43,6 +87,9 @@ export const createSubsetFont = (
     type: sourceType,
     subset: codePoints,
     kerning: true,
+    /** SSIM 优化：保留 fpgm/cvt/prep/gasp 表，浏览器 rasterizer 的 grid-fitting
+     *  行为与完整字体一致，消除小字号/标点类用例的逐像素差异 */
+    hinting: true,
   });
 
 /**
@@ -110,8 +157,9 @@ export const writeFont = (
   font: ReturnType<ReturnType<typeof Font.create>["optimize"]>,
   outType: FontEditor.FontType,
 ): Uint8Array => {
-  /** kerning: true —— 写出时保留 GPOS/kern 表，与 createSubsetFont 的读取保持一致 */
-  const result = font.write({ type: outType, kerning: true });
+  /** kerning: true —— 写出时保留 GPOS/kern 表，与 createSubsetFont 的读取保持一致
+   *  hinting: true —— 写出 fpgm/cvt/prep/gasp，浏览器 grid-fitting 与完整字体一致 */
+  const result = font.write({ type: outType, kerning: true, hinting: true });
   if (typeof result === "string") {
     return textEncoder.encode(result);
   }
@@ -132,7 +180,15 @@ export const fontSubset = (
   subString: string,
   option: { sourceType: FontEditor.FontType; outType: FontEditor.FontType },
 ): Uint8Array => {
-  const codePoints = textToCodePoints(subString);
+  /** 自适应锚定注入：仅小子集（<32 个唯一码点）需要 blue zone 校准。大子集
+   *  自身字符已提供足够的 blue zone 统计样本（千字文段 SSIM 本就 1.0），注入
+   *  32 锚定字反而推高体积与浏览器加载耗时。阈值实测：<32 全部敏感用例达标，
+   *  ≥32 注入收益消失、纯剩体积代价。 */
+  /** 以去重后的唯一码点数为阈值依据（"天天天天" 重复 8 字符仍是 2 字小子集） */
+  const uniqueCodePoints = [...new Set(textToCodePoints(subString))];
+  const codePoints = uniqueCodePoints.length < 32
+    ? injectBlueZoneAnchors(uniqueCodePoints)
+    : uniqueCodePoints;
 
   /** OTF（CFF）输入走独立 OTF 子集化：fonteditor-core 对含 idRangeOffset 的 CID cmap 解析有 bug，
    *  会产出 gid 错乱的子集（SSIM 0.93~0.97）。subsetOTF 直接重建 CFF/cmap/hmtx，透传 charstring，
@@ -210,6 +266,8 @@ export const fontSubset = (
     subset: codePoints,
     kerning: true,
     extraSubsetGids,
+    /** SSIM 优化：保留 hinting（fpgm/cvt/prep/gasp），与完整字体渲染一致 */
+    hinting: true,
     /** presetCmap 复用 probe 结果，跳过 readWindowsAllCodes 的 format4/12 二分查找（优化315） */
     presetCmap,
   });
