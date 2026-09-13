@@ -57,12 +57,13 @@ function write(writer, ttf) {
     /** 优化314: 原始字节引用展平为 _origBuf/_origOff/_origLen，消除 _origGlyfRef 子对象解引用 */
     var origBuf = glyf._origBuf;
     if (origBuf) {
-      /** 优化320: instructions 剥离。_instrOff>=0 时 simple 字形含 hinting instructions，
-       *  输出跳过 instructions 段并把 instructionLength 置 0。
-       *  字节布局：[header+endPts+flags+x+y 前段][instructionLength(2)][instructions(n)][flags+x+y 后段]
-       *  注意 instructions 在 flags/x/y 之前（OpenType 规范：endPts → instructionLength → instructions → flags → x → y）。
-       *  _instrOff 是相对 view 起始的绝对偏移（指向 instructionLength 字段），换算为相对 _origOff 的局部偏移。 */
-      if (glyf._instrOff >= 0) {
+      /** SSIM 优化：hinting 开启时保留原始 instructions 整段拷贝（不剥离），
+       *  浏览器 grid-fitting 行为与完整字体逐像素一致 */
+      if (writeOpts.hinting) {
+        var origBytesKeep = new Uint8Array(origBuf, glyf._origOff, glyf._origLen);
+        fullView.set(origBytesKeep, pos);
+        pos += glyf._origLen;
+      } else if (glyf._instrOff >= 0) {
         var instrRelOff = glyf._instrOff - glyf._origOff;
         /** instructionLength 字段前（header+endPts+flags+x+y 已写部分？不——flags/x/y 在 instructions 之后）。
          *  实际：instrRelOff 之前是 header(10)+endPts(nc*2)。instrRelOff 处是 instructionLength(2)，

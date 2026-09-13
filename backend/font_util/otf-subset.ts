@@ -598,6 +598,14 @@ export function subsetOTF(
   const name = findTable(tables, "name");
   if (name) outTables.push({ tag: "name", bytes: buildSubsetName(dv, name.offset) });
 
+  /** BASE 透传（基线/字干定义表，无 gid 依赖）。FreeType/OTS 在字体缺少 BASE 表时
+   *  会走启发式基线路径，与完整字体（含 BASE）的渲染 hinting 行为不一致，导致子集
+   *  与原字体渲染出现系统性亚像素偏移（实测思源黑体 SSIM 0.9970，注入锚定字符也无效）。 */
+  const baseTable = findTable(tables, "BASE");
+  if (baseTable) {
+    outTables.push({ tag: "BASE", bytes: new Uint8Array(dv.buffer, dv.byteOffset + baseTable.offset, baseTable.length).slice() });
+  }
+
   /** vhea/vmtx 透传 + 重建（垂直排版 metrics，CJK 需要） */
   const vhea = findTable(tables, "vhea");
   const vmtx = findTable(tables, "vmtx");

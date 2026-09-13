@@ -29,7 +29,7 @@ function readSubTable(reader, ttf, subTable, cmapOffset) {
 
   if (subTable.format === 0) {
     /* 优化93: subset 模式下跳过 format0 完整解析，readWindowsAllCodes 不需要它 */
-    var isSubset = ttf.readOptions && ttf.readOptions.subset;
+    var isSubset = ttf.readOptions && ttf.readOptions.subset && ttf.readOptions.subset.length > 0;
     if (isSubset) {
       subTable.format = 0;
     } else {
@@ -96,7 +96,7 @@ function readSubTable(reader, ttf, subTable, cmapOffset) {
      *  得意黑 segCount=3929 → 1.5 万次读 + 4 个数组分配，占 readSubTable 0.101ms。
      *  subset 仅查找少数 cp，延迟后 view 读次数 = O(S × log(segCount))，远小于 4×segCount。
      *  非 subset 模式仍需全量遍历 segments，保持急切构建数组。 */
-    var isSubset4 = ttf.readOptions && ttf.readOptions.subset;
+    var isSubset4 = ttf.readOptions && ttf.readOptions.subset && ttf.readOptions.subset.length > 0;
     if (isSubset4) {
       /* endCode 段起始（相对 view.byteOffset），紧接 14B header */
       var endCodeOff = vOffset;
@@ -205,7 +205,7 @@ function readSubTable(reader, ttf, subTable, cmapOffset) {
   }
   else if (subTable.format === 14) {
     /* 优化93: subset 模式下跳过 format14 完整解析 */
-    var isSubset2 = ttf.readOptions && ttf.readOptions.subset;
+    var isSubset2 = ttf.readOptions && ttf.readOptions.subset && ttf.readOptions.subset.length > 0;
     if (isSubset2) {
       subTable.format = 14;
       subTable.groups = [];

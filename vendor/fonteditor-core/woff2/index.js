@@ -52,15 +52,51 @@ const woff2Module = {
      * @param {ArrayBuffer|Buffer|Array} woff2Buffer woff2 buffer
      * @return {Uint8Array} uint8 array
      */
+    /**
+     * 已知表标签列表（WOFF2 规范 63 个 known table index）
+     * 顺序必须与 woff2-encode.js 的 KNOWN_TAGS 保持一致（编码器自定义顺序）
+     */
     decode(woff2Buffer) {
         /* WOFF2 文件头: signature(4) + flavor(4) + length(4) + numTables(2) + reserved(2) + totalSfntSize(4) + totalCompressedSize(4) + majorVersion(2) + minorVersion(2) + metaOffset(4) + metaLength(4) + metaOrigLength(4) + privOffset(4) + privLength(4) = 48 bytes */
         const data = new Uint8Array(woff2Buffer);
         const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
 
-        /* 跳过 WOFF2 header (48 bytes) + table directory (numTables * 20 bytes) */
+        /* Table Directory 是变长的：每个 entry = flags(1) + [tag(4) if unknown] + origLength(Base128) + [transformLength(Base128) if glyf/loca transformed] */
         const numTables = view.getUint16(12);
         const totalCompressedSize = view.getUint32(20);
-        const dirEnd = 48 + numTables * 20;
+
+        /* Base128 无符号整数解码 */
+        const readBase128 = (pos) => {
+            let value = 0;
+            for (let i = 0; i < 5; i++) {
+                const b = data[pos++];
+                value = (value << 7) | (b & 0x7f);
+                if (!(b & 0x80)) {
+                    return [value, pos];
+                }
+            }
+            throw new Error(" UIntBase128 too long");
+        };
+
+        let pos = 48;
+        for (let i = 0; i < numTables; i++) {
+            const flags = data[pos++];
+            const tagIndex = flags & 0x3f;
+            /* 未知表（index 63）后跟 4 字节原始 tag */
+            if (tagIndex === 63) {
+                pos += 4;
+            }
+            let r = readBase128(pos);
+            pos = r[1];
+            /* transformLength 仅在 glyf/loca 被变换（transformVersion 0）时存在 */
+            const transformVersion = (flags >> 6) & 0x3;
+            const isGlyfLoca = flags & 0x40 ? false : tagIndex === 10 || tagIndex === 11;
+            if (transformVersion === 0 && isGlyfLoca) {
+                r = readBase128(pos);
+                pos = r[1];
+            }
+        }
+        const dirEnd = pos;
 
         /* 压缩的表数据紧跟在 directory 之后 */
         const compressedData = data.subarray(dirEnd, dirEnd + totalCompressedSize);

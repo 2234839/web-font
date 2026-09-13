@@ -216,6 +216,9 @@ function subrBias(nSubrs: number): number {
  * @param localCount local subr 总数（越界保护）
  * @param localRefs 输出：收集到的 local subr 实际索引
  * @param gsubrRefs 输出：收集到的 global subr 实际索引
+ * @param stemGains 各 local subr 的递归 stem 净增量（可选，外部预计算后传入）。OTS 的 num_stems
+ *        跨 callsubr 共享：主字形 hintmask 的掩码字节数包含被调 subr 内声明的 stems。扫描时
+ *        遇 callsubr 必须累加该 subr 的 stem 贡献，否则 skip 字节数错误致扫描错位。
  */
 export function collectSubrRefs(
   b: Uint8Array,
@@ -225,22 +228,17 @@ export function collectSubrRefs(
   localCount: number,
   localRefs: Set<number>,
   gsubrRefs: Set<number>,
+  stemGains?: Map<number, number>,
 ): boolean {
-  /**
-   * 优化：用 stackLen 计数器 + lastVal 替代 stack: number[]。
-   *  仅需栈长度（HSTEM 算 stemCount）与栈顶值（CALLSUBR/CALLGSUBR 取调用编号），
-   *  无需完整栈数组。消除每 operand 的 push（含装箱）与 stack.length=0 重置。
-   *  lastVal 仅在 stackLen>0 时有效（CALLSUBR 前必有 operand push）。
-   *  返回值：是否含 CALLSUBR（local subr 调用）。仅含 CALLSUBR 的 charstring 需重写——
-   *  CALLGSUBR 的 operand 不重映射（global subr 不子集化），rewrite 对其只是原样复制操作码，
-   *  与透传等价。故含 gsubr 无 subr 的 charstring 可直接透传省一遍 rewriteCharstring 扫描。
-   */
   let p = start;
   let stackLen = 0;
   let lastVal = NaN;
   let stemCount = 0;
   /** 是否遇到 CALLSUBR（决定该 charstring 是否需 rewriteCharstring） */
   let hasSubr = false;
+  /** operand 峰值栈深。OTS（Chrome 字体安全校验）在 operand 入栈后立即检查栈深 > 48 即拒字体，
+   *  但 Type 2 规范/Adobe 允许到 513，思源源字体部分字形超限。超限时不能透传，需 repack。 */
+  let maxStackLen = 0;
   while (p < end) {
     const b0 = b[p++];
     /**
@@ -269,46 +267,178 @@ export function collectSubrRefs(
         stackLen++;
         p += 1;
       }
+      if (stackLen > maxStackLen) maxStackLen = stackLen;
     } else if (b0 === 28) {
       lastVal = ((b[p] << 24) | (b[p + 1] << 16)) >> 16;
       stackLen++;
+      if (stackLen > maxStackLen) maxStackLen = stackLen;
       p += 2;
-    } else if (b0 === 29) {
-      lastVal = ((b[p] << 24) | (b[p + 1] << 16) | (b[p + 2] << 8) | b[p + 3]) | 0;
-      stackLen++;
-      p += 4;
-    } else {
-      /** 操作码（b0 <= 27，含 12 双字节） */
-      if (b0 === 12) {
+    } else if (b0 === 12) {
         p += 1;
         stackLen = 0;
-      } else if (b0 === T2_HSTEM || b0 === T2_VSTEM || b0 === T2_HSTEMHM || b0 === T2_VSTEMHM) {
+        lastVal = NaN;
+        } else if (b0 === T2_HSTEM || b0 === T2_VSTEM || b0 === T2_HSTEMHM || b0 === T2_VSTEMHM) {
         stemCount += stackLen >> 1;
         stackLen = 0;
-      } else if (b0 === T2_HINTMASK || b0 === T2_CNTRMASK) {
+        } else if (b0 === T2_HINTMASK || b0 === T2_CNTRMASK) {
         p += (stemCount + 7) >>> 3;
         stackLen = 0;
-      } else if (b0 === T2_CALLSUBR) {
+        } else if (b0 === T2_CALLSUBR) {
         hasSubr = true;
         if (Number.isInteger(lastVal)) {
           const sn = lastVal + localBias;
-          if (sn >= 0 && sn < localCount) localRefs.add(sn);
+          if (sn >= 0 && sn < localCount) {
+            localRefs.add(sn);
+            /** num_stems 跨 callsubr 共享：把被调 subr 的递归 stem 增量计入（否则 hintmask skip 错位） */
+            if (stemGains) stemCount += stemGains.get(sn) ?? 0;
+          }
         }
         stackLen = 0;
-      } else if (b0 === T2_CALLGSUBR) {
+        } else if (b0 === T2_CALLGSUBR) {
         if (Number.isInteger(lastVal)) gsubrRefs.add(lastVal);
         stackLen = 0;
-      } else if (b0 === T2_ENDCHAR) {
+        } else if (b0 === T2_ENDCHAR) {
         break;
-      } else {
+        } else {
         /** 其余操作码（运动/曲线等）消费栈 */
         stackLen = 0;
       }
-    }
   }
   return hasSubr;
 }
 
+/**
+ * OTS（Chrome 字体安全校验）允许的最大 operand 栈深。Type 2 规范允许到 513，
+ * Adobe 源字体（思源等）存在超限字形，但 OTS 在 operand 入栈后立即检查 >48 即拒。
+ */
+export const T2_MAX_STACK = 48;
+
+/**
+ * 检查 charstring 的 operand 峰值栈深是否超过 OTS 限制（栈模拟，同 collectSubrRefs）。
+ * 超限字形不可透传，必须 stripHints 剥离 hint 区。
+ * @param b CFF 字节
+ * @param start charstring 起始偏移
+ * @param end charstring 结束偏移（不含）
+ * @param localBias 原 local subr bias（还原 callsubr 调用编号用）
+ * @param stemGains 各 local subr 的递归 stem 净增量（可选）。num_stems 跨 callsubr 共享，
+ *        hintmask skip 字节数依赖被调 subr 内声明的 stems，缺致扫描错位。
+ * @returns 是否超 OTS 栈深限制
+ */
+export function charstringStackOverflows(b: Uint8Array, start: number, end: number, localBias = 0, stemGains?: Map<number, number>): boolean {
+  let p = start;
+  let stackLen = 0;
+  let lastVal = NaN;
+  let stemCount = 0;
+  while (p < end) {
+    const b0 = b[p++];
+    if (b0 >= 32) {
+      stackLen++;
+      if (b0 === 255) { lastVal = NaN; p += 4; }
+      else if (b0 >= 247) { lastVal = b0 <= 250 ? (b0 - 247) * 256 + b[p] + 108 : -(b0 - 251) * 256 - b[p] - 108; p += 1; }
+      else lastVal = b0 - 139;
+      if (stackLen > T2_MAX_STACK) return true;
+    } else if (b0 === 28) {
+      lastVal = ((b[p] << 24) | (b[p + 1] << 16)) >> 16;
+      stackLen++;
+      p += 2;
+      if (stackLen > T2_MAX_STACK) return true;
+    } else if (b0 === 12) {
+      const b1 = b[p];
+      p += 1;
+      if (b1 === 12) {
+        /** div：消费 2 个 operand 推回 1 个 */
+        stackLen -= 1;
+      } else if (b1 === 3 || b1 === 4 || b1 === 5) {
+        /** and/or/≈ 2→1；not/return 1→0（drop） */
+        stackLen -= b1 === 5 ? 1 : 1;
+      } else {
+        stackLen = 0;
+      }
+    } else if (b0 === T2_HSTEM || b0 === T2_VSTEM || b0 === T2_HSTEMHM || b0 === T2_VSTEMHM) {
+      stemCount += stackLen >> 1;
+      stackLen = 0;
+    } else if (b0 === T2_HINTMASK || b0 === T2_CNTRMASK) {
+      p += (stemCount + 7) >>> 3;
+      stackLen = 0;
+    } else if (b0 === T2_CALLSUBR || b0 === T2_CALLGSUBR) {
+      if (b0 === T2_CALLSUBR && stemGains && Number.isInteger(lastVal)) {
+        /** num_stems 跨 callsubr 共享：累加被调 subr 的 stem 增量（否则后续 hintmask skip 错位） */
+        stemCount += stemGains.get(lastVal + localBias) ?? 0;
+      }
+      stackLen = 0;
+    } else if (b0 === T2_ENDCHAR) {
+      break;
+    } else {
+      stackLen = 0;
+    }
+  }
+  return false;
+}
+
+/**
+ * 剥离 charstring 的 hint 区（hstem/vstem/hstemhm/vstemhm 及其 operands、hintmask/cntrmask 及其掩码字节）。
+ * 思源等源字体在单条 stem 声明与曲线操作前堆了 49~52 个 operand（Adobe 语义合法，
+ * 但 OTS 在 operand 入栈后即检查栈深 >48 拒收整个字体）。剥 hint 后栈深必然合规；
+ * 代价是这些字形失去 hint 精度——仅在浏览器渲染下可见，且 CJK 大字号影响可忽略。
+ * 保留 odd width（若 hint 区前有单个 width operand，随 hint 一起保留以维持栈奇偶？否——
+ * width 语义依赖后续 op 的栈深奇偶，剥掉整个 hint 区后 width 也一并剥除，多数子集场景
+ * 本就不解析 width，无影响。
+ * @param b CFF 字节
+ * @param start charstring 起始偏移
+ * @param end charstring 结束偏移（不含）
+ * @param stemGains 各 local subr 的递归 stem 净增量（可选）。num_stems 跨 callsubr 共享，
+ *        主字形 hintmask 的掩码字节数包含被调 subr 声明的 stems，缺致剥离边界错位。
+ * @returns 剥离 hint 后的字节
+ */
+export function stripHints(b: Uint8Array, start: number, end: number, localBias = 0, stemGains?: Map<number, number>): Uint8Array {
+  const out = new Uint8Array(end - start);
+  let wp = 0;
+  let p = start;
+  let stackLen = 0;
+  let lastVal = NaN;
+  let stems = 0;
+  while (p < end) {
+    const b0 = b[p++];
+    if (b0 >= 32) {
+      out[wp++] = b0;
+      stackLen++;
+      if (b0 === 255) { lastVal = NaN; out[wp++]=b[p++]; out[wp++]=b[p++]; out[wp++]=b[p++]; out[wp++]=b[p++]; }
+      else if (b0 >= 247) { lastVal = b0 <= 250 ? (b0 - 247) * 256 + b[p] + 108 : -(b0 - 251) * 256 - b[p] - 108; out[wp++]=b[p++]; }
+      else lastVal = b0 - 139;
+      continue;
+    }
+    if (b0 === 28) { lastVal = ((b[p] << 24) | (b[p + 1] << 16)) >> 16; out[wp++]=28; out[wp++]=b[p++]; out[wp++]=b[p++]; stackLen++; continue; }
+    if (b0 === T2_HSTEM || b0 === T2_VSTEM || b0 === T2_HSTEMHM || b0 === T2_VSTEMHM) {
+      /** 丢弃操作码与栈上 operands：回退输出到本段 operand 起点 */
+      wp -= stackLen === 1 && stems === 0 && wp - stackLen >= 0 ? stackLen : stackLen;
+      wp -= stackLen;
+      stems += stackLen >> 1;
+      stackLen = 0;
+      continue;
+    }
+    if (b0 === T2_HINTMASK || b0 === T2_CNTRMASK) {
+      /** 丢弃操作码与掩码字节；栈上 operands（若有，hm 后直接跟 mask）也一并丢弃 */
+      wp -= stackLen;
+      p += (stems + 7) >>> 3;
+      stackLen = 0;
+      continue;
+    }
+    if (b0 === T2_CALLSUBR || b0 === T2_CALLGSUBR) {
+      if (b0 === T2_CALLSUBR && stemGains && Number.isInteger(lastVal)) {
+        /** num_stems 跨 callsubr 共享：后续 mask skip 需含被调 subr 声明的 stems */
+        stems += stemGains.get(lastVal + localBias) ?? 0;
+      }
+      lastVal = NaN;
+      stackLen = 0;
+      continue;
+    }
+    if (b0 === 12) { out[wp++]=12; out[wp++]=b[p++]; stackLen = 0; lastVal = NaN; continue; }
+    out[wp++] = b0;
+    if (b0 === T2_ENDCHAR) break;
+    stackLen = 0;
+  }
+  return out.subarray(0, wp);
+}
 /**
  * 重写 Type 2 charstring/subr：把 callsubr/callgsubr 的调用编号 operand 重映射到子集编号。
  * 其余字节原样保留（坐标、操作码、hintmask 掩码等）。
@@ -322,6 +452,9 @@ export function collectSubrRefs(
  * @param localBias 原 local subr bias（解析 operand 用）
  * @param localRemap 旧 local subr 索引 → 新索引（-1 表示未保留，不该出现于引用 charstring）
  * @param newLocalCount 新 local subr 总数（算新 bias）
+ * @param stemBase 进入该 charstring 时已有的 num_stems 基数（重写 subr 自身且其 mask 依赖外部基数时用，主字形传 0）
+ * @param stemGains 各 local subr 的递归 stem 净增量。num_stems 跨 callsubr 共享：主字形 hintmask
+ *        的掩码字节数包含被调 subr 内声明的 stems，遇 callsubr 必须累加，否则 skip 错位。
  * @returns 重写后的字节。global subr 不子集化（callgsubr operand 原样保留，bias 不变）。
  */
 export function rewriteCharstring(
@@ -331,6 +464,8 @@ export function rewriteCharstring(
   localBias: number,
   localRemap: Map<number, number>,
   newLocalCount: number,
+  stemBase = 0,
+  stemGains?: Map<number, number>,
 ): Uint8Array {
   const newLocalBias = subrBias(newLocalCount);
   /**
@@ -357,7 +492,7 @@ export function rewriteCharstring(
   let lastVal = NaN;
   /** 栈顶 operand 在 out 中的起始写指针（CALLSUBR 截断回退到此） */
   let lastStart = 0;
-  let stemCount = 0;
+  let stemCount = stemBase;
   let p = start;
   while (p < end) {
     const b0 = b[p++];
@@ -397,32 +532,23 @@ export function rewriteCharstring(
       wp += 3;
       p += 2;
       stackLen++;
-    } else if (b0 === 29) {
-      lastStart = wp;
-      lastVal = ((b[p] << 24) | (b[p + 1] << 16) | (b[p + 2] << 8) | b[p + 3]) | 0;
-      out[wp] = 29; out[wp + 1] = b[p]; out[wp + 2] = b[p + 1]; out[wp + 3] = b[p + 2]; out[wp + 4] = b[p + 3];
-      wp += 5;
-      p += 4;
-      stackLen++;
-    } else {
-      /** 操作码 */
-      if (b0 === 12) {
+    } else if (b0 === 12) {
         out[wp] = 12; out[wp + 1] = b[p];
         wp += 2;
         p += 1;
         stackLen = 0;
-      } else if (b0 === T2_HSTEM || b0 === T2_VSTEM || b0 === T2_HSTEMHM || b0 === T2_VSTEMHM) {
+        } else if (b0 === T2_HSTEM || b0 === T2_VSTEM || b0 === T2_HSTEMHM || b0 === T2_VSTEMHM) {
         stemCount += stackLen >> 1;
         out[wp++] = b0;
         stackLen = 0;
-      } else if (b0 === T2_HINTMASK || b0 === T2_CNTRMASK) {
+        } else if (b0 === T2_HINTMASK || b0 === T2_CNTRMASK) {
         out[wp++] = b0;
         const maskBytes = (stemCount + 7) >>> 3;
         out.set(b.subarray(p, p + maskBytes), wp);
         wp += maskBytes;
         p += maskBytes;
         stackLen = 0;
-      } else if (b0 === T2_CALLSUBR) {
+        } else if (b0 === T2_CALLSUBR) {
         const oldSn = Number.isInteger(lastVal) ? lastVal + localBias : -1;
         const newSn = localRemap.get(oldSn);
         if (newSn === undefined) {
@@ -451,19 +577,20 @@ export function rewriteCharstring(
           }
           out[wp++] = T2_CALLSUBR;
         }
+        /** num_stems 跨 callsubr 共享：后续 hintmask 的掩码字节数需含被调 subr 声明的 stems */
+        if (stemGains) stemCount += stemGains.get(oldSn) ?? 0;
         stackLen = 0;
-      } else if (b0 === T2_CALLGSUBR) {
+        } else if (b0 === T2_CALLGSUBR) {
         /** global subr 不子集化：operand（调用编号）原样保留，bias 不变 */
         out[wp++] = T2_CALLGSUBR;
         stackLen = 0;
-      } else if (b0 === T2_ENDCHAR) {
+        } else if (b0 === T2_ENDCHAR) {
         out[wp++] = b0;
         break;
-      } else {
+        } else {
         out[wp++] = b0;
         stackLen = 0;
       }
-    }
   }
   return out.subarray(0, wp);
 }
@@ -746,6 +873,8 @@ export function subsetCFF(cffBytes: Uint8Array, subsetGids: number[]): Uint8Arra
     newLocalCount: number;
     /** 子集 local subr INDEX 字节（重建后；无 subr 为 null）。最终拼入 Private 段 */
     newLocalSubr: Uint8Array | null;
+    /** 各 local subr 的递归 stem 净增量（num_stems 跨 callsubr 共享，供 hintmask skip 计算；无 subr 为空） */
+    stemGains?: Map<number, number>;
   }
   interface FdInfo { dictBytes: Uint8Array; priv: PrivInfo; }
   /** 原始 Private 段去重：相同 origOff 的 Private 共享同一份（含其 Local Subr） */
@@ -830,6 +959,72 @@ export function subsetCFF(cffBytes: Uint8Array, subsetGids: number[]): Uint8Arra
     }
   }
 
+  /**
+   * 递归计算 local subr 的 stem 净增量（其内部声明的 hstem/vstem/hstemhm/vstemhm stems 总数，
+   * 含其内部 callsubr 嵌套贡献）。OTS 的 num_stems 跨 callsubr 共享：主字形 hintmask/cntrmask
+   * 的掩码字节数 = (当前 num_stems + 7) / 8，包含被调 subr 内声明的 stems。扫描主字形时若不把
+   * subr 贡献累加进 stemCount，mask skip 字节数偏小，掩码字节被误判为操作码致整个后续流错位
+   * （实测思源 gid27440：subr 内 hstemhm 声明 5 stems，主字形首 mask 少跳 1 字节 → OTS 拒收）。
+   */
+  const computeStemGains = (privOrigOff: number): Map<number, number> => {
+    const info = privSegCache.get(privOrigOff)!;
+    const idx = info.localSubrIdx;
+    const gains = new Map<number, number>();
+    if (!idx) return gains;
+    const scan = (sn: number, visiting: Set<number>): number => {
+      const cached = gains.get(sn);
+      if (cached !== undefined) return cached;
+      if (visiting.has(sn)) return 0;
+      visiting.add(sn);
+      const ss = idx.dataStart + readIndexOffset(b, idx, sn) - 1;
+      const se = idx.dataStart + readIndexOffset(b, idx, sn + 1) - 1;
+      let stems = 0;
+      let stackLen = 0;
+      let lastVal = NaN;
+      let p = ss;
+      while (p < se) {
+        const b0 = b[p++];
+        if (b0 >= 32) {
+          if (b0 <= 246) lastVal = b0 - 139;
+          else if (b0 === 255) { lastVal = NaN; p += 4; }
+          else if (b0 <= 250) { lastVal = (b0 - 247) * 256 + b[p] + 108; p += 1; }
+          else { lastVal = -(b0 - 251) * 256 - b[p] - 108; p += 1; }
+          stackLen++;
+        } else if (b0 === 28) {
+          lastVal = ((b[p] << 24) | (b[p + 1] << 16)) >> 16;
+          stackLen++;
+          p += 2;
+        } else if (b0 === 12) {
+          p += 1;
+          stackLen = 0;
+          lastVal = NaN;
+        } else if (b0 === T2_HSTEM || b0 === T2_VSTEM || b0 === T2_HSTEMHM || b0 === T2_VSTEMHM) {
+          stems += stackLen >> 1;
+          stackLen = 0;
+        } else if (b0 === T2_HINTMASK || b0 === T2_CNTRMASK) {
+          p += (stems + 7) >>> 3;
+          stackLen = 0;
+        } else if (b0 === T2_CALLSUBR) {
+          if (Number.isInteger(lastVal)) {
+            const cs = lastVal + info.localBias;
+            if (cs >= 0 && cs < idx.count) stems += scan(cs, visiting);
+          }
+          stackLen = 0;
+        } else if (b0 === T2_CALLGSUBR) {
+          stackLen = 0;
+        } else if (b0 === T2_ENDCHAR) {
+          break;
+        } else {
+          stackLen = 0;
+        }
+      }
+      gains.set(sn, stems);
+      return stems;
+    };
+    for (const sn of privLocalRefs.get(privOrigOff) ?? []) scan(sn, new Set());
+    return gains;
+  };
+
   /** 各 Private 池：构建旧→新 local subr 映射 + 重建子集 INDEX。引用为空则保留空 INDEX。 */
   for (const [privOrigOff, refs] of privLocalRefs) {
     const info = privSegCache.get(privOrigOff)!;
@@ -840,6 +1035,8 @@ export function subsetCFF(cffBytes: Uint8Array, subsetGids: number[]): Uint8Arra
     for (let i = 0; i < sortedRefs.length; i++) remap.set(sortedRefs[i], i);
     info.localRemap = remap;
     info.newLocalCount = sortedRefs.length;
+    const stemGains = computeStemGains(privOrigOff);
+    info.stemGains = stemGains;
     if (sortedRefs.length === 0) {
       /** 无引用：输出空 INDEX（count=0，2 字节），newLocalSubr 占位（下方 patchPrivateDict 后拼入） */
       info.newLocalSubr = new Uint8Array(2);
@@ -850,7 +1047,7 @@ export function subsetCFF(cffBytes: Uint8Array, subsetGids: number[]): Uint8Arra
         /** 按需读 offset（避免全量解析 INDEX） */
         const ss = idx.dataStart + readIndexOffset(b, idx, oldSn) - 1;
         const se = idx.dataStart + readIndexOffset(b, idx, oldSn + 1) - 1;
-        const rewritten = rewriteCharstring(b, ss, se, info.localBias, remap, sortedRefs.length);
+        const rewritten = rewriteCharstring(b, ss, se, info.localBias, remap, sortedRefs.length, 0, stemGains);
         objects.push({ bytes: rewritten, start: 0, len: rewritten.length });
       }
       info.newLocalSubr = writeIndex(objects);
@@ -870,8 +1067,14 @@ export function subsetCFF(cffBytes: Uint8Array, subsetGids: number[]): Uint8Arra
     const fdIdx = fdRemap.get(origFd);
     const privInfo: PrivInfo | null = fdIdx !== undefined ? fdInfos[fdIdx].priv : null;
     if (privInfo && privInfo.localRemap && gidHasSubr[gi]) {
-      const rewritten = rewriteCharstring(b, r.start, r.end, privInfo.localBias, privInfo.localRemap, privInfo.newLocalCount);
+      const stemGains = privInfo.stemGains;
+      const rewritten = rewriteCharstring(b, r.start, r.end, privInfo.localBias, privInfo.localRemap, privInfo.newLocalCount, 0, stemGains);
       newCharStringObjects.push({ bytes: rewritten, start: 0, len: rewritten.length });
+    } else if (charstringStackOverflows(b, r.start, r.end, privInfo?.localBias ?? 0, privInfo?.stemGains)) {
+      /** 思源等源字体有 20+ 个字形 operand 栈深 >48（Adobe 合规但 OTS 拒收），
+       *  剥掉 hint 区使栈深合规。 */
+      const stripped = stripHints(b, r.start, r.end, privInfo?.localBias ?? 0, privInfo?.stemGains);
+      newCharStringObjects.push({ bytes: stripped, start: 0, len: stripped.length });
     } else {
       newCharStringObjects.push({ bytes: b, start: r.start, len: r.end - r.start });
     }

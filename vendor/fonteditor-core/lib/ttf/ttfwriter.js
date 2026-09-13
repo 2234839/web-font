@@ -203,7 +203,7 @@ var TTFWriter = exports.default = /*#__PURE__*/function () {
         /** 优化291: 使用 Set 去重，防止 hinting+kerning 同时开启时 GPOS/kern/kerx 被重复 push */
         var added = {};
         if (this.options.hinting) {
-          var hintTables = ['cvt', 'fpgm', 'prep', 'gasp', 'GPOS', 'kern', 'kerx'];
+          var hintTables = ['cvt', 'fpgm', 'prep', 'gasp', 'BASE', 'GPOS', 'kern', 'kerx'];
           for (var i = 0; i < hintTables.length; i++) {
             var tn = hintTables[i];
             if (ttf[tn] && !added[tn]) {

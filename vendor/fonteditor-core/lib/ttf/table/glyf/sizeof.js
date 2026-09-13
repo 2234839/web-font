@@ -213,7 +213,7 @@ function sizeof(ttf) {
        *  优化320: instructions 剥离——输出时移除 simple 字形的 hinting instructions（web 渲染用
        *  浏览器 autohint，原始 instructions 减小 glyf 字节）。_instrOff>=0 时长度减去 instructions 段。 */
       glyfSupport = {};
-      glyfSize = glyf._origLen - (glyf._instrOff >= 0 ? glyf._instrLen : 0);
+      glyfSize = glyf._origLen - (!hinting && glyf._instrOff >= 0 ? glyf._instrLen : 0);
     } else {
       glyfSupport = {};
       glyfSize = getFlagsAndSize(glyf, glyfSupport, hinting);

@@ -22,6 +22,7 @@ var _GPOS = _interopRequireDefault(require("./GPOS"));
 var _GSUB = _interopRequireDefault(require("./GSUB"));
 var _kern = _interopRequireDefault(require("./kern"));
 var _kerx = _interopRequireDefault(require("./kerx"));
+var _BASE = _interopRequireDefault(require("./BASE"));
 function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
 /**
  * @file ttf读取和写入支持的表
@@ -45,5 +46,6 @@ var _default = exports.default = {
   GPOS: _GPOS.default,
   GSUB: _GSUB.default,
   kern: _kern.default,
-  kerx: _kerx.default
+  kerx: _kerx.default,
+  BASE: _BASE.default
 };

@@ -9,6 +9,8 @@ export namespace FontEditor {
     type?: string;
     subset?: number[];
     kerning?: boolean;
+    /** 保留 hinting（fpgm/cvt/prep/gasp 及 glyf instructions） */
+    hinting?: boolean;
     extraSubsetGids?: number[];
     presetCmap?: Record<number, number>;
   }

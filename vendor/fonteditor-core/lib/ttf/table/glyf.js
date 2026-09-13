@@ -48,6 +48,17 @@ var _default = exports.default = _table.default.create('glyf', [], {
       ttf.subsetMap = subsetMap;
       ttf.subsetGids = subsetGids;
       ttf._subsetUnicodeMap = subsetUnicodeMap;
+      /** 实验：锚定 codepoint 强制完整 parse（fullParseCodepoints 由 readOptions 传入） */
+      var fpc = ttf.readOptions && ttf.readOptions.fullParseCodepoints;
+      var FULL_PARSE_GIDS_MAP = null;
+      if (fpc) {
+        FULL_PARSE_GIDS_MAP = {};
+        for (var fi = 0, fl = fpc.length; fi < fl; fi++) {
+          var fgid = cmap[fpc[fi]];
+          if (fgid !== undefined) FULL_PARSE_GIDS_MAP[fgid] = true;
+        }
+      }
+      ttf.FULL_PARSE_GIDS_MAP = FULL_PARSE_GIDS_MAP;
       /* 注入额外保留的 gid（如 GSUB 连字 target glyph，多数无 unicode，无法通过 codepoint 子集保留）。
        *  这些 glyph 仍参与 compound 引用解析与 glyf 构建，origToNew 通过 subsetGids 顺序直接映射。 */
       var extraSubsetGids = ttf.readOptions.extraSubsetGids;
@@ -94,7 +105,8 @@ var _default = exports.default = _table.default.create('glyf', [], {
             var vOff = fullBufOff + gStart;
             var numberOfContours = view.getInt16(vOff, false);
             /** 非(component 引用的) simple 字形走快路径；compound 及 component 走完整 parse */
-            if (numberOfContours >= 0 && !componentGids[index]) {
+            if (numberOfContours >= 0 && !componentGids[index]
+              && !(ttf.FULL_PARSE_GIDS_MAP && ttf.FULL_PARSE_GIDS_MAP[index])) {
               /** 优化310+313+314: 快路径——读 header(bbox) + 最后一个 endPt（算 _totalPoints 供 metrics），
                *  存原始字节引用，跳过 instructions/flags/坐标解码（省 parseSimpleGlyf，glyph.read 第一热点）。
                *  优化313: 不再分配 endPtsOfContours 数组——_totalPoints 只需最后一个 endPt。
