@@ -49,8 +49,8 @@ importers:
         specifier: ^7.0.2
         version: 7.0.2
       undici:
-        specifier: ^8.10.0
-        version: 8.10.0
+        specifier: ^8.10.2
+        version: 8.10.2
       vite:
         specifier: ^8.2.1
         version: 8.2.1(@types/node@26.2.0)(esbuild@0.27.7)(terser@5.49.0)(yaml@2.9.0)
@@ -89,8 +89,8 @@ importers:
   packages/uni-webfont:
     dependencies:
       webfont-sdk:
-        specifier: workspace:*
-        version: link:../webfont-sdk
+        specifier: ^0.2.1
+        version: 0.2.1(@napi-rs/canvas@1.0.6)
     devDependencies:
       tsdown:
         specifier: ^0.22.14
@@ -1256,6 +1256,7 @@ packages:
   '@xmldom/xmldom@0.9.11':
     resolution: {integrity: sha512-tW8bcK3hsG0/uqSnNz6TK4BkcuZSezoU7DlnYssILmZDktPnSHHuDJJFM0AJv+13gz2r0iGdrj6qqKeUnxXEDg==}
     engines: {node: '>=14.6'}
+    deprecated: this version has critical issues, please update to the latest version
 
   '@yuku-codegen/binding-darwin-arm64@0.7.4':
     resolution: {integrity: sha512-fjkATm+fg4r6Ss8o82u3j33PfIqhSs4A0WEEw9kOwhMx/ui/RQ0ZAsCtF6e7UG2CWGOGXAJspLlfk2tr3rjjKQ==}
@@ -2100,8 +2101,8 @@ packages:
     resolution: {integrity: sha512-IDxfleLmmbSskfWSUATiN1nfn2rDuvnMOqb5CWR92iIfojA0Ud+ulOAAEQ57LPr9rWmsreUyf5lwyao+7GNNVw==}
     engines: {node: '>=20.18.1'}
 
-  undici@8.10.0:
-    resolution: {integrity: sha512-HvltHd7avK13QIw/oLe4qoOLyoVSoafqJ2jYOrtMRBkbYT31eiBQ8O0ehRKZiEZCMEyLFQNIADpgCWC5fALvYQ==}
+  undici@8.10.2:
+    resolution: {integrity: sha512-/y4/bH9YNU5hi9NIrpOuvGXFcxrj3CMrV+/AYpowAYTpHn8gX/XPFjNy766FPoYY0miQhdW977JFWKGNhBdwyQ==}
     engines: {node: '>=22.19.0'}
 
   unhead@2.1.16:
@@ -2319,6 +2320,14 @@ packages:
 
   webdriver-bidi-protocol@0.4.2:
     resolution: {integrity: sha512-VSV+fzfChirL3e7jay2yUC7B4HQCGtEWEg/MSSQbK+qWbqeGlRLlXTzPpYr3XGUvbpDHumWZBJxgesg4N7dbtA==}
+
+  webfont-sdk@0.2.1:
+    resolution: {integrity: sha512-1cCsdWm+2jmUvM3Z7yR+zcmxgyYMm0sERfLr2ymjW93r8ZgyGJ7uhbvd1a9rlXQF7qx2SRr+7uh4NgQp+/vZLw==}
+    peerDependencies:
+      '@napi-rs/canvas': '>=0.1'
+    peerDependenciesMeta:
+      '@napi-rs/canvas':
+        optional: true
 
   webidl-conversions@8.0.1:
     resolution: {integrity: sha512-BMhLD/Sw+GbJC21C/UgyaZX41nPt8bUTg+jWyDeg7e7YN4xOM05YPSIXceACnXVtqyEw/LMClUQMtMZ+PGGpqQ==}
@@ -3373,7 +3382,7 @@ snapshots:
       '@vue/shared': 3.5.40
       estree-walker: 2.0.2
       magic-string: 0.30.21
-      postcss: 8.5.22
+      postcss: 8.5.26
       source-map-js: 1.2.1
 
   '@vue/compiler-sfc@3.6.0-beta.17':
@@ -3823,7 +3832,7 @@ snapshots:
       saxes: 6.0.0
       symbol-tree: 3.2.4
       tough-cookie: 6.0.2
-      undici: 8.10.0
+      undici: 8.10.2
       w3c-xmlserializer: 5.0.0
       webidl-conversions: 8.0.1
       whatwg-mimetype: 5.0.0
@@ -4276,7 +4285,7 @@ snapshots:
 
   undici@7.29.0: {}
 
-  undici@8.10.0: {}
+  undici@8.10.2: {}
 
   unhead@2.1.16:
     dependencies:
@@ -4441,6 +4450,10 @@ snapshots:
   web-streams-polyfill@4.3.0: {}
 
   webdriver-bidi-protocol@0.4.2: {}
+
+  webfont-sdk@0.2.1(@napi-rs/canvas@1.0.6):
+    optionalDependencies:
+      '@napi-rs/canvas': 1.0.6
 
   webidl-conversions@8.0.1: {}
 
