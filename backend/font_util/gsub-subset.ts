@@ -923,7 +923,7 @@ function serializeChainedContextSubst(
   w: Writer,
   r: Reader,
   off: number,
-  origToNew: Map<number, number>,
+  _origToNew: Map<number, number>,
   covCache: CoverageCache,
   gidLookup: GidLookup,
 ): boolean {

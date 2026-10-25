@@ -18,31 +18,31 @@
     "release": "pnpm build && pnpm build_backend && pnpm docker_build && pnpm docker_push"
   },
   "dependencies": {
-    "@unhead/vue": "^2.1.17",
-    "pinyin-pro": "^3.29.1",
+    "@unhead/vue": "^3.4.3",
+    "pinyin-pro": "^3.29.5",
     "web-streams-polyfill": "^4.3.0",
     "webfont-sdk": "workspace:*"
   },
   "devDependencies": {
     "@leafer-ui/node": "2.2.9",
-    "@types/node": "^26.2.0",
-    "@vitejs/plugin-vue": "^6.0.8",
-    "@xmldom/xmldom": "^0.9.11",
-    "jsdom": "^30.0.1",
+    "@types/node": "26.6.5",
+    "@vitejs/plugin-vue": "^6.0.10",
+    "@xmldom/xmldom": "^0.9.12",
+    "jsdom": "^30.1.3",
     "pngjs": "^7.0.0",
-    "puppeteer": "^25.7.0",
-    "tsdown": "^0.22.14",
+    "puppeteer": "^25.16.0",
+    "tsdown": "^0.23.2",
     "typescript": "^7.0.2",
-    "undici": "^8.10.0",
-    "vite": "^8.2.1",
+    "undici": "^8.12.3",
+    "vite": "^8.3.5",
     "vite-plugin-commonjs": "^0.10.4",
-    "vite-plugin-pilot": "^1.0.35",
+    "vite-plugin-pilot": "^1.0.36",
     "vite-ssg": "^28.3.0",
-    "vitest": "^4.1.10",
+    "vitest": "^5.0.5",
     "vue": "3.6.0-beta.17",
-    "vue-router": "^5.2.0"
+    "vue-router": "^5.4.0"
   },
   "optionalDependencies": {
-    "@napi-rs/canvas": "^1.0.6"
+    "@napi-rs/canvas": "^1.0.13"
   }
 }
