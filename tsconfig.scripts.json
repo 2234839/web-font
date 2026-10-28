@@ -3,9 +3,15 @@
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "types": ["node"],
+    "types": [
+      "node"
+    ],
     "esModuleInterop": true,
-    "strict": true
+    "strict": true,
+    "allowImportingTsExtensions": true,
+    "skipLibCheck": true
   },
-  "include": ["scripts"]
+  "include": [
+    "scripts"
+  ]
 }

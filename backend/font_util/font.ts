@@ -1,11 +1,10 @@
-import { Font } from "../../vendor/fonteditor-core/lib/ttf/font.js";
-import type { FontEditor } from "../../vendor/fonteditor-core/lib/ttf/font.js";
+import { Font, type FontEditor } from "../../vendor/fonteditor-core/lib/ttf/font";
 import { subsetGPOS } from "./gpos-subset.js";
 import { subsetGSUB, buildGidLookup } from "./gsub-subset.js";
 import { collectReachableGsubTargets } from "./gsub-reachable.js";
 import { probeGsubAndCmap } from "./gsub-probe.js";
 import { subsetOTF } from "./otf-subset.js";
-import { encodeTTFToWOFF2 } from "../../vendor/fonteditor-core/woff2/woff2-encode.js";
+import { encodeTTFToWOFF2 } from "../../vendor/fonteditor-core/woff2/woff2-encode.ts";
 
 /** 优化291: TextEncoder 模块级单例 */
 const textEncoder = new TextEncoder();
@@ -87,9 +86,9 @@ export const createSubsetFont = (
     type: sourceType,
     subset: codePoints,
     kerning: true,
-    /** SSIM 优化：保留 fpgm/cvt/prep/gasp 表，浏览器 rasterizer 的 grid-fitting
-     *  行为与完整字体一致，消除小字号/标点类用例的逐像素差异 */
-    hinting: true,
+    /** hinting: false —— 读侧不解析 fpgm/cvt/prep/gasp 与 glyph instructions
+     *  （浏览器 autohint 不消费，写侧亦不输出，见 writeFont 注释） */
+    hinting: false,
   });
 
 /**
@@ -151,6 +150,49 @@ const rewriteLayoutTablesForSubset = (
   }
 };
 
+/**
+ * 空子集守卫：子集全部字形零轮廓时注入标准 tofu 方框 .notdef
+ *
+ * 根因链（第 18 轮实证）：原字体缺全部请求字符时子集仅剩空 .notdef——
+ * ttf 输出在 glyf write 侧已修复（writeZeroContoursGlyfData 写 12B header）；
+ * 但 woff2 侧无解：WOFF2 规范 transformed glyf 对 nContour=0 的字形
+ * 解码端重建为 0 字节，全空子集解出空 glyf 表 → Chrome OTS 拒载整个字体。
+ * 注入 tofu 后子集必有非空字形，woff2 可表达，且缺字渲染从「字体不可用」
+ * 变为「显示占位框」（字体工业标准做法）。
+ *
+ * 仅在「没有任何非空字形」时触发，混合子集（含实字形）零影响。
+ */
+/** 构造标准 tofu 方框 .notdef 字形（外圈顺时针内圈逆时针，nonzero winding 空心） */
+const buildTofuNotdef = (unitsPerEm: number) => {
+  const U = unitsPerEm;
+  const stroke = Math.round(U / 10);
+  const outer = U;
+  const inner = U - stroke;
+  const pt = (x: number, y: number) => ({ x, y, onCurve: true });
+  /** 外圈顺时针（y 向上坐标系），内圈逆时针 */
+  return {
+    contours: [
+      [pt(0, 0), pt(0, outer), pt(outer, outer), pt(outer, 0)],
+      [pt(stroke, stroke), pt(inner, stroke), pt(inner, inner), pt(stroke, inner)],
+    ],
+    xMin: 0,
+    yMin: 0,
+    xMax: outer,
+    yMax: outer,
+    advanceWidth: U,
+  };
+};
+
+/** 判断子集是否全空并注入 tofu（原地替换 glyf[0]，不动 cmap/hmtx） */
+const ensureNonEmptySubset = (ttf: { head: { unitsPerEm: number }; glyf: Array<Record<string, unknown>> }) => {
+  const glyf = ttf.glyf;
+  const hasOutline = glyf.some((g) =>
+    (g.compound as boolean | undefined) || (g.contours as Array<unknown> | undefined)?.length,
+  );
+  if (hasOutline) return;
+  glyf[0] = buildTofuNotdef(ttf.head.unitsPerEm);
+};
+
 /** 序列化为指定格式的二进制数据 */
 /** 优化291: 移除 async，消除不必要的微任务调度 */
 export const writeFont = (
@@ -158,8 +200,14 @@ export const writeFont = (
   outType: FontEditor.FontType,
 ): Uint8Array => {
   /** kerning: true —— 写出时保留 GPOS/kern 表，与 createSubsetFont 的读取保持一致
-   *  hinting: true —— 写出 fpgm/cvt/prep/gasp，浏览器 grid-fitting 与完整字体一致 */
-  const result = font.write({ type: outType, kerning: true, hinting: true });
+   *  hinting: false —— 剥离 glyph instructions 并跳过 fpgm/cvt/prep/gasp：
+   *  子集已经 compound2simple + simple 快路径，instructions 可整体剥离；
+   *  浏览器（Skia/FreeType autohint）web 渲染不消费原始 hinting bytecode，
+   *  实测所有基准用例 SSIM 与完整字体逐位一致（见优化320 与第 15 轮日志）
+   *  writeZeroContoursGlyfData: true —— 零轮廓字形写出 10B header（而非跳过）：
+   *  原字体缺全部请求字符时子集仅剩空 .notdef，跳过会产生 glyf length=0 的字体，
+   *  Chrome OTS 拒绝加载（"Invalid font data"，第 18 轮 puppeteer FontFace 实证） */
+  const result = font.write({ type: outType, kerning: true, hinting: false, writeZeroContoursGlyfData: true });
   if (typeof result === "string") {
     return textEncoder.encode(result);
   }
@@ -266,14 +314,16 @@ export const fontSubset = (
     subset: codePoints,
     kerning: true,
     extraSubsetGids,
-    /** SSIM 优化：保留 hinting（fpgm/cvt/prep/gasp），与完整字体渲染一致 */
-    hinting: true,
+    /** hinting: false —— 读侧跳过 hinting 表与 instructions 解析（浏览器 autohint 不消费，写侧不输出） */
+    hinting: false,
     /** presetCmap 复用 probe 结果，跳过 readWindowsAllCodes 的 format4/12 二分查找（优化315） */
     presetCmap,
   });
 
   /** subsetGids 在 optimize 前后均保留，记录子集字形的原始 gid 顺序（新 gid = 数组索引）。 */
   const preOptTtf = (font as any).get();
+  /** 空子集守卫：全零轮廓时注入 tofu .notdef（woff2 无法表达全空子集，见函数注释） */
+  ensureNonEmptySubset(preOptTtf);
   const subsetGids: number[] = preOptTtf.subsetGids ?? [];
 
   const optimized = optimizeFont(font);

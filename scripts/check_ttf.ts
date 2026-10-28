@@ -4,12 +4,12 @@ import { Font } from "../vendor/fonteditor-core/lib/ttf/font.js";
 const raw = await readFile("font/temp/YiShanBeiZhuanTi.ttf");
 const buf = new Uint8Array(raw).buffer;
 const text = "你好世界";
-const subset = [...text].map(c => c.codePointAt(0));
+const subset = [...text].map(c => c.codePointAt(0)!);
 
 const font = Font.create(buf, { type: "ttf", subset });
 const optimized = font.optimize().sort();
 const result = optimized.write({ type: "ttf" });
-const data = new Uint8Array(result);
+const data = new Uint8Array(typeof result === "string" ? new TextEncoder().encode(result) : result);
 
 console.log("=== TTF Header ===");
 const view = new DataView(data.buffer, data.byteOffset, data.byteLength);

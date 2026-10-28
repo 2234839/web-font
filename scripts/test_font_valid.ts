@@ -17,7 +17,7 @@ async function findFonts(): Promise<Array<{ name: string; path: string }>> {
     try {
       const entries = await readdir(dir);
       for (const entry of entries) {
-        const name = typeof entry === "string" ? entry : entry.name;
+        const name = entry;
         if (/\.(ttf|otf|woff|woff2)$/i.test(name)) {
           const fullPath = `${dir}/${name}`;
           try {

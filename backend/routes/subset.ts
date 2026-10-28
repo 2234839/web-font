@@ -1,5 +1,5 @@
 import { fontSubset } from "../font_util/font";
-import type { FontEditor } from "../../vendor/fonteditor-core/lib/ttf/font.js";
+import type { FontEditor } from "../../vendor/fonteditor-core/lib/ttf/font";
 import { parseUrl, stats, subsetCache, findFontPath, readFontBuffer, markStatsDirty } from "../shared";
 import { markFontUsed } from "../temp_cleaner";
 import { withMemoryGate } from "../subset_queue";

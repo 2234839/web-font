@@ -39,7 +39,7 @@ async function main(): Promise<void> {
   /* ---------- 1. 全量基准图：直接 GlobalFonts 注册（不经插件） ---------- */
   const full = readFileSync(FONT_FILE)
   const fullSubset = await fontSubset(full.buffer.slice(0), TEXT, { sourceType: 'ttf', outType: 'ttf' })
-  GlobalFonts.register(new Uint8Array(fullSubset), 'BaselineFont')
+  GlobalFonts.register(Buffer.from(fullSubset), 'BaselineFont')
   const baselineSize = await renderAndExport('BaselineFont', `${OUT_DIR}/node_leafer_baseline.png`)
   console.log('[1] 基准图:', baselineSize, 'bytes')
 

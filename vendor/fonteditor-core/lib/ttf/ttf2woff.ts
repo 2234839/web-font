@@ -1,0 +1,332 @@
+/**
+ * @file ttf转换为woff
+ * @author mengke01(kekee000@gmail.com)
+ *
+ * woff format:
+ * http://www.w3.org/TR/2012/REC-WOFF-20121213/
+ *
+ * references:
+ * https://github.com/fontello/ttf2woff
+ * https://github.com/nodeca/pako
+ */
+/* eslint-disable no-multi-spaces */
+
+import Reader from "./reader";
+import Writer from "./writer";
+import string from "../common/string";
+import stringUtil from "./util/string";
+import error from "./error";
+import defaultTtf from "./data/default";
+
+/** ttf 表索引条目 */
+interface TtfTableEntry {
+  /** 表标签 */
+  tag: string;
+  /** 校验和 */
+  checkSum: number;
+  /** 表偏移 */
+  offset: number;
+  /** 原始长度 */
+  length: number;
+  /** 表数据 */
+  data?: Uint8Array;
+  /** 是否已压缩 */
+  deflated?: boolean;
+  /** 压缩后长度 */
+  compLength: number;
+}
+
+/** woff 头部 */
+interface WoffHeader {
+  /** 签名 */
+  signature: number;
+  /** 字体类型 */
+  flavor: number;
+  /** woff 总长度 */
+  length: number;
+  /** 表个数 */
+  numTables: number;
+  /** 保留字段 */
+  reserved: number;
+  /** 解压后 sfnt 总大小 */
+  totalSfntSize: number;
+  /** 主版本 */
+  majorVersion: number;
+  /** 次版本 */
+  minorVersion: number;
+  /** metadata 偏移 */
+  metaOffset: number;
+  /** metadata 长度 */
+  metaLength: number;
+  /** metadata 原始长度 */
+  metaOrigLength: number;
+  /** 私有数据偏移 */
+  privOffset: number;
+  /** 私有数据长度 */
+  privLength: number;
+}
+
+/** woff 转换选项 */
+interface Ttf2woffOptions {
+  /** 字体相关的信息 */
+  metadata?: Record<string, any>;
+  /** 压缩相关函数 */
+  deflate?: (data: Uint8Array) => Uint8Array;
+}
+
+/**
+ * metadata 转换成XML
+ *
+ * @param metadata metadata
+ *
+ * @example
+ * metadata json:
+ *
+ *    {
+ *        "uniqueid": "",
+ *        "vendor": {
+ *            "name": "",
+ *            "url": ""
+ *        },
+ *        "credit": [
+ *            {
+ *                "name": "",
+ *                "url": "",
+ *                "role": ""
+ *            }
+ *        ],
+ *        "description": "",
+ *        "license": {
+ *            "id": "",
+ *            "url": "",
+ *            "text": ""
+ *        },
+ *        "copyright": "",
+ *        "trademark": "",
+ *        "licensee": ""
+ *    }
+ *
+ * @return xml字符串
+ */
+function metadata2xml(metadata: Record<string, any>): string {
+  let xml = "" + '<?xml version="1.0" encoding="UTF-8"?>' + '<metadata version="1.0">';
+  metadata.uniqueid = metadata.uniqueid || defaultTtf.fontId + "." + Date.now();
+  xml += '<uniqueid id="' + string.encodeHTML(metadata.uniqueid) + '" />';
+  if (metadata.vendor) {
+    xml +=
+      '<vendor name="' +
+      string.encodeHTML(metadata.vendor.name) +
+      '"' +
+      ' url="' +
+      string.encodeHTML(metadata.vendor.url) +
+      '" />';
+  }
+  if (metadata.credit) {
+    xml += "<credits>";
+    const credits = metadata.credit instanceof Array ? metadata.credit : [metadata.credit];
+    credits.forEach(function (credit: Record<string, any>) {
+      xml +=
+        '<credit name="' +
+        string.encodeHTML(credit.name) +
+        '"' +
+        ' url="' +
+        string.encodeHTML(credit.url) +
+        '"' +
+        ' role="' +
+        string.encodeHTML(credit.role || "Contributor") +
+        '" />';
+    });
+    xml += "</credits>";
+  }
+  if (metadata.description) {
+    xml += '<description><text xml:lang="en">' + string.encodeHTML(metadata.description) + "</text></description>";
+  }
+  if (metadata.license) {
+    xml +=
+      '<license url="' +
+      string.encodeHTML(metadata.license.url) +
+      '"' +
+      ' id="' +
+      string.encodeHTML(metadata.license.id) +
+      '"><text xml:lang="en">';
+    xml += string.encodeHTML(metadata.license.text);
+    xml += "</text></license>";
+  }
+  if (metadata.copyright) {
+    xml += "<copyright><text xml:lang=\"en\">";
+    xml += string.encodeHTML(metadata.copyright);
+    xml += "</text></copyright>";
+  }
+  if (metadata.trademark) {
+    xml += "<trademark><text xml:lang=\"en\">" + string.encodeHTML(metadata.trademark) + "</text></trademark>";
+  }
+  if (metadata.licensee) {
+    xml += '<licensee name="' + string.encodeHTML(metadata.licensee) + '"/>';
+  }
+  xml += "</metadata>";
+  return xml;
+}
+
+/**
+ * ttf格式转换成woff字体格式
+ *
+ * @param ttfBuffer ttf缓冲数组
+ * @param options 选项
+ * @return woff格式byte流
+ */
+export default function ttf2woff(ttfBuffer: ArrayBuffer, options: Ttf2woffOptions = {}): ArrayBuffer {
+  // woff 头部结构
+  const woffHeader: WoffHeader = {
+    signature: 0x774f4646,
+    // for woff
+    flavor: 0x10000,
+    // for ttf
+    length: 0,
+    numTables: 0,
+    reserved: 0,
+    totalSfntSize: 0,
+    majorVersion: 0,
+    minorVersion: 0,
+    metaOffset: 0,
+    metaLength: 0,
+    metaOrigLength: 0,
+    privOffset: 0,
+    privLength: 0,
+  };
+  const ttfReader = new Reader(ttfBuffer);
+  let tableEntries: TtfTableEntry[] = [];
+  let tableEntry: TtfTableEntry;
+  let deflatedData: Uint8Array;
+  const numTables = ttfReader.readUint16(4); // 读取ttf表个数
+  if (numTables <= 0 || numTables > 100) {
+    error.raise(10101);
+  }
+
+  // 读取ttf表索引信息
+  ttfReader.seek(12);
+  for (let i = 0; i < numTables; ++i) {
+    tableEntry = {
+      tag: ttfReader.readString(ttfReader.offset, 4),
+      checkSum: ttfReader.readUint32(),
+      offset: ttfReader.readUint32(),
+      length: ttfReader.readUint32(),
+      compLength: 0,
+    };
+    const entryOffset = ttfReader.offset;
+    if (tableEntry.tag === "head") {
+      // 读取font revision
+      woffHeader.majorVersion = ttfReader.readUint16(tableEntry.offset + 4);
+      woffHeader.minorVersion = ttfReader.readUint16(tableEntry.offset + 6);
+    }
+
+    // ttf 表数据
+    const sfntData = ttfReader.readBytes(tableEntry.offset, tableEntry.length);
+
+    // 对数据进行压缩
+    if (options.deflate) {
+      deflatedData = options.deflate(sfntData);
+
+      // 这里需要判断是否压缩后数据小于原始数据
+      if (deflatedData.length < sfntData.length) {
+        tableEntry.data = deflatedData;
+        tableEntry.deflated = true;
+      } else {
+        tableEntry.data = sfntData;
+      }
+    } else {
+      tableEntry.data = sfntData;
+    }
+    tableEntry.compLength = tableEntry.data.length;
+    tableEntries.push(tableEntry);
+    ttfReader.seek(entryOffset);
+  }
+  if (!tableEntries.length) {
+    error.raise(10204);
+  }
+
+  // 对table进行排序
+  tableEntries = tableEntries.sort(function (a, b) {
+    return a.tag === b.tag ? 0 : a.tag < b.tag ? -1 : 1;
+  });
+
+  // 计算offset和 woff size
+  let woffSize = 44 + 20 * numTables; // header size + table entries
+  let ttfSize = 12 + 16 * numTables;
+  for (let i = 0, l = tableEntries.length; i < l; ++i) {
+    tableEntry = tableEntries[i];
+    tableEntry.offset = woffSize;
+    // 4字节对齐
+    woffSize += tableEntry.compLength + (tableEntry.compLength % 4 ? 4 - (tableEntry.compLength % 4) : 0);
+    ttfSize += tableEntry.length + (tableEntry.length % 4 ? 4 - (tableEntry.length % 4) : 0);
+  }
+
+  // 计算metaData
+  let metadata: Uint8Array | null = null;
+  if (options.metadata) {
+    const xml = stringUtil.toUTF8Bytes(metadata2xml(options.metadata));
+    if (options.deflate) {
+      deflatedData = options.deflate(xml);
+      if (deflatedData.length < xml.length) {
+        metadata = deflatedData;
+      } else {
+        metadata = xml;
+      }
+    } else {
+      metadata = xml;
+    }
+    woffHeader.metaLength = metadata.length;
+    woffHeader.metaOrigLength = xml.length;
+    woffHeader.metaOffset = woffSize;
+    // metadata header + length
+    woffSize += woffHeader.metaLength + (woffHeader.metaLength % 4 ? 4 - (woffHeader.metaLength % 4) : 0);
+  }
+  woffHeader.numTables = tableEntries.length;
+  woffHeader.length = woffSize;
+  woffHeader.totalSfntSize = ttfSize;
+
+  // 写woff数据
+  const woffWriter = new Writer(new ArrayBuffer(woffSize));
+
+  // 写woff头部
+  woffWriter.writeUint32(woffHeader.signature);
+  woffWriter.writeUint32(woffHeader.flavor);
+  woffWriter.writeUint32(woffHeader.length);
+  woffWriter.writeUint16(woffHeader.numTables);
+  woffWriter.writeUint16(woffHeader.reserved);
+  woffWriter.writeUint32(woffHeader.totalSfntSize);
+  woffWriter.writeUint16(woffHeader.majorVersion);
+  woffWriter.writeUint16(woffHeader.minorVersion);
+  woffWriter.writeUint32(woffHeader.metaOffset);
+  woffWriter.writeUint32(woffHeader.metaLength);
+  woffWriter.writeUint32(woffHeader.metaOrigLength);
+  woffWriter.writeUint32(woffHeader.privOffset);
+  woffWriter.writeUint32(woffHeader.privLength);
+
+  // 写woff表索引
+  for (let i = 0, l = tableEntries.length; i < l; ++i) {
+    tableEntry = tableEntries[i];
+    woffWriter.writeString(tableEntry.tag);
+    woffWriter.writeUint32(tableEntry.offset);
+    woffWriter.writeUint32(tableEntry.compLength);
+    woffWriter.writeUint32(tableEntry.length);
+    woffWriter.writeUint32(tableEntry.checkSum);
+  }
+
+  // 写表数据
+  for (let i = 0, l = tableEntries.length; i < l; ++i) {
+    tableEntry = tableEntries[i];
+    woffWriter.writeBytes(tableEntry.data!);
+    if (tableEntry.compLength % 4) {
+      woffWriter.writeEmpty(4 - (tableEntry.compLength % 4));
+    }
+  }
+
+  // 写metadata
+  if (metadata) {
+    woffWriter.writeBytes(metadata);
+    if (woffHeader.metaLength % 4) {
+      woffWriter.writeEmpty(4 - (woffHeader.metaLength % 4));
+    }
+  }
+  return woffWriter.getBuffer();
+}
