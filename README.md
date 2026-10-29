@@ -4,6 +4,8 @@
 
 [English](README.en.md)
 
+[![扫码加入开发者社群](https://tsfullstack.heartstack.space/group/gs.svg?from=web-font)](https://tsfullstack.heartstack.space/group/gs?from=web-font)
+
 **中文字体包太大**（思源黑体 16MB+），没法像英文字体那样直接 `@font-face` 引入。
 
 本项目在服务端按需子集化字体——传什么文字，就只返回那些字符的字体子集。一张海报用了 20 个字？返回的字体文件就是 20KB，而不是 16MB。

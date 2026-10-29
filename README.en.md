@@ -4,6 +4,8 @@
 
 [中文](README.md)
 
+[![扫码加入开发者社群](https://tsfullstack.heartstack.space/group/gs.svg?from=web-font)](https://tsfullstack.heartstack.space/group/gs?from=web-font)
+
 **Chinese fonts are huge** (Source Han Sans: 16MB+). You can't just `@font-face` them like English fonts.
 
 This project subsets fonts on the server side — pass in the text you need, get back only those glyphs. A poster with 20 characters? The font file is 20KB, not 16MB.
