@@ -21,7 +21,7 @@ async function readMemoryNumber(path: string): Promise<number> {
 }
 
 /** 优先读取 cgroup v2，再兼容 v1；非容器环境没有这些文件 */
-async function readCgroupMemory(): Promise<{ limit: number; used: number } | null> {
+async function readCgroupMemory(): Promise<{ limit: number; free: number } | null> {
   const candidates = [
     ["/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory.current"],
     ["/sys/fs/cgroup/memory/memory.limit_in_bytes", "/sys/fs/cgroup/memory/memory.usage_in_bytes"],
@@ -30,7 +30,7 @@ async function readCgroupMemory(): Promise<{ limit: number; used: number } | nul
     try {
       const [limit, used] = await Promise.all([readMemoryNumber(limitPath), readMemoryNumber(usedPath)]);
       if (Number.isFinite(limit) && limit > 0 && Number.isFinite(used) && used >= 0) {
-        return { limit, used };
+        return { limit, free: Math.max(0, limit - used) };
       }
     } catch {
       /** 当前运行环境没有这一版 cgroup 接口，继续探测下一版 */
@@ -44,9 +44,13 @@ async function readMemorySnapshot(): Promise<MemorySnapshot> {
   const hostLimit = totalmem();
   const hostFree = freemem();
   const cgroup = await readCgroupMemory();
-  const limit = cgroup ? Math.min(hostLimit, cgroup.limit) : hostLimit;
-  const cgroupFree = cgroup ? Math.max(0, cgroup.limit - cgroup.used) : hostLimit;
-  const free = Math.max(0, Math.min(hostFree, cgroupFree));
+  /**
+   * 容器内 os.freemem() 反映的是宿主机水位（与容器自身额度无关），
+   * 宿主机内存紧张会误杀容器内任务。检测到 cgroup 限额时以 cgroup 为唯一权威：
+   * limit/limit/free 都取容器自身额度。
+   */
+  const limit = cgroup ? cgroup.limit : hostLimit;
+  const free = cgroup ? cgroup.free : hostFree;
   /** 给运行时和静态请求保留内存，绝不把水位用满 */
   const reserve = Math.max(32 * MIB, Math.min(128 * MIB, limit * 0.1));
   return { limit, free, reserve };
