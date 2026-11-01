@@ -27,6 +27,16 @@ const sitemapRoutes = [
 ];
 
 export default defineConfig({
+  /**
+   * 跳过启动时的依赖预构建扫描（noDiscovery）
+   *
+   * Vite 8 的 rolldown 扫描器解析 src/components/CodeBlock.vue 的虚拟模块会
+   * 报 PARSE_ERROR（组件内几百行手写分词器脚本），且扫描失败只会打印错误并
+   * 跳过预构建 —— 服务照常运行（实测所有页面 200）。这里主动关掉扫描：
+   * 行为与「扫描失败后跳过」完全一致，但启动日志干净无报错。
+   * 代价是依赖不做预打包、走运行时按需转换，dev 冷启动首屏略慢。
+   */
+  optimizeDeps: { noDiscovery: true },
   plugins: [
     vue(),
     pilot({ locale: "zh" }),

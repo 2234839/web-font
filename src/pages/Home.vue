@@ -195,6 +195,9 @@ async function refreshFonts() {
         <router-link to="/offline-subset" style="font-size: 13px; color: #16a34a; text-decoration: none; border: 1px solid #16a34a; border-radius: 6px; padding: 4px 12px; display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; flex-shrink: 0">
           离线裁剪
         </router-link>
+        <router-link to="/font-finder" style="font-size: 13px; color: #7c3aed; text-decoration: none; border: 1px solid #7c3aed; border-radius: 6px; padding: 4px 12px; display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; flex-shrink: 0">
+          截图找字体
+        </router-link>
         <router-link
           v-if="isDev"
           to="/__dev"

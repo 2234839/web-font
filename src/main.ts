@@ -14,6 +14,10 @@ import App from "./App.vue";
 const routes = [
   { path: "/", component: () => import("./pages/Home.vue") },
   { path: "/offline-subset", component: () => import("./pages/OfflineSubset.vue") },
+  /**
+   * 截图找字体 —— 上传文字截图，与站内字体库做字形相似度比对
+   */
+  { path: "/font-finder", component: () => import("./pages/FontFinder.vue") },
   { path: "/demo", component: () => import("./pages/Demo.vue") },
   { path: "/docs", component: () => import("./pages/Docs.vue") },
   { path: "/fonts", component: () => import("./pages/FontList.vue") },
