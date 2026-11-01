@@ -10,8 +10,7 @@
  */
 import { ref, computed, useTemplateRef } from "vue";
 import { usePageSeo } from "../useSeo";
-import { prepareQueryGlyphs } from "../font-finder/matcher";
-import { rgbaToDataURL } from "../font-finder/segmenter";
+import { prepareQueryGlyphs, renderSubsetGlyphPreviews } from "../font-finder/matcher";
 
 /** 服务端返回的单字体结果（与 backend/routes/glyph_match.ts 对齐） */
 interface ServerFontResult {
@@ -26,19 +25,6 @@ function rgbaToBitString(rgba: Uint8Array): string {
   let s = "";
   for (let i = 0; i < 64 * 64; i++) s += rgba[i * 4] === 0 ? "1" : "0";
   return s;
-}
-
-/** 01 串 → 灰度预览 DataURL */
-function bitStringToDataURL(bits: string): string {
-  const rgba = new Uint8Array(64 * 64 * 4);
-  for (let i = 0; i < bits.length; i++) {
-    const v = bits[i] === "1" ? 0 : 255;
-    rgba[i * 4] = v;
-    rgba[i * 4 + 1] = v;
-    rgba[i * 4 + 2] = v;
-    rgba[i * 4 + 3] = 255;
-  }
-  return rgbaToDataURL(rgba);
 }
 
 usePageSeo({
@@ -226,16 +212,10 @@ function onGlyphInput() {
   results.value = [];
 }
 
-/** 服务端结果 → 展示用预览图（同字体同字只转一次） */
+/** 裁剪接口生成的字体预览缓存（同字体同字只渲染一次） */
 const glyphPreviewCache = new Map<string, string>();
-function serverGlyphPreview(font: string, char: string, bitmap: string): string {
-  const key = font + "|" + char;
-  let url = glyphPreviewCache.get(key);
-  if (!url) {
-    url = bitStringToDataURL(bitmap);
-    glyphPreviewCache.set(key, url);
-  }
-  return url;
+function serverGlyphPreview(font: string, char: string): string {
+  return glyphPreviewCache.get(font + "|" + char) ?? "";
 }
 
 /** 结果中的查询序号 → 原始图块预览，留空图块与候选字体缺字均不会造成错位 */
@@ -266,7 +246,15 @@ async function startMatch() {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = (await res.json()) as { results?: ServerFontResult[]; error?: string };
     if (data.error) throw new Error(data.error);
-    results.value = data.results ?? [];
+    const matchedResults = data.results ?? [];
+    /** 每个字体只裁剪一次，同次裁剪包含该结果需要展示的全部字符 */
+    await Promise.all(matchedResults.map(async (result) => {
+      const previews = await renderSubsetGlyphPreviews(result.font, result.glyphs.map((g) => g.char));
+      for (const [char, preview] of previews) {
+        glyphPreviewCache.set(result.font + "|" + char, preview);
+      }
+    }));
+    results.value = matchedResults;
     totalCount.value = results.value.length;
     doneCount.value = results.value.length;
     elapsedMs.value = Math.round(performance.now() - t0);
@@ -401,7 +389,7 @@ const scoreColor = (s: number) => (s > 0.9 ? "#16a34a" : s > 0.8 ? "#d97706" : "
           <div v-for="g in r.glyphs" :key="g.queryIndex" style="text-align: center">
             <div style="display: flex; gap: 2px">
               <img :src="queryPreview(g.queryIndex)" style="width: 34px; height: 34px; image-rendering: pixelated; border: 1px solid #eee; border-radius: 4px" title="截图" />
-              <img :src="serverGlyphPreview(r.font, g.char, g.bitmap)" style="width: 34px; height: 34px; image-rendering: pixelated; border: 1px solid #eee; border-radius: 4px" title="该字体渲染" />
+              <img :src="serverGlyphPreview(r.font, g.char)" style="width: 34px; height: 34px; image-rendering: pixelated; border: 1px solid #eee; border-radius: 4px" title="该字体渲染" />
             </div>
             <div style="font-size: 10px; color: #999; margin-top: 2px">{{ g.char }} {{ pct(g.score) }}</div>
           </div>

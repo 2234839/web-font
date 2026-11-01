@@ -130,6 +130,23 @@ async function loadSubsetFontFace(font: string, text: string): Promise<FontFace>
   return face;
 }
 
+/** 一次裁剪指定字体所需字符，并用浏览器生成各字符的归一化预览 */
+export async function renderSubsetGlyphPreviews(font: string, chars: string[]): Promise<Map<string, string>> {
+  const face = await loadSubsetFontFace(font, [...new Set(chars)].join(""));
+  const previews = new Map<string, string>();
+  try {
+    for (const char of new Set(chars)) {
+      const rawMask = renderCharMask(char, face.family, 96);
+      if (rawMask) {
+        previews.set(char, rgbaToDataURL(maskToNormalizedRGBA(tightCrop(rawMask))));
+      }
+    }
+  } finally {
+    document.fonts.delete(face);
+  }
+  return previews;
+}
+
 /**
  * 对单个候选字体执行比对
  *

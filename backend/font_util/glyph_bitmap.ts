@@ -175,33 +175,38 @@ function flattenContour(rawContour: RawContour): Pt[] {
 }
 
 /**
- * 扫描线填充多边形集合（奇偶规则），输出覆盖网格的二值位图
- * polys 顶点已是目标网格坐标系（含翻转与缩放）
+ * 扫描线按非零环绕规则填充多边形集合
+ * polys 顶点已是目标网格坐标系（含翻转与缩放）。
+ * 必须合并全部轮廓的交点：外轮廓与内轮廓方向相反，内轮廓处的环绕数归零，
+ * 从而保留「借」「日」等字形的封闭留白。
  */
 function scanlineFill(polys: Pt[][]): Uint8Array {
   const grid = new Uint8Array(GRID * GRID);
-  for (const poly of polys) {
-    if (poly.length < 3) continue;
-    for (let y = 0; y < GRID; y++) {
-      const sy = y + 0.5;
-      /** 收集该扫描线与全部边的交点 x */
-      const xs: number[] = [];
+  for (let y = 0; y < GRID; y++) {
+    const sy = y + 0.5;
+    const crossings: Array<{ x: number; winding: number }> = [];
+    for (const poly of polys) {
+      if (poly.length < 3) continue;
       for (let i = 0; i < poly.length; i++) {
         const a = poly[i]!;
         const b = poly[(i + 1) % poly.length]!;
-        /** 水平边无交点 */
         if (a.y === b.y) continue;
         if ((sy >= a.y && sy < b.y) || (sy >= b.y && sy < a.y)) {
-          xs.push(a.x + ((sy - a.y) / (b.y - a.y)) * (b.x - a.x));
+          crossings.push({
+            x: a.x + ((sy - a.y) / (b.y - a.y)) * (b.x - a.x),
+            winding: a.y < b.y ? 1 : -1,
+          });
         }
       }
-      if (xs.length < 2) continue;
-      xs.sort((p, q) => p - q);
-      for (let k = 0; k + 1 < xs.length; k += 2) {
-        const x0 = Math.max(0, Math.ceil(xs[k]! - 0.5));
-        const x1 = Math.min(GRID - 1, Math.floor(xs[k + 1]! - 0.5));
-        for (let x = x0; x <= x1; x++) grid[y * GRID + x] = 1;
-      }
+    }
+    crossings.sort((a, b) => a.x - b.x);
+    let winding = 0;
+    for (let i = 0; i + 1 < crossings.length; i++) {
+      winding += crossings[i]!.winding;
+      if (winding === 0) continue;
+      const x0 = Math.max(0, Math.ceil(crossings[i]!.x - 0.5));
+      const x1 = Math.min(GRID - 1, Math.floor(crossings[i + 1]!.x - 0.5));
+      for (let x = x0; x <= x1; x++) grid[y * GRID + x] = 1;
     }
   }
   return grid;

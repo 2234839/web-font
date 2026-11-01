@@ -18,6 +18,35 @@ import { fontDirs } from "../backend/config";
 const TARGET_FONT = "思源黑体.ttf";
 const TEXT = "天地玄黄";
 
+/** 统计不与位图边缘连通的白色像素，用于验证字形内部镂空仍然存在 */
+function countEnclosedWhitePixels(bitmap: Uint8Array): number {
+  const visited = new Uint8Array(bitmap.length);
+  let enclosedTotal = 0;
+  for (let start = 0; start < bitmap.length; start++) {
+    if (bitmap[start] || visited[start]) continue;
+    const stack = [start];
+    visited[start] = 1;
+    let size = 0;
+    let enclosed = true;
+    while (stack.length) {
+      const index = stack.pop()!;
+      const x = index % 64;
+      const y = Math.floor(index / 64);
+      size++;
+      if (x === 0 || y === 0 || x === 63 || y === 63) enclosed = false;
+      const neighbors = [index - 1, index + 1, index - 64, index + 64];
+      for (const next of neighbors) {
+        if (next < 0 || next >= bitmap.length || bitmap[next] || visited[next]) continue;
+        if ((x === 0 && next === index - 1) || (x === 63 && next === index + 1)) continue;
+        visited[next] = 1;
+        stack.push(next);
+      }
+    }
+    if (enclosed) enclosedTotal += size;
+  }
+  return enclosedTotal;
+}
+
 async function main() {
   console.log("=== 服务端字形比对自测 ===");
 
@@ -27,6 +56,12 @@ async function main() {
     return p ? readFontBuffer(p) : null;
   });
   if (!ttf) throw new Error(`无法加载目标字体 ${TARGET_FONT}`);
+
+  /** 「借」的「日」有两个封闭留白，不能因轮廓填充错误变成实心 */
+  const jieBitmap = getGlyphBitmap(ttf, TARGET_FONT, "借".codePointAt(0)!);
+  const enclosed = jieBitmap ? countEnclosedWhitePixels(jieBitmap) : 0;
+  console.log(`  借: 封闭留白像素=${enclosed}`);
+  if (enclosed < 8) throw new Error(`${TARGET_FONT} 的「借」内部留白丢失`);
 
   const queryBitmaps: Uint8Array[] = [];
   for (const ch of TEXT) {
