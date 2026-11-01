@@ -1,5 +1,6 @@
 import { fontDirs, subsetCacheMaxSize } from "./config";
 import { LruCache } from "./lru_cache";
+import type { SubsetTtfObject } from "./font_util/glyph_bitmap";
 import { path_join, readFile, stat, readdir } from "./interface";
 import { loadPersistedStats, scheduleStatsFlush, type PersistedStats } from "./stats_store";
 
@@ -80,8 +81,27 @@ export function markStatsDirty(): void {
 /** 字体文件 LRU 缓存，最多保留 3 个最近使用的字体 buffer（按条目数淘汰） */
 export const fontBufferCache = new LruCache<ArrayBuffer>({ maxSize: 3 });
 
-/** 字体裁剪结果 LRU 缓存（按字节容量淘汰） */
-export const subsetCache = new LruCache<ArrayBuffer>({ maxBytes: subsetCacheMaxSize, sizeFn: (v) => v.byteLength });
+/**
+ * 字体裁剪产物缓存条目：bytes 供 HTTP 下载/前端预览；
+ * ttf 为内存子集对象（cmap 已重建，可直接光栅化评分），OTF 输入时为 null。
+ * 不为序列化已产出的对象单独留副本，两处消费方共享同一份产物。
+ */
+export interface SubsetCacheEntry {
+  /** 序列化裁剪字体（供 HTTP 下载/前端预览） */
+  bytes: Uint8Array;
+  /** 评分用内存子集对象（cmap 已重建，可直接光栅化），OTF 输入时为 null */
+  ttf: SubsetTtfObject | null;
+}
+
+/**
+ * 字体裁剪结果共享 LRU 缓存（按内存容量淘汰）。
+ * key 由消费方自定（版本指纹:字体路径:outType:文本）；
+ * 容量计费 = 序列化 bytes + ttf 对象估算开销（16 倍），避免缓存对象本身把容器排薄。
+ */
+export const subsetCache = new LruCache<SubsetCacheEntry>({
+  maxBytes: subsetCacheMaxSize,
+  sizeFn: (v) => v.bytes.byteLength * (v.ttf ? 17 : 1),
+});
 
 /**
  * 在所有字体目录中查找字体文件

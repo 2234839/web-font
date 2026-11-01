@@ -33,7 +33,8 @@ const PROCESS_START_TIME = Date.now();
  *
  * 杜绝「子集化代码已修但缓存返回旧错误结果」的陷阱。
  */
-const SUBSET_CACHE_KEY = `${RESOLVED_VERSION}:${PROCESS_START_TIME}`;
+/** 导出供 glyph-match 复用同一缓存命名空间（版本指纹+进程启动时间） */
+export const SUBSET_CACHE_KEY = `${RESOLVED_VERSION}:${PROCESS_START_TIME}`;
 
 /** GET /api?font=...&text=... — 字体裁剪 */
 export async function handleFontSubset(req: Request, res: Response) {
@@ -80,7 +81,7 @@ export async function handleFontSubset(req: Request, res: Response) {
     const contentTypes: Record<string, string> = { ttf: "font/ttf", woff2: "font/woff2" };
     return {
       req,
-      res: new Response(cached, {
+      res: new Response(cached.bytes as unknown as BodyInit, {
         status: 200,
         headers: {
           "Content-Type": contentTypes[outType] || "font/ttf",
@@ -118,8 +119,8 @@ export async function handleFontSubset(req: Request, res: Response) {
   const newFont = subsetResult.bytes;
   const t3 = Date.now();
 
-  /** 写入裁剪结果缓存 */
-  subsetCache.set(cacheKey, newFont as unknown as ArrayBuffer);
+  /** 写入裁剪结果缓存（与找字体共享；ttf 对象一并缓存供评分直接复用） */
+  subsetCache.set(cacheKey, { bytes: newFont, ttf: subsetResult.ttf ?? null });
 
   const contentTypes: Record<string, string> = { ttf: "font/ttf", woff2: "font/woff2" };
 
