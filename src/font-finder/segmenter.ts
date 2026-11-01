@@ -277,12 +277,70 @@ export function deskewMask(mask: Mask): Mask {
 }
 
 /**
+ * 宽段低谷递归切分 —— 处理字间笔画粘连/字间隙过窄的段
+ *
+ * 纯零列切分要求间隙连续且够宽；拍照场景（抗锯齿、笔画搭接）字间隙常只有
+ * 1~2 列甚至完全粘连，此时一个段会包含多个字。CJK 方块字宽约等于行高，
+ * 段宽超过 1.6 倍行高即视为多字粘连段，在其墨量投影上找「低谷」下刀：
+ * 低谷 = 墨量 ≤ 段内峰值 15% 的连续区，取最靠近段中心者（避开字内笔画间隙）。
+ * 递归直到段宽收敛或找不到低谷。
+ */
+function splitWideByValley(
+  data: Uint8Array, w: number, h: number,
+  x1: number, x2: number, out: Array<[number, number]>,
+): void {
+  const segW = x2 - x1 + 1;
+  /** CJK 单字宽约等于行高（含少量出血余量）；1.35 倍行高以上判定为多字粘连段 */
+  const maxSingle = Math.max(16, h * 1.35);
+  if (segW <= maxSingle) {
+    out.push([x1, x2]);
+    return;
+  }
+  const colInk = new Uint32Array(segW);
+  let peak = 0;
+  for (let x = 0; x < segW; x++) {
+    let c = 0;
+    for (let y = 0; y < h; y++) c += data[y * w + x1 + x]!;
+    colInk[x] = c;
+    if (c > peak) peak = c;
+  }
+  if (peak === 0) {
+    out.push([x1, x2]);
+    return;
+  }
+  /** 低谷阈值：峰值的 15%（至少容忍 2 墨点，抗二值化残点） */
+  const threshold = Math.max(2, peak * 0.15);
+  /** 找最靠近段中心的低谷列 */
+  const center = (segW - 1) / 2;
+  let best = -1;
+  let bestDist = Infinity;
+  for (let x = 1; x < segW - 1; x++) {
+    if (colInk[x]! <= threshold) {
+      const dist = Math.abs(x - center);
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = x;
+      }
+    }
+  }
+  /** 无低谷（真连体字）则不再切，按原段返回 */
+  if (best < 1) {
+    out.push([x1, x2]);
+    return;
+  }
+  const cut = x1 + best;
+  splitWideByValley(data, w, h, x1, cut - 1, out);
+  splitWideByValley(data, w, h, cut + 1, x2, out);
+}
+
+/**
  * 垂直投影切分单字（适用于横向排版的等高文字行）
- * 按列是否有笔画分界；过窄的段并入相邻段（笔画断裂/粘连兜底）
+ * 按列是否有笔画分界；过窄的段并入相邻段（笔画断裂/粘连兜底）；
+ * 过宽的段（字间粘连/间隙过窄）按墨量低谷递归切分
  */
 export function segmentByProjection(mask: Mask, options?: { minGap?: number; minArea?: number }): Mask[] {
   const { data, w, h } = mask;
-  const minGap = options?.minGap ?? 2;
+  const minGap = options?.minGap ?? 1;
   const minArea = options?.minArea ?? Math.max(8, Math.round(w * h * 0.0005));
   const colHasInk = new Uint8Array(w);
   for (let x = 0; x < w; x++) {
@@ -311,9 +369,15 @@ export function segmentByProjection(mask: Mask, options?: { minGap?: number; min
   }
   if (start !== -1) segments.push([start, w - 1]);
 
+  /** 宽段低谷切分（多字粘连段按字宽拆开） */
+  const splitSegments: Array<[number, number]> = [];
+  for (const [sx1, sx2] of segments) {
+    splitWideByValley(data, w, h, sx1, sx2, splitSegments);
+  }
+
   /** 逐段紧致裁剪 + 噪声过滤 */
   const result: Mask[] = [];
-  for (const [x1, x2] of segments) {
+  for (const [x1, x2] of splitSegments) {
     let top = h, bottom = -1, area = 0;
     for (let y = 0; y < h; y++) {
       for (let x = x1; x <= x2; x++) {
