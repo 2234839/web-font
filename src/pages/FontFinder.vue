@@ -10,14 +10,14 @@
  */
 import { ref, computed, useTemplateRef } from "vue";
 import { usePageSeo } from "../useSeo";
-import { prepareQueryGlyphs, renderSubsetGlyphPreviews } from "../font-finder/matcher";
+import { prepareQueryGlyphs, renderSubsetGlyphPreviews, base64ToBytes } from "../font-finder/matcher";
 
-/** 服务端返回的单字体结果（与 backend/routes/glyph_match.ts 对齐） */
+/** 服务端逐字返回的单字体结果（与 backend/routes/glyph_match.ts 的 NDJSON 事件对齐） */
 interface ServerFontResult {
   font: string;
   score: number;
   missing: boolean;
-  glyphs: Array<{ char: string; score: number; bitmap: string; queryIndex: number }>;
+  glyphs: Array<{ char: string; score: number; queryIndex: number }>;
 }
 
 /** 归一化 RGBA（0/255 灰度）→ 4096 字符 01 串（笔画=1） */
@@ -212,7 +212,7 @@ function onGlyphInput() {
   results.value = [];
 }
 
-/** 裁剪接口生成的字体预览缓存（同字体同字只渲染一次） */
+/** 裁剪接口生成的字体预览缓存（同字体同字只渲染一次，来自流事件的 woff2） */
 const glyphPreviewCache = new Map<string, string>();
 function serverGlyphPreview(font: string, char: string): string {
   return glyphPreviewCache.get(font + "|" + char) ?? "";
@@ -224,13 +224,35 @@ function queryPreview(queryIndex: number): string {
   return sourceIndex === undefined ? "" : (glyphPreviews.value[sourceIndex] ?? "");
 }
 
-/** 开始识别：一次请求，只提交已填写字符的图块 */
+/** 收到 font 事件后异步渲染预览：直接消费流携带的 woff2，不再二次请求裁剪接口 */
+function renderPreviewsFromEvent(font: string, subsetB64: string) {
+  const woff2 = base64ToBytes(subsetB64);
+  const chars = filledGlyphIndices.value.map((i) => glyphChars.value[i]!);
+  void renderSubsetGlyphPreviews(woff2, chars).then((previews) => {
+    for (const [char, preview] of previews) {
+      glyphPreviewCache.set(font + "|" + char, preview);
+    }
+  });
+}
+
+/** 新的单字分数到达后重算平均分并按分数降序重排，让最像的字体始终在顶部 */
+function resortResults() {
+  for (const r of results.value) {
+    r.score = r.glyphs.length
+      ? r.glyphs.reduce((s, g) => s + g.score, 0) / r.glyphs.length
+      : 0;
+  }
+  results.value = [...results.value].sort((a, b) => b.score - a.score);
+}
+
+/** 开始识别：NDJSON 流式请求，识别一个字即可看到一个字的结果 */
 async function startMatch() {
   if (!canMatch.value) return;
   matching.value = true;
   errorMsg.value = "";
   results.value = [];
   doneCount.value = 0;
+  totalCount.value = 0;
   const t0 = performance.now();
   try {
     const res = await fetch("/api/glyph-match", {
@@ -243,20 +265,65 @@ async function startMatch() {
         })),
       }),
     });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = (await res.json()) as { results?: ServerFontResult[]; error?: string };
-    if (data.error) throw new Error(data.error);
-    const matchedResults = data.results ?? [];
-    /** 每个字体只裁剪一次，同次裁剪包含该结果需要展示的全部字符 */
-    await Promise.all(matchedResults.map(async (result) => {
-      const previews = await renderSubsetGlyphPreviews(result.font, result.glyphs.map((g) => g.char));
-      for (const [char, preview] of previews) {
-        glyphPreviewCache.set(result.font + "|" + char, preview);
+    if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    const byFont = new Map<string, ServerFontResult>();
+
+    /** 处理单个 NDJSON 事件，增量更新 UI */
+    const handleEvent = (event: any) => {
+      switch (event.type) {
+        case "start": {
+          totalCount.value = event.total;
+          break;
+        }
+        case "font": {
+          const item: ServerFontResult = { font: event.font, score: 0, missing: false, glyphs: [] };
+          byFont.set(event.font, item);
+          results.value.push(item);
+          renderPreviewsFromEvent(event.font, event.subset);
+          break;
+        }
+        case "glyph": {
+          const item = byFont.get(event.font);
+          if (!item) break;
+          if (event.glyph) {
+            item.glyphs.push(event.glyph);
+          } else if (event.missing) {
+            item.missing = true;
+          }
+          resortResults();
+          break;
+        }
+        case "fontDone": {
+          doneCount.value++;
+          break;
+        }
+        case "done": {
+          break;
+        }
       }
-    }));
-    results.value = matchedResults;
-    totalCount.value = results.value.length;
-    doneCount.value = results.value.length;
+    };
+
+    /** 增量按行解析：逐字节累积到换行符即分发事件 */
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let newlineIndex: number;
+      while ((newlineIndex = buffer.indexOf("\n")) >= 0) {
+        const line = buffer.slice(0, newlineIndex).trim();
+        buffer = buffer.slice(newlineIndex + 1);
+        if (line) handleEvent(JSON.parse(line));
+      }
+    }
+    const tail = decoder.decode();
+    if (tail.trim()) buffer += tail;
+    for (const line of buffer.split("\n")) {
+      if (line.trim()) handleEvent(JSON.parse(line.trim()));
+    }
     elapsedMs.value = Math.round(performance.now() - t0);
   } catch (err) {
     errorMsg.value = `识别失败：${err instanceof Error ? err.message : String(err)}`;
@@ -363,7 +430,7 @@ const scoreColor = (s: number) => (s > 0.9 ? "#16a34a" : s > 0.8 ? "#d97706" : "
       <!-- 识别中进度 -->
       <div v-if="matching" style="margin-top: 14px; padding: 12px 16px; border: 1px solid #91caff; background: #e6f4ff; border-radius: 8px; font-size: 14px; color: #0958d9; display: flex; align-items: center; gap: 10px">
         <span style="display: inline-block; width: 16px; height: 16px; border: 2px solid #1677ff; border-top-color: transparent; border-radius: 50%; animation: ff-spin 0.8s linear infinite"></span>
-        正在与站内字体库比对，请稍候…
+        {{ totalCount ? `正在比对 ${doneCount}/${totalCount} 个字体，已出 ${results.length} 个结果…` : "正在与站内字体库比对，请稍候…" }}
       </div>
     </div>
 

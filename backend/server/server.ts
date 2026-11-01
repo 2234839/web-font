@@ -183,16 +183,16 @@ async function connectionHandle(
     });
     const resHeaertText = `HTTP/1.1 ${res.status} OK\r\n${headerText.join("\r\n")}\r\n\r\n`;
     await resWriter.write(encoder.encode(resHeaertText));
-    if (res.body) {
-      /** node 运行时 */
+    /** LLRT 的 Response 不支持流 body，流式路由通过附加属性传递 */
+    const stream = (res as Response & { _stream?: ReadableStream<Uint8Array> })._stream ?? res.body;
+    if (stream) {
+      /** 流式响应：pipeTo 自行管理 writer 生命周期，结束后负责关闭流 */
       resWriter.releaseLock();
-      await res.body?.pipeTo(connection.writable);
+      await stream.pipeTo(connection.writable, { preventClose: false });
     } else {
       /** llrt 运行时 */
       const buffer = new Uint8Array(await (await res.blob()).arrayBuffer());
       await resWriter.write(buffer);
-    }
-    if (!resWriter.closed) {
       await resWriter.close();
     }
     connection.close();
@@ -285,8 +285,12 @@ function createStreamAfterTarget(
                   controller.enqueue(value);
                 }
               } catch (err) {
-                /** body stream 被消费方 cancel 时预期会抛错 */
-                console.log("[createStreamAfterTarget] body stream closed:", err);
+                /** body stream 被消费方 cancel（客户端断连）时预期会抛错，controller 可能已关闭 */
+                try {
+                  controller.error(err instanceof Error ? err : new Error(String(err)));
+                } catch {
+                  /** controller 已结束，忽略 */
+                }
               }
             })();
           },

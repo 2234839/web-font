@@ -1,53 +1,21 @@
 /**
- * 服务端字形位图光栅化 + IoU 比对 —— 截图找字体的服务端比对核心
+ * 服务端字形位图光栅化与相似度计算。
  *
- * 不依赖任何 canvas / DOM：直接取 fonteditor 解析出的 glyf 二次贝塞尔轮廓，
- * 扁平化为多边形后扫描线填充（奇偶规则），再紧致归一化到 64x64 二值网格。
- * 归一化算法与前端 segmenter 完全一致（留 12% 边距、等比缩放、居中、
- * 像素中心采样），保证两侧特征空间相同，位图可直接 IoU 比对。
- *
- * 缓存两层：字体对象（解析一次）+ 字形位图（字体×字符），进程内常驻。
+ * 输入必须是现有裁剪管线生成的小字体，只处理当前请求需要的少量字形。
+ * 不保存完整字体对象或跨请求字形缓存，避免全库识别耗尽服务进程内存。
  */
-import { Font } from "../../vendor/fonteditor-core/lib/ttf/font";
 import transformGlyfContours from "../../vendor/fonteditor-core/lib/ttf/util/transformGlyfContours";
+import { parseGlyf } from "../../vendor/fonteditor-core/lib/ttf/table/glyf/parse";
 
 /** 归一化网格边长（与前端 segmenter.GRID 一致） */
 const GRID = 64;
 /** 归一化留边比例（与前端一致：12%） */
 const MARGIN_RATIO = 0.12;
 
-/** 字体对象缓存：字体名 → 解析后的 ttfObject（含 glyf/cmap） */
-const fontObjectCache = new Map<string, ReturnType<ReturnType<typeof Font.create>["get"]>>();
-/** 字形位图缓存：字体名 → 码点 → 64x64 位图（01 串）；值为 null 表示该字体缺此字 */
-const glyphBitmapCache = new Map<string, Map<number, Uint8Array | null>>();
-
-/**
- * 按魔数探测字体类型（woff2 'wOF2' / woff 'wOFF' / otf 'OTTO' / 其余按 ttf）
- */
-function detectType(buf: ArrayBuffer): "ttf" | "otf" | "woff" | "woff2" {
-  const b = new Uint8Array(buf, 0, 4);
-  if (b[0] === 0x77 && b[1] === 0x4f && b[2] === 0x46 && b[3] === 0x32) return "woff2";
-  if (b[0] === 0x77 && b[1] === 0x4f) return "woff";
-  if (b[0] === 0x4f && b[1] === 0x54 && b[2] === 0x54 && b[3] === 0x4f) return "otf";
-  return "ttf";
-}
-
-/**
- * 解析字体（带进程内缓存）
- * 传入读取字体文件的函数，避免本模块直接依赖 shared/interface 的 IO 层
- */
-export function loadFontObject(
-  fontName: string,
-  readBuffer: (name: string) => Promise<ArrayBuffer | null>,
-): Promise<ReturnType<ReturnType<typeof Font.create>["get"]> | null> {
-  const hit = fontObjectCache.get(fontName);
-  if (hit) return Promise.resolve(hit);
-  return readBuffer(fontName).then((buf) => {
-    if (!buf) return null;
-    const ttf = Font.create(buf, { type: detectType(buf) }).get();
-    fontObjectCache.set(fontName, ttf);
-    return ttf;
-  });
+/** 当前裁剪字体对象；只保留调用方这一次比对所需的生命周期 */
+export interface SubsetTtfObject {
+  cmap?: Record<number, number>;
+  glyf?: any[];
 }
 
 /** 二维点（已扁平化的多边形顶点，y 已翻转） */
@@ -69,6 +37,32 @@ function readGlyphContours(ttf: any, glyf: any): RawContour[] {
   if (!glyf) return [];
   if (glyf.compound) return transformGlyfContours(glyf, ttf);
   if (Array.isArray(glyf.contours) && Array.isArray(glyf.contours[0])) return glyf.contours;
+
+  /**
+   * 裁剪快路径字形（优化310）只携带原始字节引用（_origBuf），坐标未解码。
+   * 此处按需调用 vendor 的 parseGlyf 解出 _xArr/_flags 并写回字形对象，
+   * 后续读取（同字体多字比对）即可直接命中紧凑坐标分支。
+   * 快路径保证 compound 及其 component 走完整 parse，故此处必为 simple 字形。
+   */
+  if (glyf._xArr == null && glyf._origBuf != null && glyf._origOff != null) {
+    /** _origBuf 为完整原始 ArrayBuffer（快路径直接引用 view.buffer），_origOff 是相对该 buffer 的绝对偏移 */
+    const origBuf = glyf._origBuf as ArrayBuffer | Uint8Array;
+    const buffer = origBuf instanceof ArrayBuffer ? origBuf : origBuf.buffer;
+    const view = new DataView(buffer);
+    const baseOff = origBuf instanceof ArrayBuffer ? 0 : origBuf.byteOffset;
+    const reader = {
+      offset: glyf._origOff - baseOff,
+      view,
+      seek(offset: number) {
+        this.offset = offset;
+      },
+    };
+    const parsed = parseGlyf(reader as never, { readOptions: { hinting: false } }, glyf._origOff - baseOff) as any;
+    glyf._xArr = parsed._xArr;
+    glyf._yArr = parsed._yArr;
+    glyf._flags = parsed._flags;
+    glyf.endPtsOfContours = parsed.endPtsOfContours;
+  }
 
   const xArr = glyf._xArr;
   const yArr = glyf._yArr;
@@ -242,47 +236,27 @@ function normalizePolys(polys: Pt[][]): Pt[][] {
 }
 
 /**
- * 取字体的指定码点字形归一化位图（带缓存；缺字返回 null）
+ * 判断裁剪字体是否确实包含目标字符，避免把缺字注入的 .notdef 当作有效笔画参与评分。
  */
+export function hasGlyph(ttf: SubsetTtfObject, codePoint: number): boolean {
+  return ttf.cmap?.[codePoint] !== undefined;
+}
+
+/** 取当前裁剪字体的指定码点归一化位图；缺字返回 null */
 export function getGlyphBitmap(
-  ttf: ReturnType<ReturnType<typeof Font.create>["get"]>,
-  fontName: string,
+  ttf: SubsetTtfObject,
   codePoint: number,
 ): Uint8Array | null {
-  let byFont = glyphBitmapCache.get(fontName);
-  if (!byFont) {
-    byFont = new Map();
-    glyphBitmapCache.set(fontName, byFont);
-  }
-  if (byFont.has(codePoint)) return byFont.get(codePoint)!;
-
-  let bitmap: Uint8Array | null = null;
-  try {
-    /** cmap 的 key 是码点的十进制值；无 cmap 时按 glyf.unicode 兜底扫描 */
-    let gid = ttf.cmap?.[codePoint as unknown as number] as number | undefined;
-    if (gid === undefined && ttf.glyf) {
-      for (let i = 0; i < ttf.glyf.length; i++) {
-        const u = ttf.glyf[i]!.unicode;
-        if (u === codePoint || (Array.isArray(u) && u.includes(codePoint))) {
-          gid = i;
-          break;
-        }
-      }
-    }
-    const glyf = typeof gid === "number" ? ttf.glyf?.[gid] : undefined;
-    const contours = readGlyphContours(ttf, glyf);
-    if (contours.length > 0) {
-      const polys = contours.map(flattenContour).filter((p) => p.length >= 3);
-      const normalized = normalizePolys(polys);
-      bitmap = normalized.length > 0 ? scanlineFill(normalized) : null;
-      /** 全空位图视为缺字 */
-      if (bitmap && !bitmap.some((v) => v)) bitmap = null;
-    }
-  } catch {
-    bitmap = null;
-  }
-  byFont.set(codePoint, bitmap);
-  return bitmap;
+  if (!hasGlyph(ttf, codePoint)) return null;
+  const gid = ttf.cmap![codePoint]!;
+  const glyf = ttf.glyf?.[gid];
+  const contours = readGlyphContours(ttf, glyf);
+  if (contours.length === 0) return null;
+  const polys = contours.map(flattenContour).filter((p) => p.length >= 3);
+  const normalized = normalizePolys(polys);
+  const bitmap = normalized.length > 0 ? scanlineFill(normalized) : null;
+  /** 全空位图视为缺字 */
+  return bitmap?.some((v) => v) ? bitmap : null;
 }
 
 /**

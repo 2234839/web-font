@@ -1,8 +1,7 @@
-import { fontSubset } from "../font_util/font";
-import type { FontEditor } from "../../vendor/fonteditor-core/lib/ttf/font";
-import { parseUrl, stats, subsetCache, findFontPath, readFontBuffer, markStatsDirty } from "../shared";
+import { parseUrl, stats, subsetCache, findFontPath, markStatsDirty } from "../shared";
 import { markFontUsed } from "../temp_cleaner";
 import { withMemoryGate } from "../subset_queue";
+import { estimateSubsetMemory, subsetFontFile } from "../font_util/subset_file";
 import { subsetQueueTimeoutSeconds } from "../config";
 
 /**
@@ -94,34 +93,13 @@ export async function handleFontSubset(req: Request, res: Response) {
     };
   }
 
-  const fontType = fontPath.split(".").pop() as FontEditor.FontType;
-  let oldFontBuffer: ArrayBuffer;
-  try {
-    oldFontBuffer = await readFontBuffer(fontPath);
-  } catch {
-    return {
-      req,
-      res: new Response(`Font read error: ${font}`, {
-        status: 500,
-        headers: { "Content-Type": "text/plain; charset=utf-8" },
-      }),
-    };
-  }
-  /** readFontBuffer 结束时间戳（磁盘 IO / buffer 缓存命中） */
-  const t2 = Date.now();
-
-  /**
-   * 实际子集化（CPU/内存密集）—— 通过内存水位闸门控制
-   *
-   * 缓存未命中的请求才进入闸门；RSS 超 softLimit 时排队等待，
-   * 前面请求完成 + GC 释放内存后 RSS 回落才执行。避免 OOM 崩溃。
-   */
-  const subsetResult = await withMemoryGate(async () => {
-    return fontSubset(oldFontBuffer, text, {
-      outType: outType,
-      sourceType: fontType,
-    });
-  }, subsetQueueTimeoutSeconds * 1000, fontPath);
+  const memoryBytes = await estimateSubsetMemory(fontPath);
+  /** 完整字体读取和裁剪都位于共享内存闸门内；缓存命中不占用重任务槽位 */
+  const subsetResult = await withMemoryGate(
+    () => subsetFontFile(fontPath, text, outType),
+    subsetQueueTimeoutSeconds * 1000,
+    memoryBytes,
+  );
 
   /** 排队超时，返回 503 让客户端重试 */
   if (subsetResult === null) {
@@ -137,8 +115,7 @@ export async function handleFontSubset(req: Request, res: Response) {
     };
   }
 
-  const newFont = subsetResult;
-  /** fontSubset 结束时间戳（实际裁剪，亚毫秒级应在此体现） */
+  const newFont = subsetResult.bytes;
   const t3 = Date.now();
 
   /** 写入裁剪结果缓存 */
@@ -156,8 +133,8 @@ export async function handleFontSubset(req: Request, res: Response) {
         "X-Cache": "MISS",
         /** 分阶段耗时（毫秒），供排查服务端处理时间分布 */
         "X-Timing-Find": `${t1 - t0}`,
-        "X-Timing-Read": `${t2 - t1}`,
-        "X-Timing-Subset": `${t3 - t2}`,
+        "X-Timing-Read": `${subsetResult.readMs}`,
+        "X-Timing-Subset": `${subsetResult.subsetMs}`,
         "X-Timing-Total": `${t3 - t0}`,
       },
     }),

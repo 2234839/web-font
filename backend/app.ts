@@ -217,7 +217,7 @@ async function main() {
 
   await ensureDirectories();
 
-  const server = new SimpleHttpServer({ port: 8087 });
+  const server = new SimpleHttpServer({ port: Number(process.env.PORT) || 8087 });
   server.use(
     logMiddleware,
     corsMiddleware,

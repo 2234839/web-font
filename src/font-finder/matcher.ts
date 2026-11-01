@@ -1,14 +1,10 @@
 /**
  * 候选字体比对引擎 —— 渲染侧
  *
- * 对每个候选字体：经后端 subset API 拿到只含目标字符的最小 woff2（服务端有缓存，
- * 同字符组合只裁一次）→ FontFace 加载 → canvas 渲染每个字 → 与截图切出的字形
- * 归一化后逐一 SSIM，取平均分。
- *
- * 竞态安全：每个字体用独立 family 名（`ff-match-<序号>-<随机>`），
- * 比对完立即 delete() 释放，不污染全局字体空间。
+ * 服务端在 /api/glyph-match 流式比对时逐字体裁剪一次，并把 woff2 随事件下发；
+ * 本模块用该 woff2 加载 FontFace → canvas 渲染每个字 → 生成归一化预览。
+ * 不再发起第二轮裁剪请求。
  */
-import { calculateSSIM } from "./ssim";
 import {
   imageToMask,
   maskToNormalizedRGBA,
@@ -17,32 +13,6 @@ import {
   deskewMask,
   type Mask,
 } from "./segmenter";
-
-/** 单个候选字形的比对结果 */
-export interface GlyphMatch {
-  /** 识别用的字符 */
-  char: string;
-  /** 截图字形归一化预览（DataURL） */
-  queryPreview: string;
-  /** 候选字体渲染字形归一化预览（DataURL） */
-  candidatePreview: string;
-  /** 该字的 SSIM 得分 0~1 */
-  score: number;
-}
-
-/** 单个字体的比对结果 */
-export interface FontMatchResult {
-  /** 字体文件名（后端 font 名） */
-  font: string;
-  /** 所有字形平均 SSIM 得分 */
-  score: number;
-  /** 逐字明细 */
-  glyphs: GlyphMatch[];
-  /** 该字体缺字（subset 后渲染不出目标字符） */
-  missing: boolean;
-  /** 比对耗时 ms */
-  elapsed: number;
-}
 
 /**
  * 渲染缓冲 canvas 尺寸 —— 远大于归一化网格，保证小笔画细节在降采样前已充分光栅化
@@ -113,27 +83,36 @@ function tightCrop(mask: Mask): Mask {
   return { data: crop, w: cw, h: ch };
 }
 
+/** base64 → Uint8Array（流事件中的 woff2 载荷） */
+export function base64ToBytes(b64: string): Uint8Array {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+
 /**
- * 加载候选字体子集 —— 走后端 subset API（GET /api?font=&text=&outType=woff2）
- * 只请求目标字符，传输量极小且命中服务端 subset 缓存
+ * 用 woff2 字节加载临时 FontFace（独立 family，用完即删）
+ * 字节来自流式接口的同一份裁剪结果，不再发第二轮裁剪请求
  */
-async function loadSubsetFontFace(font: string, text: string): Promise<FontFace> {
-  const url = `/api?font=${encodeURIComponent(font)}&text=${encodeURIComponent(text)}&outType=woff2`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`subset failed: ${font} HTTP ${res.status}`);
-  const buf = await res.arrayBuffer();
-  const family = `ff-match-${font.replace(/[^a-z0-9]/gi, "")}-${Math.random().toString(36).slice(2, 8)}`;
+async function loadFontFaceFromBytes(bytes: Uint8Array): Promise<FontFace> {
+  /** 拷贝出独立 ArrayBuffer，避免复用底层缓冲破后续读取 */
+  const buf = bytes.slice().buffer as ArrayBuffer;
+  const family = `ff-match-${Math.random().toString(36).slice(2, 10)}`;
   const face = new FontFace(family, buf);
   await face.load();
   document.fonts.add(face);
-  (face as FontFace & { _family?: string })._family = family;
   return face;
 }
 
-/** 一次裁剪指定字体所需字符，并用浏览器生成各字符的归一化预览 */
-export async function renderSubsetGlyphPreviews(font: string, chars: string[]): Promise<Map<string, string>> {
-  const face = await loadSubsetFontFace(font, [...new Set(chars)].join(""));
+/**
+ * 用流事件携带的 woff2 生成各字符的归一化预览
+ * 每个字体只裁剪一次，预览复用同一份裁剪结果
+ */
+export async function renderSubsetGlyphPreviews(woff2: Uint8Array, chars: string[]): Promise<Map<string, string>> {
   const previews = new Map<string, string>();
+  if (!chars.length) return previews;
+  const face = await loadFontFaceFromBytes(woff2);
   try {
     for (const char of new Set(chars)) {
       const rawMask = renderCharMask(char, face.family, 96);
@@ -145,49 +124,6 @@ export async function renderSubsetGlyphPreviews(font: string, chars: string[]): 
     document.fonts.delete(face);
   }
   return previews;
-}
-
-/**
- * 对单个候选字体执行比对
- *
- * @param font 字体文件名
- * @param text 用户确认的选区文字（与 queryMasks 一一对应）
- * @param queryMasks 截图切分出的归一化 RGBA 字形序列
- */
-export async function matchFont(
-  font: string,
-  text: string,
-  queryMasks: Uint8Array[],
-  previews: string[],
-): Promise<FontMatchResult> {
-  const t0 = performance.now();
-  const glyphs: GlyphMatch[] = [];
-  let missing = false;
-  let face: FontFace | null = null;
-  try {
-    face = await loadSubsetFontFace(font, text);
-    const family = (face as FontFace & { _family?: string })._family!;
-    for (let i = 0; i < text.length; i++) {
-      const char = text[i]!;
-      const rawMask = renderCharMask(char, family, 96);
-      if (!rawMask) {
-        missing = true;
-        continue;
-      }
-      const candidateRGBA = maskToNormalizedRGBA(tightCrop(rawMask));
-      const score = calculateSSIM(queryMasks[i]!, candidateRGBA, 64, 64);
-      glyphs.push({
-        char,
-        queryPreview: previews[i]!,
-        candidatePreview: rgbaToDataURL(candidateRGBA),
-        score,
-      });
-    }
-    const score = glyphs.length ? glyphs.reduce((s, g) => s + g.score, 0) / glyphs.length : 0;
-    return { font, score, glyphs, missing, elapsed: performance.now() - t0 };
-  } finally {
-    if (face) document.fonts.delete(face);
-  }
 }
 
 /** 截图 ImageData → 归一化 RGBA 序列 + 预览

@@ -2,6 +2,7 @@ import { extractFontMeta, META_VERSION, type FontUserConfig } from "../font_util
 import { parseUrl, jsonResponse, findFontPath, readFontBuffer } from "../shared";
 import { readFile, writeFile, stat } from "../interface";
 import { withMemoryGate } from "../subset_queue";
+import { estimateSubsetMemory } from "../font_util/subset_file";
 import { subsetQueueTimeoutSeconds } from "../config";
 
 /**
@@ -113,13 +114,14 @@ export async function handleFontMeta(req: Request, _res: Response) {
   /** 3. 首次请求 —— 解析 cmap + name 表计算元数据（CPU/内存密集，复用子集化并发闸门） */
   if (!meta) {
     /** 排队超时，返回 503 让客户端重试 */
+    const memoryBytes = await estimateSubsetMemory(fontPath);
     const result = await withMemoryGate(
       async () => {
         const fontBuffer = await readFontBuffer(fontPath);
         return extractFontMeta(fontBuffer);
       },
       subsetQueueTimeoutSeconds * 1000,
-      fontPath,
+      memoryBytes,
     );
 
     if (result === null) {

@@ -218,16 +218,27 @@ export const writeFont = (
   return new Uint8Array(result);
 };
 
+/** subset 结果：内存 ttf 对象（含完整字形轮廓，OTF 路径为 null）+ 按需序列化函数 */
+export interface SubsetResult {
+  /** optimize 后的子集 ttf 对象，可直接用于字形光栅化，免去序列化再解析 */
+  ttf: Record<string, unknown> | null;
+  /** 序列化为指定格式二进制（可多次调用输出不同格式） */
+  write: (outType: FontEditor.FontType) => Uint8Array;
+}
+
 /**
  * 完整的字体裁剪流程（当前生产实现）
- * 解析 -> subset -> 优化 -> 序列化
+ * 解析 -> subset -> 优化 -> GPOS/GSUB 重写
  * 优化293: 移除 async，函数体内无 await，消除不必要的 Promise 包装和微任务调度
+ *
+ * 部分字体（如源界明朝）序列化后的 glyf 表无法被 fonteditor 严格再解析，
+ * 但内存对象与浏览器解析均正常；直接消费内存 ttf 对象可避免该闭环问题。
  */
-export const fontSubset = (
+export const fontSubsetToObject = (
   fontBuffer: ArrayBuffer,
   subString: string,
   option: { sourceType: FontEditor.FontType; outType: FontEditor.FontType },
-): Uint8Array => {
+): SubsetResult => {
   /** 自适应锚定注入：仅小子集（<32 个唯一码点）需要 blue zone 校准。大子集
    *  自身字符已提供足够的 blue zone 统计样本（千字文段 SSIM 本就 1.0），注入
    *  32 锚定字反而推高体积与浏览器加载耗时。阈值实测：<32 全部敏感用例达标，
@@ -247,10 +258,9 @@ export const fontSubset = (
     const fontU8 = new Uint8Array(fontBuffer);
     const otfBytes = subsetOTF(fontU8, codePoints, true, option.outType);
     if (otfBytes !== null) {
-      if (option.outType === "woff2") {
-        return encodeTTFToWOFF2(otfBytes);
-      }
-      return otfBytes;
+      const bytes = option.outType === "woff2" ? encodeTTFToWOFF2(otfBytes) : otfBytes;
+      /** OTF（CFF）路径直接透传字节，无 fonteditor 内存 ttf 对象 */
+      return { ttf: null, write: () => bytes };
     }
     /** subsetOTF 不支持（非 CID CFF 等）降级到原 fonteditor 路径 */
   }
@@ -329,5 +339,17 @@ export const fontSubset = (
   const optimized = optimizeFont(font);
   /** GPOS/GSUB 表子集化：按子集字形重映射布局表 glyphId，恢复标点压缩与连字/上下文替换 */
   rewriteLayoutTablesForSubset(optimized, subsetGids);
-  return writeFont(optimized, option.outType);
+  return {
+    ttf: (optimized as unknown as { get: () => Record<string, unknown> }).get(),
+    write: (outType: FontEditor.FontType) => writeFont(optimized, outType),
+  };
+};
+
+/** 向后兼容包装：直接序列化为目标格式 */
+export const fontSubset = (
+  fontBuffer: ArrayBuffer,
+  subString: string,
+  option: { sourceType: FontEditor.FontType; outType: FontEditor.FontType },
+): Uint8Array => {
+  return fontSubsetToObject(fontBuffer, subString, option).write(option.outType);
 };
