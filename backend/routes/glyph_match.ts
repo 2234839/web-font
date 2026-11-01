@@ -11,6 +11,32 @@ import { fontDirs, subsetQueueTimeoutSeconds } from "../config";
 import { getGlyphBitmap, glyphSimilarity, hasGlyph, type SubsetTtfObject } from "../font_util/glyph_bitmap";
 import { estimateSubsetMemory, subsetFontFile } from "../font_util/subset_file";
 import { withMemoryGate } from "../subset_queue";
+import { LruCache } from "../lru_cache";
+
+/** 进程启动时刻，重启即变化 —— 与 subset.ts 同机制，避免开发态旧缓存复活 */
+const PROCESS_START_TIME = Date.now();
+/** 版本指纹（构建期由 tsdown define 注入）；发版后旧缓存自动失效 */
+const RESOLVED_VERSION = typeof PACKAGE_VERSION !== "undefined" ? PACKAGE_VERSION : "dev";
+
+/** 字形匹配裁剪产物的内存估计系数：ttf 对象（字形数组/typed array 开销）相对序列化 bytes 的倍数 */
+const TTF_OBJECT_OVERHEAD = 16;
+
+interface CachedSubset {
+  /** 序列化裁剪字体（发前端预览） */
+  bytes: Uint8Array;
+  /** 评分用内存子集对象（OTF 输入时为 null）；已重建子集 cmap */
+  ttf: SubsetTtfObject | null;
+}
+
+/**
+ * 字形匹配专用的裁剪产物 LRU 缓存：key 为 字体路径+文本+版本指纹。
+ * 相同字体+相同文字的重复搜索直接命中，不再读源文件、不裁剪、不占内存闸门槽位。
+ * 按内存容量淘汰（bytes 字节 + ttf 对象估算开销）。
+ */
+const glyphMatchSubsetCache = new LruCache<CachedSubset>({
+  maxBytes: 64 * 1024 * 1024,
+  sizeFn: (v) => v.bytes.byteLength * (1 + TTF_OBJECT_OVERHEAD),
+});
 /** 单个查询字形 */
 interface QueryGlyph {
   char: string;
@@ -106,16 +132,27 @@ async function* streamMatches(
         yield { type: "fontDone", font };
         continue;
       }
-      const memoryBytes = await estimateSubsetMemory(fontPath);
-      const subset = await withMemoryGate(
-        () => subsetFontFile(fontPath, text, "ttf"),
-        subsetQueueTimeoutSeconds * 1000,
-        memoryBytes,
-      );
-      if (!subset) throw new Error(`字体裁剪排队超时：${font}`);
-
-      /** 优先用裁剪管线返回的内存 ttf 对象（重建子集 cmap），免去序列化再解析（部分字体 re-parse 会失败） */
-      const ttf = subset.ttf ? buildSubsetCmapView(subset.ttf) : readSubsetObject(subset.bytes);
+      const cacheKey = `${RESOLVED_VERSION}:${PROCESS_START_TIME}:${fontPath}:${text}`;
+      const cached = glyphMatchSubsetCache.get(cacheKey);
+      let subsetBytes: Uint8Array;
+      let ttf: SubsetTtfObject;
+      if (cached) {
+        /** 缓存命中：不读源文件、不裁剪、不占重任务槽位 */
+        subsetBytes = cached.bytes;
+        ttf = cached.ttf ?? readSubsetObject(cached.bytes);
+      } else {
+        const memoryBytes = await estimateSubsetMemory(fontPath);
+        const subset = await withMemoryGate(
+          () => subsetFontFile(fontPath, text, "ttf"),
+          subsetQueueTimeoutSeconds * 1000,
+          memoryBytes,
+        );
+        if (!subset) throw new Error(`字体裁剪排队超时：${font}`);
+        subsetBytes = subset.bytes;
+        /** 优先用裁剪管线返回的内存 ttf 对象（重建子集 cmap），免去序列化再解析（部分字体 re-parse 会失败） */
+        ttf = subset.ttf ? buildSubsetCmapView(subset.ttf) : readSubsetObject(subset.bytes);
+        glyphMatchSubsetCache.set(cacheKey, { bytes: subsetBytes, ttf: subset.ttf ? ttf : null });
+      }
       let started = false;
       let hasMatch = false;
       for (const query of queryGlyphs) {
@@ -126,7 +163,7 @@ async function* streamMatches(
         }
         if (!started) {
           started = true;
-          yield { type: "font", font, subset: bytesToBase64(subset.bytes) };
+          yield { type: "font", font, subset: bytesToBase64(subsetBytes) };
         }
         const candidate = getGlyphBitmap(ttf, codePoint);
         if (!candidate) {
