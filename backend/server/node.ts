@@ -4,7 +4,8 @@ import { stat as fsStat, readFile, writeFile, readdir as fsReaddir, mkdir, unlin
 implInterface({
   async stat(path) {
     const r = await fsStat(path);
-    return { ...r, isDirectory: () => r.isDirectory() };
+    /** Stats 的 isFile/isDirectory 在原型上，{...r} 展开会丢失，必须显式包装 */
+    return { ...r, isFile: () => r.isFile(), isDirectory: () => r.isDirectory() };
   },
   readFile(path) {
     return readFile(path);

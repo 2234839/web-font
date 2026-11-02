@@ -39,22 +39,14 @@ export function createTcpServer(
     // 创建 WritableStream
     const writable = new WritableStream<Uint8Array>({
       write(chunk) {
-        return new Promise<void>((resolve, reject) => {
-          const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-          socket.write(buffer, (err) => {
-            if (err) {
-              /** EPIPE：客户端已断开，销毁连接而非让异常向上冒泡打死进程 */
-              if ((err as NodeJS.ErrnoException).code === "EPIPE") {
-                socket.destroy();
-                resolve();
-              } else {
-                reject(err);
-              }
-            } else {
-              resolve();
-            }
-          });
-        });
+        /**
+         * 不等待 write 回调：LLRT 的 net shim 回调会间歇性丢失，
+         * promise 永不 resolve 导致响应写出非确定性挂起（0 bytes / 半截）。
+         * 响应体均为小帧（KB 级），socket 缓冲足够；错误由 error 事件兜底。
+         */
+        const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        socket.write(buffer);
+        return Promise.resolve();
       },
       close() {
         socket.end();
@@ -66,8 +58,8 @@ export function createTcpServer(
 
     // 实现 close 方法
     function close() {
+      /** 只 end 不 destroy：destroy 会立即丢弃写缓冲中未发送的数据，导致响应截断 */
       socket.end();
-      socket.destroy();
     }
 
     onSocket({ readable, writable, close });

@@ -5,12 +5,14 @@
  * 不缓存完整字体对象，也不为了生成预览再发起第二轮全库裁剪。
  */
 import { Font } from "../../vendor/fonteditor-core/lib/ttf/font";
-import { jsonResponse, findFontPath, subsetCache } from "../shared";
-import { SUBSET_CACHE_KEY } from "./subset";
-import { readdir } from "../interface";
-import { fontDirs, subsetQueueTimeoutSeconds } from "../config";
+import { jsonResponse, findFontPath } from "../shared";
+import { readdir, stat } from "../interface";
+import { fontDirs, subsetQueueTimeoutSeconds, glyphMatchSlowConcurrency } from "../config";
 import { getGlyphBitmap, glyphSimilarity, hasGlyph, type SubsetTtfObject } from "../font_util/glyph_bitmap";
 import { estimateSubsetMemory, subsetFontFile } from "../font_util/subset_file";
+import { loadGlyphIndex, indexBitmap, writeGlyphIndex, markIndexBuilt } from "../font_util/glyph_index";
+import { ANCHOR_CHARS } from "../font_util/common_chars";
+import { loadClusters, scheduleClusterBuild, type FontCluster } from "../font_util/font_cluster";
 import { withMemoryGate } from "../subset_queue";
 /** 单个查询字形 */
 interface QueryGlyph {
@@ -60,21 +62,6 @@ async function listCandidateFonts(): Promise<string[]> {
   return names;
 }
 
-/** 小字体转 base64，随流交给浏览器渲染，无需再次请求裁剪接口 */
-function bytesToBase64(bytes: Uint8Array): string {
-  let binary = "";
-  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
-    binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
-  }
-  return btoa(binary);
-}
-
-/** 解析裁剪产物；OTF（CFF）等无内存 ttf 对象的路径不参与字形评分 */
-function readSubsetObject(bytes: Uint8Array): SubsetTtfObject {
-  const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
-  return Font.create(buffer, { type: "ttf", hinting: false }).get();
-}
-
 /**
  * 裁剪管线的内存 ttf 对象中 glyf 已是子集但 cmap 仍是原始 gid 映射，
  * 按字形自带的 unicode 标注重建 codepoint→新 gid 映射。
@@ -93,75 +80,242 @@ function buildSubsetCmapView(ttf: Record<string, unknown>): SubsetTtfObject {
 }
 
 /** 依次产出事件；每次只保留下一个候选字体的数据，浏览器背压会自然暂停后续裁剪 */
-async function* streamMatches(
-  fonts: string[],
-  queryGlyphs: ParsedQueryGlyph[],
-): AsyncGenerator<GlyphMatchEvent> {
-  yield { type: "start", total: fonts.length };
-  const text = queryGlyphs.map((glyph) => glyph.char).join("");
+/**
+ * 慢路径（源字体裁剪解析）信号量：单字体解析后的对象图可达上百 MB。
+ * 并发度来自配置（GLYPH_MATCH_SLOW_CONCURRENCY）：默认 1 为最保守形态，
+ * 内存充裕的部署（如 Node + 大内存容器）可调大提升冷路径吞吐。
+ */
+const SLOW_PATH_CONCURRENCY = glyphMatchSlowConcurrency;
+let slowInFlight = 0;
+const slowWaiters: (() => void)[] = [];
+/** 占一个慢路径槽位（异步等待直到有空位） */
+async function acquireSlowSlot(): Promise<void> {
+  if (slowInFlight < SLOW_PATH_CONCURRENCY) {
+    slowInFlight++;
+    return;
+  }
+  await new Promise<void>((resolve) => slowWaiters.push(resolve));
+  slowInFlight++;
+}
+/** 释放慢路径槽位并唤醒一个等待者 */
+function releaseSlowSlot(): void {
+  slowInFlight--;
+  slowWaiters.shift()?.();
+}
 
-  for (const font of fonts) {
-    try {
-      const fontPath = await findFontPath(font);
-      if (!fontPath) {
-        yield { type: "fontDone", font };
+/** 单个字体的评分事件（普通 async 函数，不使用 async generator：LLRT 下嵌套 generator 驱动会非确定性饿死上百秒） */
+async function matchFontEvents(
+  font: string,
+  queryGlyphs: ParsedQueryGlyph[],
+): Promise<GlyphMatchEvent[]> {
+  const fontPath = await findFontPath(font);
+  if (!fontPath) return [];
+
+  /** 快路径：字形索引命中则免读源字体、免裁剪，纯查表评分 */
+  const index = await loadGlyphIndex(fontPath);
+  const events: GlyphMatchEvent[] = [];
+  if (index) {
+    let started = false;
+    let hasMatch = false;
+    for (const query of queryGlyphs) {
+      const codePoint = query.char.codePointAt(0)!;
+      const candidate = indexBitmap(index, codePoint);
+      if (!candidate) {
+        if (started) events.push({ type: "glyph", font, glyph: null, missing: true });
         continue;
       }
-      const cacheKey = `${SUBSET_CACHE_KEY}:${fontPath}:ttf:${text}`;
-      const cached = subsetCache.get(cacheKey);
-      let subsetBytes: Uint8Array;
-      let ttf: SubsetTtfObject;
-      if (cached) {
-        /** 缓存命中：不读源文件、不裁剪、不占重任务槽位（与 /api 裁剪接口共享同一份产物） */
-        subsetBytes = cached.bytes;
-        ttf = cached.ttf ?? readSubsetObject(cached.bytes);
-      } else {
-        const memoryBytes = await estimateSubsetMemory(fontPath);
-        const subset = await withMemoryGate(
-          () => subsetFontFile(fontPath, text, "ttf"),
-          subsetQueueTimeoutSeconds * 1000,
-          memoryBytes,
-        );
-        if (!subset) throw new Error(`字体裁剪排队超时：${font}`);
-        subsetBytes = subset.bytes;
-        /** 优先用裁剪管线返回的内存 ttf 对象（重建子集 cmap），免去序列化再解析（部分字体 re-parse 会失败） */
-        ttf = subset.ttf ? buildSubsetCmapView(subset.ttf) : readSubsetObject(subset.bytes);
-        subsetCache.set(cacheKey, { bytes: subsetBytes, ttf: subset.ttf ? ttf : null });
+      if (!started) {
+        started = true;
+        events.push({ type: "font", font, subset: "" });
       }
-      let started = false;
-      let hasMatch = false;
-      for (const query of queryGlyphs) {
-        const codePoint = query.char.codePointAt(0)!;
-        if (!hasGlyph(ttf, codePoint)) {
-          if (started) yield { type: "glyph", font, glyph: null, missing: true };
-          continue;
-        }
-        if (!started) {
-          started = true;
-          yield { type: "font", font, subset: bytesToBase64(subsetBytes) };
-        }
-        const candidate = getGlyphBitmap(ttf, codePoint);
-        if (!candidate) {
-          yield { type: "glyph", font, glyph: null, missing: true };
-          continue;
-        }
-        hasMatch = true;
-        yield {
-          type: "glyph",
-          font,
-          glyph: { char: query.char, score: glyphSimilarity(query.bitmap, candidate), queryIndex: query.queryIndex },
-          missing: false,
-        };
-      }
-      /** 全部缺字的候选不展示，但仍计入完成进度 */
-      if (started && !hasMatch) yield { type: "glyph", font, glyph: null, missing: true };
-    } catch (err) {
-      /** 单个字体裁剪/解析失败不拖垮整个搜索流，记录后继续下一个 */
-      console.error(`[glyph-match] ${font} 处理失败:`, err instanceof Error ? err.message : err);
+      hasMatch = true;
+      events.push({
+        type: "glyph",
+        font,
+        glyph: { char: query.char, score: glyphSimilarity(query.bitmap, candidate), queryIndex: query.queryIndex },
+        missing: false,
+      });
     }
-    yield { type: "fontDone", font };
+    if (started && !hasMatch) events.push({ type: "glyph", font, glyph: null, missing: true });
+    if (started) return events;
   }
-  yield { type: "done" };
+
+  /** 慢路径：索引未覆盖查询字（或无索引）时走裁剪管线（事件缓存 + 内存闸门） */
+  await acquireSlowSlot();
+  try {
+    return await slowPathEvents(fontPath, font, index, queryGlyphs);
+  } finally {
+    releaseSlowSlot();
+  }
+}
+
+/** 慢路径事件缓存上限：防止长尾查询字组合无限膨胀 */
+const EVENTS_CACHE_MAX = 64;
+/** fontPath+查询签名 → 评分事件；命中免 subset 免解析（LLRT 下 bytes 重解析会挂起/失败，故直接缓存结果） */
+const eventsCache = new Map<string, GlyphMatchEvent[]>();
+
+/** FNV-1a 拼接哈希：查询字集 + 位图指纹，同前端重复搜索可命中缓存 */
+function querySignature(queryGlyphs: ParsedQueryGlyph[]): string {
+  let h = 0x811c9dc5;
+  for (const glyph of queryGlyphs) {
+    for (let i = 0; i < glyph.bitmap.length; i++) {
+      h ^= glyph.bitmap[i]!;
+      h = Math.imul(h, 0x01000193) >>> 0;
+    }
+    h ^= glyph.char.length;
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return `${queryGlyphs.map((g) => g.char).join("")}|${h.toString(36)}`;
+}
+
+/**
+ * 慢路径纯函数版：subset → 建索引 → 评分一次算完，返回事件数组。
+ * 不在异步生成器体内做重活：LLRT 下生成器上下文与其他 worker 的
+ * 穿插执行会触发 native crash（实测独立串行同代码完全正常）。
+ * 重复查询直接命中事件缓存，不做 bytes 重解析（Font.create 对部分
+ * 字体在 LLRT 下解析挂起/抛错）。
+ */
+async function slowPathEvents(
+  fontPath: string,
+  font: string,
+  index: Awaited<ReturnType<typeof loadGlyphIndex>>,
+  queryGlyphs: ParsedQueryGlyph[],
+): Promise<GlyphMatchEvent[]> {
+  const queryChars = [...new Set(queryGlyphs.map((glyph) => glyph.char))].join("");
+  const cacheKey = `${fontPath}\0${querySignature(queryGlyphs)}`;
+  const hit = eventsCache.get(cacheKey);
+  if (hit) return hit;
+  /** 裁剪文本 = 查询字 + 锚点字（无索引时）：一次 subset 同时拿到评分素材与建 .gidx 素材 */
+  const text = index ? queryChars : [...new Set(queryChars + ANCHOR_CHARS)].join("");
+  const memoryBytes = await estimateSubsetMemory(fontPath);
+  const subset = await withMemoryGate(
+    () => subsetFontFile(fontPath, text, "ttf"),
+    subsetQueueTimeoutSeconds * 1000,
+    memoryBytes,
+  );
+  if (!subset) throw new Error(`字体裁剪排队超时：${font}`);
+  /** 只用裁剪管线返回的内存 ttf 对象；无内存对象的（OTF/CFF）不参与评分 */
+  if (!subset.ttf) return [];
+  const ttf = buildSubsetCmapView(subset.ttf);
+  /** 无索引（冷启动）：用含锚点字的 subset 顺带建 .gidx，免去全量解析（LLRT 下并发全量解析会 native crash） */
+  if (!index) {
+    const src = await stat(fontPath);
+    await writeGlyphIndex(fontPath, ttf, src.mtimeMs);
+    markIndexBuilt(fontPath);
+  }
+  const events: GlyphMatchEvent[] = [];
+  let started = false;
+  let hasMatch = false;
+  for (const query of queryGlyphs) {
+    const codePoint = query.char.codePointAt(0)!;
+    if (!hasGlyph(ttf, codePoint)) {
+      if (started) events.push({ type: "glyph", font, glyph: null, missing: true });
+      continue;
+    }
+    if (!started) {
+      started = true;
+      events.push({ type: "font", font, subset: "" });
+    }
+    const candidate = getGlyphBitmap(ttf, codePoint);
+    if (!candidate) {
+      events.push({ type: "glyph", font, glyph: null, missing: true });
+      continue;
+    }
+    hasMatch = true;
+    events.push({
+      type: "glyph",
+      font,
+      glyph: { char: query.char, score: glyphSimilarity(query.bitmap, candidate), queryIndex: query.queryIndex },
+      missing: false,
+    });
+  }
+  /** 全部缺字的候选不展示，但仍计入完成进度 */
+  if (started && !hasMatch) events.push({ type: "glyph", font, glyph: null, missing: true });
+  if (eventsCache.size >= EVENTS_CACHE_MAX) {
+    /** Map 迭代序即插入序，淘汰最旧项 */
+    eventsCache.delete(eventsCache.keys().next().value!);
+  }
+  eventsCache.set(cacheKey, events);
+  return events;
+}
+
+/** 簇代表分低于最佳代表分该幅度时，整簇剪掉不扫（近似搜索：换来大幅减少裁剪加载） */
+const PRUNE_MARGIN = 0.35;
+
+/**
+ * 聚类感知的扫描顺序：先评各簇代表（medoid）得分，簇按分数降序排列，
+ * 远簇整体剪枝；未入簇字体（新上传）附在末尾不剪。
+ * medoid 评分走 matchFontEvents 慢路径（事件缓存命中后重扫很便宜）。
+ */
+async function orderFontsByCluster(
+  fonts: string[],
+  clusters: FontCluster[],
+  queryGlyphs: ParsedQueryGlyph[],
+): Promise<{ order: string[]; pruned: Set<string> }> {
+  const medoidScore = new Map<string, number>();
+  for (const cluster of clusters) {
+    let sum = 0;
+    let n = 0;
+    try {
+      for (const event of await matchFontEvents(cluster.medoid, queryGlyphs)) {
+        if (event.type === "glyph" && event.glyph) {
+          sum += event.glyph.score;
+          n++;
+        }
+      }
+    } catch (err) {
+      console.error(`[glyph-match] medoid ${cluster.medoid} 评分失败:`, err instanceof Error ? err.stack ?? err.message : String(err));
+    }
+    medoidScore.set(cluster.medoid, n > 0 ? sum / n : 0);
+  }
+  const sorted = [...clusters].sort(
+    (a, b) => (medoidScore.get(b.medoid) ?? 0) - (medoidScore.get(a.medoid) ?? 0),
+  );
+  const best = sorted[0] ? (medoidScore.get(sorted[0]!.medoid) ?? 0) : 0;
+  const order: string[] = [];
+  const pruned = new Set<string>();
+  for (const cluster of sorted) {
+    const score = medoidScore.get(cluster.medoid) ?? 0;
+    if (score < best - PRUNE_MARGIN) {
+      for (const member of cluster.members) pruned.add(member);
+      continue;
+    }
+    /** medoid 评分阶段已填充事件缓存，扫描阶段重扫走缓存命中，成本远低于首次裁剪 */
+    order.push(cluster.medoid, ...cluster.members.filter((m) => m !== cluster.medoid));
+  }
+  const clustered = new Set(clusters.flatMap((c) => c.members));
+  for (const font of fonts) {
+    if (!clustered.has(font)) order.push(font);
+  }
+  return { order, pruned };
+}
+
+/**
+ * 全库搜索事件收集：串行逐字体处理，一次性返回全部事件。
+ * 不用 async generator / worker 池 / ReadableStream：LLRT 0.8/0.9 下这些原语
+ * 在高频穿插中会非确定性饿死（单次 next 挂上百秒）甚至 native segfault，
+ * 串行普通循环 + 整体返回是最稳的形态。
+ */
+async function collectMatchEvents(
+  fonts: string[],
+  pruned: Set<string>,
+  queryGlyphs: ParsedQueryGlyph[],
+): Promise<GlyphMatchEvent[]> {
+  const all: GlyphMatchEvent[] = [{ type: "start", total: fonts.length + pruned.size }];
+  for (const font of pruned) {
+    all.push({ type: "fontDone", font });
+  }
+  for (const font of fonts) {
+    try {
+      all.push(...(await matchFontEvents(font, queryGlyphs)));
+    } catch (err) {
+      /** 单个字体裁剪/解析失败不拖垮整个搜索，记录后继续下一个 */
+      console.error(`[glyph-match] ${font} 处理失败:`, err instanceof Error ? err.stack ?? err.message : String(err), err);
+    }
+    all.push({ type: "fontDone", font });
+  }
+  all.push({ type: "done" });
+  return all;
 }
 
 export async function handleGlyphMatch(req: Request, _res: Response) {
@@ -189,22 +343,26 @@ export async function handleGlyphMatch(req: Request, _res: Response) {
   }
 
   const fonts = await listCandidateFonts();
+  /** 聚类可用时按簇序扫描 + 剪枝；不可用退回目录顺序全量扫，并触发后台重建聚类 */
+  const clusters = await loadClusters(fonts);
+  let scanOrder = fonts;
+  let pruned = new Set<string>();
+  if (clusters && clusters.length > 1) {
+    const t0 = Date.now();
+    ({ order: scanOrder, pruned } = await orderFontsByCluster(fonts, clusters, queryGlyphs));
+    console.log(`[glyph-match] 聚类排序 ${Date.now() - t0}ms（剪枝 ${pruned.size}）`);
+  } else if (!clusters) {
+    scheduleClusterBuild(fonts);
+  }
   const encoder = new TextEncoder();
-  const events = streamMatches(fonts, queryGlyphs);
-  const stream = new ReadableStream<Uint8Array>({
-    async pull(controller) {
-      const { done, value } = await events.next();
-      if (done) {
-        controller.close();
-        return;
-      }
-      controller.enqueue(encoder.encode(`${JSON.stringify(value)}\n`));
-    },
-    async cancel() {
-      await events.return(undefined);
-    },
-  });
-  /** LLRT 的 Response 不支持 ReadableStream body（body 会变 undefined），流挂在附加属性上由 HTTP 层写出 */
+  const events = await collectMatchEvents(scanOrder, pruned, queryGlyphs);
+  /**
+   * 一次性收集全部事件再返回完整 NDJSON body（不流式）。
+   * LLRT 的 ReadableStream pull + pipeTo 在高频穿插下存在非确定性
+   * 卡死/崩溃（0.8/0.9 均复现），评分本身已亚秒级，牺牲渐进展示换稳定。
+   * 前端逐行解析 NDJSON 的逻辑对完整 body 同样兼容。
+   */
+  const responseBody = encoder.encode(events.map((event) => `${JSON.stringify(event)}\n`).join(""));
   const res = new Response(null, {
     status: 200,
     headers: {
@@ -214,6 +372,7 @@ export async function handleGlyphMatch(req: Request, _res: Response) {
       "Connection": "close",
     },
   });
-  (res as Response & { _stream?: ReadableStream<Uint8Array> })._stream = stream;
+  /** 直接挂 body bytes：走 server 层的直接写回通道（含 Content-Length），绕开 LLRT blob 挂起 */
+  (res as Response & { _bodyBytes?: Uint8Array })._bodyBytes = responseBody;
   return { req, res };
 }

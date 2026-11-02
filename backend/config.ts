@@ -35,5 +35,13 @@ export const subsetConcurrency = Math.max(1, parseInt(env.SUBSET_CONCURRENCY ?? 
  */
 export const subsetQueueTimeoutSeconds = Math.max(5, parseInt(env.SUBSET_QUEUE_TIMEOUT ?? "30", 10) || 30);
 
+/**
+ * 字形搜索慢路径（源字体裁剪解析）最大并发数
+ *
+ * 单字体解析后的对象图可达上百 MB，是搜索链路里最重的操作。
+ * 默认 1：LLRT 运行时 GC 回收滞后 + 串行最稳；Node 或内存充裕的环境可调大。
+ */
+export const glyphMatchSlowConcurrency = Math.max(1, parseInt(env.GLYPH_MATCH_SLOW_CONCURRENCY ?? "1", 10) || 1);
+
 /** 字体搜索目录（按优先级排序：admin > 普通 > 临时） */
 export const fontDirs = ["font/admin", "font", "font/temp"] as const;

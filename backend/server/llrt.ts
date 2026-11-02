@@ -1,6 +1,10 @@
-import "web-streams-polyfill/polyfill";
 import { implInterface } from "../interface";
 import * as fs from "fs/promises";
+
+/**
+ * 不再引入 web-streams-polyfill：polyfill 覆盖原生 ReadableStream/WritableStream
+ * 后，与 LLRT 原生 socket/net 的组合会出现非确定性写挂起、数据串扰
+ * （响应 body 混入别的连接的 HTTP 头）等问题；LLRT 自带 WHATWG streams。
 
 /**
  * LLRT 的 fs 适配层

@@ -10,7 +10,7 @@
  */
 import { ref, computed, useTemplateRef } from "vue";
 import { usePageSeo } from "../useSeo";
-import { prepareQueryGlyphs, renderSubsetGlyphPreviews, base64ToBytes } from "../font-finder/matcher";
+import { prepareQueryGlyphs, renderSubsetGlyphPreviews } from "../font-finder/matcher";
 
 /** 服务端逐字返回的单字体结果（与 backend/routes/glyph_match.ts 的 NDJSON 事件对齐） */
 interface ServerFontResult {
@@ -212,10 +212,34 @@ function onGlyphInput() {
   results.value = [];
 }
 
-/** 裁剪接口生成的字体预览缓存（同字体同字只渲染一次，来自流事件的 woff2） */
+/** 裁剪接口生成的字体预览缓存（同字体同字只渲染一次） */
 const glyphPreviewCache = new Map<string, string>();
+/** 预览缓存更新计数器：Map 非响应式，用它触发模板重渲染 */
+const previewTick = ref(0);
 function serverGlyphPreview(font: string, char: string): string {
+  void previewTick.value;
   return glyphPreviewCache.get(font + "|" + char) ?? "";
+}
+
+/** 已请求过预览的字体集合（每次搜索重置） */
+const previewRequested = new Set<string>();
+/** 对排在前面的结果按需拉取裁剪字体并渲染预览（避免全库搜索时传输所有字体的子集包） */
+function requestPreviews(topN = 12) {
+  const chars = [...new Set(filledGlyphIndices.value.map((i) => glyphChars.value[i]!))];
+  if (!chars.length) return;
+  const text = chars.join("");
+  for (const r of results.value.slice(0, topN)) {
+    if (previewRequested.has(r.font)) continue;
+    previewRequested.add(r.font);
+    void fetch(`/api?font=${encodeURIComponent(r.font)}&text=${encodeURIComponent(text)}&outType=woff2`)
+      .then((res) => (res.ok ? res.arrayBuffer() : Promise.reject(new Error(`HTTP ${res.status}`))))
+      .then((buf) => renderSubsetGlyphPreviews(new Uint8Array(buf), chars))
+      .then((previews) => {
+        for (const [char, preview] of previews) glyphPreviewCache.set(r.font + "|" + char, preview);
+        previewTick.value++;
+      })
+      .catch(() => previewRequested.delete(r.font));
+  }
 }
 
 /** 结果中的查询序号 → 原始图块预览，留空图块与候选字体缺字均不会造成错位 */
@@ -224,18 +248,7 @@ function queryPreview(queryIndex: number): string {
   return sourceIndex === undefined ? "" : (glyphPreviews.value[sourceIndex] ?? "");
 }
 
-/** 收到 font 事件后异步渲染预览：直接消费流携带的 woff2，不再二次请求裁剪接口 */
-function renderPreviewsFromEvent(font: string, subsetB64: string) {
-  const woff2 = base64ToBytes(subsetB64);
-  const chars = filledGlyphIndices.value.map((i) => glyphChars.value[i]!);
-  void renderSubsetGlyphPreviews(woff2, chars).then((previews) => {
-    for (const [char, preview] of previews) {
-      glyphPreviewCache.set(font + "|" + char, preview);
-    }
-  });
-}
-
-/** 新的单字分数到达后重算平均分并按分数降序重排，让最像的字体始终在顶部 */
+/** 新的单字分数到达后重算平均分并按分数降序重排，让最像的字体始终在顶部；同步懒加载前排预览 */
 function resortResults() {
   for (const r of results.value) {
     r.score = r.glyphs.length
@@ -243,6 +256,7 @@ function resortResults() {
       : 0;
   }
   results.value = [...results.value].sort((a, b) => b.score - a.score);
+  requestPreviews();
 }
 
 /** 开始识别：NDJSON 流式请求，识别一个字即可看到一个字的结果 */
@@ -251,6 +265,7 @@ async function startMatch() {
   matching.value = true;
   errorMsg.value = "";
   results.value = [];
+  previewRequested.clear();
   doneCount.value = 0;
   totalCount.value = 0;
   const t0 = performance.now();
@@ -283,7 +298,6 @@ async function startMatch() {
           const item: ServerFontResult = { font: event.font, score: 0, missing: false, glyphs: [] };
           byFont.set(event.font, item);
           results.value.push(item);
-          renderPreviewsFromEvent(event.font, event.subset);
           break;
         }
         case "glyph": {
@@ -341,7 +355,10 @@ const scoreColor = (s: number) => (s > 0.9 ? "#16a34a" : s > 0.8 ? "#d97706" : "
 
 <template>
   <div style="max-width: 960px; margin: 0 auto; padding: 24px 16px 64px" @paste="onPaste">
-    <h1 style="font-size: 26px; margin: 0 0 8px">截图找字体</h1>
+    <div style="display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap">
+      <h1 style="font-size: 26px; margin: 0">截图找字体</h1>
+      <a href="/" style="color: #1677ff; font-size: 14px; text-decoration: none" onmouseover="this.style.textDecoration='underline'" onmouseout="this.style.textDecoration='none'">← 返回首页</a>
+    </div>
     <p style="color: #666; margin: 0 0 20px; font-size: 14px">
       上传含文字的截图，与站内字体库比对，找出最相似的字体。
     </p>

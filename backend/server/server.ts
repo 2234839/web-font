@@ -176,16 +176,26 @@ async function connectionHandle(
     const rawRes = new Response();
 
     const { res } = await handle(rawReq, rawRes);
+    /** 路由直接挂载的响应体（Uint8Array）：免去 LLRT 下 res.blob() 的非确定性挂起 */
+    const bodyBytes = (res as Response & { _bodyBytes?: Uint8Array })._bodyBytes;
     const resWriter = connection.writable.getWriter();
-    let headerText: string[] = [];
+    const headerText: string[] = [];
+    if (bodyBytes) headerText.push(`Content-Length: ${bodyBytes.length}`);
     res.headers.forEach((value, key) => {
       headerText.push(`${key}: ${value}`);
     });
     const resHeaertText = `HTTP/1.1 ${res.status} OK\r\n${headerText.join("\r\n")}\r\n\r\n`;
-    await resWriter.write(encoder.encode(resHeaertText));
     /** LLRT 的 Response 不支持流 body，流式路由通过附加属性传递 */
     const stream = (res as Response & { _stream?: ReadableStream<Uint8Array> })._stream ?? res.body;
-    if (stream) {
+    if (bodyBytes) {
+      /** header+body 合并单次 write：LLRT 的多次 write/close 组合会非确定性挂起 */
+      const head = encoder.encode(resHeaertText);
+      const frame = new Uint8Array(head.length + bodyBytes.length);
+      frame.set(head);
+      frame.set(bodyBytes, head.length);
+      await resWriter.write(frame);
+      resWriter.releaseLock();
+    } else if (stream) {
       /** 流式响应：pipeTo 自行管理 writer 生命周期，结束后负责关闭流 */
       resWriter.releaseLock();
       await stream.pipeTo(connection.writable, { preventClose: false });
