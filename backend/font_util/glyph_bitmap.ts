@@ -280,7 +280,7 @@ export function bitmapIoU(a: Uint8Array, b: Uint8Array): number {
  * 用于容错比对：拍照残余错切/字重差异下笔画不完全重合，
  * 用「笔画像素到对方笔画的平均距离」替代硬交集
  */
-function distanceTransform(mask: Uint8Array): Float32Array {
+export function distanceTransform(mask: Uint8Array): Float32Array {
   const INF = 1e9;
   const dt = new Float32Array(GRID * GRID);
   for (let i = 0; i < dt.length; i++) dt[i] = mask[i] ? 0 : INF;
@@ -338,14 +338,14 @@ function meanDistance(a: Uint8Array, dtB: Float32Array, dx: number, dy: number):
  * 平移搜索取 25 个偏移中的最优值，覆盖亚像素级残余错位。
  * 每字形开销约 2 次距离变换 + 25 次均值遍历（~100k 整数/浮点运算），仍为微秒~亚毫秒级。
  */
-export function glyphSimilarity(a: Uint8Array, b: Uint8Array): number {
-  const dtA = distanceTransform(a);
-  const dtB = distanceTransform(b);
+export function glyphSimilarity(a: Uint8Array, b: Uint8Array, dtA?: Float32Array, dtB?: Float32Array): number {
+  const da = dtA ?? distanceTransform(a);
+  const db = dtB ?? distanceTransform(b);
   let worst = Infinity;
   for (let dy = -2; dy <= 2; dy++) {
     for (let dx = -2; dx <= 2; dx++) {
-      const dAB = meanDistance(a, dtB, dx, dy);
-      const dBA = meanDistance(b, dtA, -dx, -dy);
+      const dAB = meanDistance(a, db, dx, dy);
+      const dBA = meanDistance(b, da, -dx, -dy);
       if (dAB < 0 || dBA < 0) continue;
       const m = Math.max(dAB, dBA);
       if (m < worst) worst = m;

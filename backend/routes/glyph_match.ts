@@ -8,7 +8,7 @@ import { Font } from "../../vendor/fonteditor-core/lib/ttf/font";
 import { jsonResponse, findFontPath } from "../shared";
 import { readdir, stat } from "../interface";
 import { fontDirs, subsetQueueTimeoutSeconds, glyphMatchSlowConcurrency } from "../config";
-import { getGlyphBitmap, glyphSimilarity, hasGlyph, type SubsetTtfObject } from "../font_util/glyph_bitmap";
+import { getGlyphBitmap, glyphSimilarity, distanceTransform, hasGlyph, type SubsetTtfObject } from "../font_util/glyph_bitmap";
 import { estimateSubsetMemory, subsetFontFile } from "../font_util/subset_file";
 import { loadGlyphIndex, indexBitmap, writeGlyphIndex, markIndexBuilt } from "../font_util/glyph_index";
 import { ANCHOR_CHARS } from "../font_util/common_chars";
@@ -23,7 +23,27 @@ interface QueryGlyph {
 interface ParsedQueryGlyph {
   char: string;
   bitmap: Uint8Array;
+  /** 查询位图的距离场，解析后算一次，全库扫描复用（原本每字体重复计算） */
+  dt: Float32Array;
   queryIndex: number;
+}
+
+/** 候选位图距离场缓存：字体索引位图静态不变，DT 结果可跨请求复用 */
+const candidateDtCache = new Map<string, Float32Array>();
+/** 上限 4096 条 × 16KB = 64MB，插入序淘汰最旧 */
+const CANDIDATE_DT_MAX = 4096;
+
+/** 取候选位图距离场（命中缓存免重算，未命中计算并缓存） */
+function candidateDt(font: string, codePoint: number, bitmap: Uint8Array): Float32Array {
+  const key = `${font}|${codePoint}`;
+  const hit = candidateDtCache.get(key);
+  if (hit) return hit;
+  const dt = distanceTransform(bitmap);
+  if (candidateDtCache.size >= CANDIDATE_DT_MAX) {
+    candidateDtCache.delete(candidateDtCache.keys().next().value!);
+  }
+  candidateDtCache.set(key, dt);
+  return dt;
 }
 
 /** 流式响应事件 */
@@ -132,7 +152,7 @@ async function matchFontEvents(
       events.push({
         type: "glyph",
         font,
-        glyph: { char: query.char, score: glyphSimilarity(query.bitmap, candidate), queryIndex: query.queryIndex },
+        glyph: { char: query.char, score: glyphSimilarity(query.bitmap, candidate, query.dt, candidateDt(font, codePoint, candidate)), queryIndex: query.queryIndex },
         missing: false,
       });
     }
@@ -225,7 +245,7 @@ async function slowPathEvents(
     events.push({
       type: "glyph",
       font,
-      glyph: { char: query.char, score: glyphSimilarity(query.bitmap, candidate), queryIndex: query.queryIndex },
+      glyph: { char: query.char, score: glyphSimilarity(query.bitmap, candidate, query.dt, candidateDt(font, codePoint, candidate)), queryIndex: query.queryIndex },
       missing: false,
     });
   }
@@ -336,7 +356,8 @@ export async function handleGlyphMatch(req: Request, _res: Response) {
       bitmap: parseBitmap(glyph?.bitmap),
       queryIndex,
     }))
-    .filter((glyph): glyph is ParsedQueryGlyph => glyph.char.length > 0 && glyph.bitmap !== null);
+    .filter((glyph): glyph is ParsedQueryGlyph => glyph.char.length > 0 && glyph.bitmap !== null)
+    .map((glyph) => ({ ...glyph, dt: distanceTransform(glyph.bitmap) }));
 
   if (queryGlyphs.length === 0) {
     return { req, res: jsonResponse({ error: "glyphs required (char + 64x64 bitmap)" }, 400) };

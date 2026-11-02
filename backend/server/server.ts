@@ -196,13 +196,13 @@ async function connectionHandle(
       await resWriter.write(frame);
       resWriter.releaseLock();
     } else if (stream) {
-      /** 流式响应：pipeTo 自行管理 writer 生命周期，结束后负责关闭流 */
+      /** 流式响应：先写 HTTP 头（pipeTo 只转发 body，不会写状态行/头），再由 pipeTo 接管写回 */
+      await resWriter.write(encoder.encode(resHeaertText));
       resWriter.releaseLock();
       await stream.pipeTo(connection.writable, { preventClose: false });
     } else {
-      /** llrt 运行时 */
-      const buffer = new Uint8Array(await (await res.blob()).arrayBuffer());
-      await resWriter.write(buffer);
+      /** 兜底：无 body 响应只写头 */
+      await resWriter.write(encoder.encode(resHeaertText));
       await resWriter.close();
     }
     connection.close();
