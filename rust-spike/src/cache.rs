@@ -37,11 +37,18 @@ impl FontCache {
             e.last_used = Instant::now();
             return Ok(e.font.clone());
         }
-        let data = std::fs::read(path).map_err(|_| FontCacheError::NotFound)?;
-        if data.len() > 100 * 1024 * 1024 {
+        // mmap 按需分页：冷启动只把被触及的表页载入（cmap/loca/目标字形/GSUB），
+        // 不再全量读盘，也消除「page cache 一份 + 用户堆一份」的双倍内存。
+        // unsafe 边界仅在 mmap 建立/解除；字体库为静态文件，无并发截断，SIGBUS 风险可忽略
+        let file = std::fs::File::open(path).map_err(|_| FontCacheError::NotFound)?;
+        let len = file.metadata().map_err(|_| FontCacheError::NotFound)?.len() as usize;
+        if len < 12 || len > 100 * 1024 * 1024 {
             return Err(FontCacheError::NotFound);
         }
-        let font = Arc::new(Font::parse(data).map_err(|_| FontCacheError::ParseFailed)?);
+        // SAFETY: 映射期间文件不会被修改/截断（字体库只读），len 已按真实文件大小校验
+        let mapped = unsafe { memmap2::Mmap::map(&file) }.map_err(|_| FontCacheError::NotFound)?;
+        let font =
+            Arc::new(Font::parse(mapped).map_err(|_| FontCacheError::ParseFailed)?);
         map.insert(path.to_string(), FontEntry { font: font.clone(), last_used: Instant::now() });
         Ok(font)
     }

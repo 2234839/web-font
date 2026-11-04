@@ -76,10 +76,41 @@ struct TableDir {
     length: u32,
 }
 
+/// 字体字节本体：两种形态统一 Deref 到 &[u8]，下游读表代码无感
+/// - Mapped(mmap)：内核按需分页，只把被触及的表页（cmap/loca/目标字形/GSUB）载入内存，
+///   冷启动不再全量读盘，也消除「page cache 一份 + 用户堆一份」的双倍占用
+/// - Owned(Vec)：测试/内存中构造的字体
+pub enum FontBytes {
+    Owned(Vec<u8>),
+    Mapped(memmap2::Mmap),
+}
+
+impl std::ops::Deref for FontBytes {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        match self {
+            FontBytes::Owned(v) => v,
+            FontBytes::Mapped(m) => m,
+        }
+    }
+}
+
+impl From<Vec<u8>> for FontBytes {
+    fn from(v: Vec<u8>) -> Self {
+        FontBytes::Owned(v)
+    }
+}
+
+impl From<memmap2::Mmap> for FontBytes {
+    fn from(m: memmap2::Mmap) -> Self {
+        FontBytes::Mapped(m)
+    }
+}
+
 /// 解析后的字体（进程级缓存共享，只读；持有数据本体，表目录存偏移）
 pub struct Font {
-    /// 原始字体字节（parse 时拷贝持有，供表透传/惰性切片）
-    pub data: Vec<u8>,
+    /// 原始字体字节（mmap 按需分页或内存持有，供表透传/惰性切片）
+    pub data: FontBytes,
     /// sfnt 表目录
     tables: Vec<TableDir>,
     /// maxp.numGlyphs
@@ -98,8 +129,10 @@ pub struct Font {
 
 impl Font {
     /// 解析 TTF/OTF（对译 Font.parse；失败返回 Err）。
-    /// 拿走字节所有权：调用方 fs::read 的整文件缓冲直接进 Font，消除 to_vec 的整文件二次拷贝
-    pub fn parse(data: Vec<u8>) -> Result<Font, ParseError> {
+    /// 拿走字节所有权：Owned 形态下调用方 fs::read 的整文件缓冲直接进 Font；
+    /// Mapped 形态下持 mmap，消除整文件堆拷贝
+    pub fn parse(data: impl Into<FontBytes>) -> Result<Font, ParseError> {
+        let data: FontBytes = data.into();
         if data.len() < 12 {
             return Err(ParseError::NotTtf);
         }

@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 brotli = "9"
+memmap2 = "0.9"
 
 [profile.release]
 opt-level = 3
