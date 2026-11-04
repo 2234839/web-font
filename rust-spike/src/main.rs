@@ -451,6 +451,7 @@ fn handle_subset(
     if let Some(bytes) = app.subset_cache.get(&cache_key) {
         misc::stats_record_cache_hit();
         let t_hit = Instant::now();
+        misc::stats_record_latency(ms(t0, t_hit) as u64);
         let timing = [format!("X-Timing-Total: {}", ms(t0, t_hit))];
         let timing: Vec<&str> = timing.iter().map(|s| s.as_str()).collect();
         let etag = http::etag_of(&bytes);
@@ -501,22 +502,22 @@ fn handle_subset(
             return Ok(close);
         }
     };
-    // woff2 编码（outType=woff2 时）。Zig 版 `try` 上抛后 defer 释放闸门再静默收线
+    let t3 = Instant::now();
+    // 闸门只管重活（读盘+解析+裁剪）：subset 完成即释放槽位，
+    // woff2 编码（毫秒级 CPU、内存仅为子集产物大小）移到闸门外——
+    // 高并发时槽位更快回收，编码在各连接线程天然并行，吞吐不受闸门并发上限压制
+    misc::gate_release(est);
     let out_bytes: Vec<u8> = if out_woff2 {
         match woff2::encode_ttf_to_woff2(&result) {
             Ok(b) => b,
-            Err(_) => {
-                misc::gate_release(est);
-                return Ok(true);
-            }
+            Err(_) => return Ok(true),
         }
     } else {
         result
     };
-    let t3 = Instant::now();
-    misc::gate_release(est);
 
     app.subset_cache.insert(&cache_key, out_bytes.to_vec());
+    misc::stats_record_latency(ms(t0, t3) as u64);
 
     let timing = [
         format!("X-Timing-Find: {}", ms(t0, t1)),

@@ -1,4 +1,4 @@
-import { parseUrl, stats, subsetCache, findFontPath, markStatsDirty } from "../shared";
+import { parseUrl, stats, subsetCache, findFontPath, markStatsDirty, recordSubsetLatency } from "../shared";
 import { markFontUsed } from "../temp_cleaner";
 import { withMemoryGate } from "../subset_queue";
 import { estimateSubsetMemory, subsetFontFile } from "../font_util/subset_file";
@@ -78,6 +78,7 @@ export async function handleFontSubset(req: Request, res: Response) {
   if (cached) {
     stats.subsetCacheHits++;
     markStatsDirty();
+    recordSubsetLatency(t1 - t0);
     const contentTypes: Record<string, string> = { ttf: "font/ttf", woff2: "font/woff2" };
     return {
       req,
@@ -121,6 +122,7 @@ export async function handleFontSubset(req: Request, res: Response) {
 
   /** 写入裁剪结果缓存（与找字体共享；ttf 对象一并缓存供评分直接复用） */
   subsetCache.set(cacheKey, { bytes: newFont, ttf: subsetResult.ttf ?? null });
+  recordSubsetLatency(t3 - t0);
 
   const contentTypes: Record<string, string> = { ttf: "font/ttf", woff2: "font/woff2" };
 

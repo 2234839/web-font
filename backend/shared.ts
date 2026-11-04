@@ -68,14 +68,50 @@ export function snapshotStats(): PersistedStats {
   };
 }
 
+/** 子集请求总耗时直方图：固定容量环形缓冲，只保留最近 1024 个样本（进程级，不持久化） */
+const LATENCY_RING = 1024;
+const latencyRing = new Array<number>(LATENCY_RING).fill(0);
+let latencyNext = 0;
+let latencyCount = 0;
+
+/** 记录一次子集请求总耗时（毫秒，含缓存命中路径） */
+export function recordSubsetLatency(totalMs: number): void {
+  latencyRing[latencyNext] = totalMs;
+  latencyNext = (latencyNext + 1) % LATENCY_RING;
+  if (latencyCount < LATENCY_RING) latencyCount++;
+}
+
+/** 最近样本的分位数（percentile 0~100）；无样本返回 null */
+function latencyPercentile(p: number): number | null {
+  if (latencyCount === 0) return null;
+  const sorted = latencyRing.slice(0, latencyCount).sort((a, b) => a - b);
+  const idx = Math.min(sorted.length - 1, Math.round(((sorted.length - 1) * p) / 100));
+  return sorted[idx];
+}
+
+/** 延迟分位快照（/api/stats 输出用） */
+export function latencySnapshot(): {
+  latencySamples: number;
+  latencyP50: number | null;
+  latencyP95: number | null;
+  latencyP99: number | null;
+} {
+  return {
+    latencySamples: latencyCount,
+    latencyP50: latencyPercentile(50),
+    latencyP95: latencyPercentile(95),
+    latencyP99: latencyPercentile(99),
+  };
+}
+
 /**
  * 标记统计已变更，触发防抖落盘
  *
- * 请求热路径调用：仅做一次对象赋值 + 幂等的定时器检查，绝不阻塞。
- * 真正的磁盘 IO 由 stats_store 内部按 FLUSH_INTERVAL 批量执行。
+ * 请求热路径调用：仅置脏标志 + 幂等的定时器检查，快照延迟到落盘时才取
+ * （消除每请求一次对象拷贝）。真正的磁盘 IO 由 stats_store 按间隔批量执行。
  */
 export function markStatsDirty(): void {
-  scheduleStatsFlush(snapshotStats());
+  scheduleStatsFlush(snapshotStats);
 }
 
 /** 字体文件 LRU 缓存，最多保留 3 个最近使用的字体 buffer（按条目数淘汰） */

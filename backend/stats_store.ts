@@ -33,8 +33,8 @@ export interface PersistedStats {
 /** 落盘防抖间隔（毫秒）：在请求热路径之外的最低频写盘，平衡丢失量与 IO */
 const FLUSH_INTERVAL = 30_000;
 
-/** 待落盘的快照；写入完成后才清空，避免写入期间的增量丢失 */
-let pending: PersistedStats | null = null;
+/** 待落盘的快照函数；写入完成后才清空，避免写入期间的增量丢失 */
+let pending: (() => PersistedStats) | null = null;
 
 /** 防抖定时器句柄 */
 let flushTimer: ReturnType<typeof setInterval> | null = null;
@@ -66,13 +66,13 @@ export async function loadPersistedStats(): Promise<PersistedStats & { startTime
 }
 
 /**
- * 标记一次需要落盘的快照
+ * 标记一次需要落盘（传快照函数，延迟到落盘时才取值——热路径零拷贝）
  *
  * 由 stats 模块在计数变化后调用。仅在尚未排队时启动防抖定时器，
  * 避免高频请求每次都重排定时器（保证最长 FLUSH_INTERVAL 内必落盘）。
  */
-export function scheduleStatsFlush(snapshot: PersistedStats): void {
-  pending = snapshot;
+export function scheduleStatsFlush(snapFn: () => PersistedStats): void {
+  pending = snapFn;
   if (flushTimer !== null) return;
   flushTimer = setInterval(flushStats, FLUSH_INTERVAL);
 }
@@ -80,17 +80,17 @@ export function scheduleStatsFlush(snapshot: PersistedStats): void {
 /** 取快照并写盘；无变更时直接跳过 */
 async function flushStats(): Promise<void> {
   if (pending === null) return;
-  /** 先取走快照再写：写盘期间新到的增量会进下一次 pending，不会丢 */
-  const snapshot = pending;
+  /** 落盘时刻才取快照：写入期间的增量进下一次周期，不会丢 */
+  const snapshot = pending();
   pending = null;
   try {
     /** font/ 目录通常已由 ensureDirectories 创建，这里兜底以防万一 */
     await mkdir("font");
     await writeFile(STATS_FILE, new TextEncoder().encode(JSON.stringify(snapshot)));
   } catch (err) {
-    /** 写盘失败不影响服务：把快照放回 pending，等下个周期重试 */
+    /** 写盘失败不影响服务：把快照函数放回 pending，等下个周期重试 */
     console.log("[stats] flush failed:", err);
-    pending = snapshot;
+    pending = () => snapshot;
   }
 }
 

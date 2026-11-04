@@ -1,4 +1,4 @@
-import { jsonResponse, stats, subsetCache, fontBufferCache, markStatsDirty } from "../shared";
+import { jsonResponse, stats, subsetCache, fontBufferCache, markStatsDirty, latencySnapshot } from "../shared";
 
 /** GET /api/stats — 返回运行时统计 */
 export async function handleStats(req: Request, _res: Response) {
@@ -15,6 +15,8 @@ export async function handleStats(req: Request, _res: Response) {
       offlineDownloads: stats.offlineDownloads,
       subsetCacheEntries: subsetCache.size,
       fontBufferCacheEntries: fontBufferCache.size,
+      /** 最近 1024 次子集请求耗时分位（毫秒，进程级观测） */
+      ...latencySnapshot(),
     }),
   };
 }

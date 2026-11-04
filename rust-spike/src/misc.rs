@@ -93,6 +93,37 @@ static STATS: Mutex<StatsInner> = Mutex::new(StatsInner {
         offline_downloads: 0,
     },
 });
+
+/// 子集请求总耗时直方图：固定容量环形缓冲，只保留最近 LATENCY_RING 个样本
+/// （进程级观测，不持久化——重启重新采样即可）
+const LATENCY_RING: usize = 1024;
+static LATENCIES: Mutex<(Vec<u32>, usize)> = Mutex::new((Vec::new(), 0));
+
+/// 记录一次子集请求总耗时（毫秒，含缓存命中路径）
+pub fn stats_record_latency(total_ms: u64) {
+    let mut g = LATENCIES.lock().unwrap();
+    let (ring, next) = &mut *g;
+    if ring.len() < LATENCY_RING {
+        // 未满时只 push，保证 ring.len() == 真实样本数，分位不掺零值
+        ring.push(total_ms as u32);
+    } else {
+        ring[*next] = total_ms as u32;
+    }
+    *next = (*next + 1) % LATENCY_RING;
+}
+
+/// 最近样本的分位数（percentile 0~100）；无样本返回 None
+fn latency_percentile(p: f64) -> Option<u64> {
+    let g = LATENCIES.lock().unwrap();
+    let (ring, _next) = &*g;
+    if ring.is_empty() {
+        return None;
+    }
+    let mut sorted: Vec<u32> = ring.to_vec();
+    sorted.sort_unstable();
+    let idx = ((sorted.len() as f64 - 1.0) * p / 100.0).round() as usize;
+    Some(sorted[idx.min(sorted.len() - 1)] as u64)
+}
 /// 启动时刻（uptime 只算本次进程）
 static STATS_START_MS: OnceLock<i64> = OnceLock::new();
 
@@ -948,11 +979,23 @@ pub fn handle_stats(
 ) -> io::Result<bool> {
     let c = { STATS.lock().unwrap().c };
     let uptime: u64 = (wall_now_ms() - STATS_START_MS.get().copied().unwrap_or(0)).max(0) as u64 / 1000;
+    // 最近 1024 次子集请求耗时分位（可观测性：热路径健康度一眼可见）
+    let lat_count = {
+        let g = LATENCIES.lock().unwrap();
+        g.0.len()
+    };
+    let lat = format!(
+        "\"latencySamples\":{},\"latencyP50\":{},\"latencyP95\":{},\"latencyP99\":{}",
+        lat_count,
+        latency_percentile(50.0).unwrap_or(0),
+        latency_percentile(95.0).unwrap_or(0),
+        latency_percentile(99.0).unwrap_or(0),
+    );
     let body = format!(
-        "{{\"uptime\":{},\"totalRequests\":{},\"subsetRequests\":{},\"subsetCacheHits\":{},\"totalChars\":{},\"tempUploads\":{},\"offlineSubsets\":{},\"offlineDownloads\":{},\"subsetCacheEntries\":{},\"fontBufferCacheEntries\":{}}}",
+        "{{\"uptime\":{},\"totalRequests\":{},\"subsetRequests\":{},\"subsetCacheHits\":{},\"totalChars\":{},\"tempUploads\":{},\"offlineSubsets\":{},\"offlineDownloads\":{},\"subsetCacheEntries\":{},\"fontBufferCacheEntries\":{},{}}}",
         uptime, c.total_requests, c.subset_requests, c.subset_cache_hits, c.total_chars,
         c.temp_uploads, c.offline_subsets, c.offline_downloads,
-        subset_cache_entries, font_buffer_cache_entries,
+        subset_cache_entries, font_buffer_cache_entries, lat,
     );
     http::send_json(stream, 200, &body, close)?;
     Ok(close)
