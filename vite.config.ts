@@ -167,6 +167,19 @@ export default { isInited: () => false, init: () => Promise.resolve(), encode: (
         changeOrigin: true,
       },
     },
+    /**
+     * 启动即预转译全部路由页面模块：dev server 冷启动时按需转译慢，
+     * 首个访问者会撞上转译竞态（模块请求超时/ERR_NETWORK_CHANGED 白屏），
+     * warmup 让转译在服务启动阶段完成，任何页面首访即热
+     */
+    warmup: {
+      clientFiles: [
+        "./src/main.ts",
+        "./src/pages/*.vue",
+        "./src/api.ts",
+        "./packages/webfont-sdk/src/**/*.ts",
+      ],
+    },
   },
 
   /**
