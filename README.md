@@ -106,12 +106,26 @@ Prompt: "生成一个东方禅意风格的茶品牌官网"
 
 ### 自部署
 
-后端为 **Rust 实现（`rust-spike/`）**：零依赖 TTF/OTF 子集化 + woff2 编码，musl 静态编译产出单文件二进制（约 2.2MB），`FROM scratch` 镜像 = 二进制 + 前端静态资源，无任何运行时依赖。每连接一线程并发，内置内存感知闸门：内存够则真并发裁剪（默认上限 4），不够则排队，超时回 503 重试。
+后端有 **三个运行时实现**，行为对齐（API/缓存/并发闸门一致），按需选择：
+
+| 运行时 | 产物 | 特点 |
+|--------|------|------|
+| **Rust**（`rust-spike/`，推荐） | musl 静态单二进制（~2.2MB） | 零运行时依赖，`FROM scratch` 镜像仅 ~5MB，端到端亚毫秒级裁剪 |
+| Node.js（`backend/`） | `dist_backend/app.cjs` | 开发调试方便，`tsx` 直跑源码热更 |
+| LLRT | `dist_backend/app.lrt` | AWS 轻量运行时，冷启动快，适合 Lambda 形态 |
+
+Rust 版为生产主力：每连接一线程并发，内存感知闸门（内存够则真并发裁剪，默认上限 4，不够则排队，超时回 503），字体 API 响应带强缓存 + ETag 协商。
 
 ```bash
-# 需要 Rust + musl 交叉目标（rustup target add x86_64-unknown-linux-musl）
+# Rust（生产推荐；需 rustup target add x86_64-unknown-linux-musl）
 pnpm install && pnpm build && pnpm build_backend_rs
 PORT=8087 FONT_DIRS=./font ./dist_backend/webfont-rs
+
+# Node.js（开发）
+pnpm build_backend && node ./dist_backend/app.cjs
+
+# LLRT
+pnpm build_backend && ./llrt ./dist_backend/app.cjs
 ```
 
 Docker（scratch 镜像，仅 ~5MB）：
