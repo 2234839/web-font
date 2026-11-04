@@ -60,6 +60,18 @@ export class LruCache<V> {
     }
   }
 
+  /** 淘汰最久未使用的一个条目；缓存已空返回 false 表示无可再卸 */
+  evictOldest(): boolean {
+    const oldest = this.cache.keys().next().value;
+    if (oldest === undefined) return false;
+    const entry = this.cache.get(oldest)!;
+    this.cache.delete(oldest);
+    if (this.sizeFn) {
+      this.usedBytes -= this.sizeFn(entry);
+    }
+    return true;
+  }
+
   /** 按条目数淘汰 */
   private evictByCount() {
     while (this.cache.size > this.maxSize!) {

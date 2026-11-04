@@ -56,6 +56,15 @@ async function readMemorySnapshot(): Promise<MemorySnapshot> {
   return { limit, free, reserve };
 }
 
+/**
+ * 容器内存压力判定：可用（cgroup 优先）低于限额的 15%。
+ * 供缓存压力卸载循环使用，与 withMemoryGate 的准入判断相互独立。
+ */
+export async function memoryUnderPressure(): Promise<boolean> {
+  const { limit, free } = await readMemorySnapshot();
+  return free < limit * 0.15;
+}
+
 /** 小内存机器最多同时执行两个重任务；大内存机器仍受配置上限约束 */
 function concurrencyLimit(memory: MemorySnapshot): number {
   return memory.limit <= 2 * 1024 * MIB ? Math.min(maxConcurrency, 2) : maxConcurrency;

@@ -13,7 +13,7 @@ import { mimeTypes } from "./server/mime_type";
 import type { cMiddleware } from "./server/req_res";
 import { SimpleHttpServer } from "./server/server";
 import { path_join, readFile, stat, mkdir } from "./interface";
-import { parseUrl, jsonResponse, stats, initStats, markStatsDirty } from "./shared";
+import { parseUrl, jsonResponse, stats, initStats, markStatsDirty, subsetCache, fontBufferCache } from "./shared";
 import { flushStatsSyncSafe } from "./stats_store";
 import { enableTempUpload, adminApiKey } from "./config";
 import { handleListFonts } from "./routes/fonts";
@@ -25,7 +25,7 @@ import { handleGlyphMatch } from "./routes/glyph_match";
 import { handleFontDetail } from "./routes/font_detail";
 import { handleFontMeta } from "./routes/font_meta";
 import { startTempCleaner } from "./temp_cleaner";
-import { initMemoryGate } from "./subset_queue";
+import { initMemoryGate, memoryUnderPressure } from "./subset_queue";
 import { subsetConcurrency } from "./config";
 
 const ROOT_DIR = "dist";
@@ -230,6 +230,28 @@ async function main() {
 
   /** 初始化子集化并发队列（含字体分组调度） */
   initMemoryGate(subsetConcurrency);
+
+  /**
+   * 缓存压力卸载兜底：每 60s 检查内存水位，可用 <15% 时按 LRU 逐个清缓存
+   * （裁剪产物缓存占大头先清，再清字体 buffer 缓存），水位回升即停。
+   * 与 LRU 容量淘汰互补：容量管日常，压力管兜底。NODE_CACHE_PRESSURE_UNLOAD=0 可关。
+   */
+  if (process.env.NODE_CACHE_PRESSURE_UNLOAD !== "0") {
+    setInterval(async () => {
+      try {
+        if (!(await memoryUnderPressure())) return;
+        let n = 0;
+        while (await memoryUnderPressure()) {
+          if (subsetCache.evictOldest()) n++;
+          else if (fontBufferCache.evictOldest()) n++;
+          else break;
+        }
+        if (n > 0) console.log(`[cache-pressure-unload] 内存压力，LRU 卸载 ${n} 个缓存条目`);
+      } catch (e) {
+        console.error("[cache-pressure-unload] 检查失败:", e);
+      }
+    }, 60_000).unref();
+  }
 
   /** 启动临时字体定时清理器 */
   startTempCleaner();
