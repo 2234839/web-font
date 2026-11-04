@@ -1,57 +1,70 @@
-# 任务：字体子集化持续优化（/loop 持续循环）
+# 任务：后端迁移 Rust（Zig 版完成并保留作语义参照）
 
 ## 角色
-你是本仓库（web-font）的性能优化工程师。核心资产是 `backend/font_util/font.ts` 的 `fontSubset`（含 TTF/CFF/GSUB/GPOS 子集化与纯 JS WOFF2 编码器），前端 SDK 在 `packages/`，基准测试为 `基准测试.test.ts`（puppeteer 无头渲染 + SSIM）。
+你是本仓库（web-font）的性能优化工程师。当前使命：把现有 TS 后端（backend/，含 font_util 子集化引擎）**整体迁移为 Rust 实现**（rust-spike/），并在迁移过程中与迁移后持续优化性能，目标「快如闪电」。
 
-## 目标（按优先级）
-1. **正确性不可破**：任何改动后基准必须全 PASS，且与改动前基线对比——输出字节应逐字节一致或差异可解释，SSIM 不低于该用例历史值
-2. **性能**：继续压缩子集化耗时（avg 与 min 都要看，min 才是真本事，avg 含噪声），以及输出体积
-3. **能力扩展**：见「待探索方向」，完成一项验证一项
+> **路线变更（2026-11-03）**：Zig 路线（zig-spike/）已全量完成——R1-R9 + 9 路由全部设施，280 用例对拍就绪 🟢，SSR 字节级一致。因 gs 想练 Rust，整体切换为 Rust 路线；**zig-spike/ 保留不动作为语义参照物，Rust 版验证 🟢 后删除**。Zig 版切换 Docker 的决策随之冻结。
+
+## 现状（2026-11-02 spike 验证完成）
+- `zig-spike/`：零依赖 Zig 0.17 TTF 解析 + glyf/loca/cmap/maxp/post/hmtx 子集化 + HTTP 服务，单二进制 4.9MB
+- 端到端 p50：8字 3.75ms / 239字 5.05ms（JS 引擎 3.8ms；hb-subset 纯计算 1-2ms）
+- 产物正确性已对拍 hb-subset（glyph 数一致、cmap 零缺失、体积更小 10%）
+- 详细数据与踩坑：`benchmark_results/ZIG_SPIKE_2026-11-02.md`
+
+## 迁移路线图（Rust 版，镜像已验证的 Zig R1-R9 路径；zig-spike/ 为语义参照）
+
+> Zig 版每步的语义锚点、踩坑、验收方法都可直接复用——见下表「Zig 参照」列。**移植单位是 zig-spike/src/*.zig → rust-spike/src/*.rs 逐模块对译**（Zig 版即 TS 语义的已验证镜像）。
+
+1. ⬜ **R1' HTTP 骨架 + ttf 核心子集化**（参照 ttf.zig 1734 行 + main.zig HTTP 帧/keep-alive/线程模型；产物对拍 Zig 版字节级）
+2. ⬜ **R2' GSUB/GPOS**（参照 gsub.zig 2511 行：collectReachable+subsetGSUB+subsetGPOS；hb-shape 连字对拍）
+3. ⬜ **R3' CFF/OTF**（参照 cff.zig 1690 行：CID+非CID 双路径、subr 子集化）
+4. ⬜ **R4' WOFF2**（参照 woff2.zig 875 行；brotli 用纯 Rust crate，注意 Zig 版静态链系统 libbrotli-dev 的等价物）
+5. ⬜ **R5' HTTP 全路由 + 设施**（参照 misc.zig 1835 行：9 路由、内存闸门、统计落盘、temp 清理器、multipart、SSR——今天刚迁完语义最新鲜；glyph_match.zig 322 行 DT 引擎）
+6. ⬜ **R6' 全量对拍**（复用 280 用例方法：TS oracle + 双 HTTP 实例；渲染合法性 Chromium OTS；runtime-bench 基准回归——性能目标不输 Zig 版 ~1.9ms/8字）
+
+## Zig 版完成记录（语义锚点所在，勿删）
+- R1-R3：预解析缓存/反向索引/keep-alive 线程化，128字 p50 1.5ms
+- R4：gsub.zig 与 TS 产物字节相等；R5：cff.zig CID 双路径字节相等；R6：woff2.zig 字节相等 + locaRange u16 溢出修复
+- R7：subset 接口语义对齐 + glyph-match 128/128 位图字节级一致
+- R8-R9：280 用例对拍（EQUAL 12/坐标级 0 差异/OTS 10:11 LOADED）；R9 补齐 P1 锚定注入/P4 hinting 剥离/P6 name 重建/P7 hmtx 折叠
+- 2026-11-03 R10：9 路由全量（/api/fonts、/api/config、/api/stats、/api/stats/event、/api/upload temp+admin、/api/font-meta、/fonts/:slug SSR、静态资源、SPA fallback）+ 内存闸门/统计 30s 防抖落盘/temp 清理器/multipart，SSR HTML 与 TS 字节级一致，端到端验证全绿
 
 ## 验收流程（每轮改动必须走完）
-1. 改动前先跑一次基准留存基线：`pnpx tsx ./基准测试.test.ts`
+1. 改动前先跑基准留存基线（用 `scripts/runtime-bench.mjs` 的随机文字防缓存方法，直打被测服务）
 2. 小步改动：一次只改一个热点，禁止混合多项优化
-3. 改动后再跑基准，与步骤 1 结果逐用例对比：
-   - 耗时：avg 下降或持平即合格；波动大时跑两次交叉验证（参考 `benchmark_results/BASELINE_2026-08-27.md` 的 min1/min2 对照法）
-   - 字节：逐用例对比输出 bytes，不一致必须能解释（如重映射后序列化更紧凑）并写进日志
-   - SSIM：不得低于该用例历史值。注意：篆体用例历史 min=0.9876 是原字体光栅化固有差异（已三重验证），**不是回归**，不要试图"修"它
-4. TS 改动执行 `pnpm tsc --noEmit` 确认无类型错误（类型错误≈逻辑错误）
-5. 全部通过后才写入 `benchmark_results/OPTIMIZATION_LOG.md`
+3. 改动后跑基准对比：
+   - 耗时：p50/min 下降或持平即合格；波动大时跑两次交叉验证
+   - 字节：与 TS 引擎/hb-subset 逐用例对比输出，不一致必须能解释（fontTools `TTFont` 解析验证 + hb-subset 对拍）
+   - 正确性：fontTools 能完整解析、cmap 覆盖输入零缺失、numGlyphs 与 hb 一致
+4. Rust 版每轮写入 `benchmark_results/RUST_SPIKE_2026-11-03.md`；Zig 版历史见 `ZIG_SPIKE_2026-11-02.md`
 
 ## 硬性约束
-- **禁止修改基准测试中 full 的生成方案**；基准结果异常 = 你的代码改动有问题，先自查，不要归咎于浏览器渲染等外部因素
-- 优化必须先测量后动手：用 `node --prof` 或微基准定位热点，不做无 profile 支撑的猜测性优化
+- **不碰线上 Dockerfile/镜像**（保持 LLRT 1.14.6），Zig 版只在 perf/native-lightning 分支推进，切换另议
+- 优化必须先测量后动手：微基准定位热点，不做无依据的猜测性优化
 - 不做回退方案，只实现最好方案；开发期 let it crash，不为兜底乱加 try
-- Git：改动留在工作区，禁止 stash/reset；阶段性完成时提醒提交落库
+- Git：改动留在工作区，禁止 stash/reset；阶段性完成时提醒提交落库（直接提交当前分支）
+
+## Zig 0.17 踩坑备忘（仅维护 zig-spike/ 参照物时需要）
+- std 大改版：`std.net`/`std.fs.cwd()`/`std.process.getEnvVarOwned` 已删——main 用 `pub fn main(init: std.process.Init)`，网络用 `std.Io.net.*`，文件用 `std.Io.Dir.cwd().openFile(io, path, .{})`
+- `ArrayList` 是 unmanaged：`.empty` 初始化，每个方法传 allocator
+- `std.Io.net.Stream.read()` 在 0.17.0 有解构编译 bug，直接 `io.operate(.{ .net_read = ... })` 绕开（main.zig 已封装 writeAll）
+- `zig build -Drelease`（不是 -Doptimize），build.zig 已配好
+- API 疑问一律读 `~/tools/zig/lib/std` 源码，不猜
+- misc.zig 曾被畸形 sed（`; current` 的 c 被解析为 change 命令）整文件摧毁，已从会话转录恢复——教训：批量 sed 含花括号/分号的表达式极易翻车，多文件批量修改一律用 Edit 工具
 
 ## 工作方式
 - 直接开始做，不切计划模式、不询问、不中断，持续自主迭代
-- 每个优化节点在 `benchmark_results/OPTIMIZATION_LOG.md` 追加记录：优化方法 / 瓶颈定位证据（profile 数据）/ 前后对比（各用例 avg/min/max、bytes、ssim）/ 下一步方向
+- 每个优化节点在 `benchmark_results/ZIG_SPIKE_2026-11-02.md` 追加记录：优化方法 / 瓶颈定位证据 / 前后对比（p50/min/max、bytes、正确性对拍）/ 下一步方向
 
-## 当前状态（2026-08-27 基线，30/30 用例全 PASS）
-耗时已到亚毫秒~毫秒级（ttf 千字文 min 0.3ms、woff2 千字文 min 2.3ms），继续优化需靠 profile 找剩余热点，不要凭旧数据判断瓶颈。详细数据：`benchmark_results/BASELINE_2026-08-27.md`。已完成大项：GSUB 子集化 33×、WOFF2 纯 JS 编码器重构、glyf triplet inline、共享 gidLookup。
+## 性能参考锚点（同机实测）
+| 引擎 | 8字 ttf p50 | 128字 ttf p50 | RSS |
+|---|---|---|---|
+| Zig spike（无预解析缓存） | 3.75ms | 5.05ms | 101MB |
+| Zig R3（预解析缓存+反向索引+keep-alive 线程化） | **1.1ms** | **1.5ms** | 53MB |
+| Zig R9（最终：+GSUB/GPOS/CFF/WOFF2/锚定注入/hinting 剥离/hmtx 折叠） | ~1.9ms（含锚定注入 34 glyph） | **1.4ms**（纯计算 0.056ms） | 53MB |
+| JS 引擎（Node，稳态） | 3.8ms | 3.8ms | 250MB |
+| hb-subset（C++，纯计算不含 HTTP） | ~1-2ms | ~1-2ms | - |
 
-## 待探索方向
-1. ~~前端 SDK 扫描策略可配置化~~ **已达成（2026-10-25 核验）**：`WebFontCSSMode` 现有 API 即三种模式——`loadFont`（定时轮询，setInterval 默认 1000ms）/ `observeFont`（MutationObserver+input 事件触发，debounce 50ms）/ `loadText`（用户直接传文本，零扫描返回 ITextLoader）；三者共享 IncrementalEngine 的去重/并发池/失败记忆。无需再造 mode 枚举配置项，按场景选 API 即可
-2. **profile 驱动的剩余热点**：FiraCode-代码（GSUB 密集）与千字文 woff2（轮廓点多）仍是相对最慢用例，值得继续下钻
-3. **输出体积**：表级体积分析工具 `scripts/table-size-analysis.ts`（第 15 轮借此发现 hinting 死表 -36%）。OTF/CFF 侧已测（2026-10-26）：CFF 占 66% brotli 硬下限、GSUB/GPOS 已深度优化、**BASE/vmtx/vhea 是活功能不可删**（竖排 vertical-rl 真实消费，与浏览器不走的 hinting 有本质区别）——OTF 侧无结构性死重，方向饱和
-4. **多字体鲁棒性扫描补测试覆盖**（注意区分原字体缺字与真回归）——**已完成（2026-10-26 第 18 轮）**：`scripts/robustness-scan.ts`（24 字体 × 5 文本 × ttf/woff2，头合法性+确定性），首跑揪出 4 个空子集非法输出 bug 并双层修复（ttf writeZeroContoursGlyfData 12B header + tofu .notdef 注入救 woff2 spec 盲区），120/120 PASS。**遗留**：白狐 OTF（font/temp）被 temp_cleaner 清除，下载源全反爬，需人工恢复后补跑全量基准
-5. ~~scripts/ 侧遗留维护~~ **已清零（2026-10-26 第 19 轮）**：test-leafer-node.mts 2 类型错误已修（Buffer.from + @types/pngjs），`pnpm exec tsc -p tsconfig.scripts.json` 首次全净；robustness-scan 升级三层校验（头合法性+确定性+OTS 真实加载，puppeteer FontFace），240 产物全过。**唯一遗留**：白狐 OTF 人工恢复（font/temp/BaiHuOTFJiaoYuHanZi-2.otf）→ 补跑第 18 轮欠的全量基准（writeZeroContoursGlyfData + tofu .notdef，字节影响已可解释，SSIM 预期不变）
+**step 1 已达成（2026-11-02 R1-R3）**：128字 p50 1.5ms < 2ms 目标。关键定位：子集化纯计算仅 0.22ms（128字），瓶颈在 HTTP 链路（WSL2 回环 TCP connect 0.52ms/次）→ keep-alive + 线程化收益最大。产物字节级一致（cmp 对拍），16 路并发全绿。详见 benchmark_results/ZIG_SPIKE_2026-11-02.md 迭代日志。
 
-## vendor js→ts 迁移路线（2026-10-25 启动）→ **已全部完成（2026-10-27 终结）**
-vendor/fonteditor-core 全部 131 个 js 已迁为 TS + 原生 ESM（4 个 sub agent 并行批次：common/graphics/math 叶子、ttf/util+svg、ttf/table+cff、reader/writer/facade/woff2）。**零 js 残留**（含 main.js→main.ts ESM 重写）。
-
-**迁移中发现并修复的坑（重要）**：
-- **tsx/node ESM 对 CJS 的 interop 不识别 `__esModule`**：ESM 入口 `import X from './cjs.js'` 拿到整个 module.exports 而非 `exports.default`，报 "X is not a constructor"。此前指纹验证（/tmp 下 CJS 入口跑）与 vite build（打包器 interop 正确）都测不出，只有仓库 ESM 入口（基准测试/后端 dev）会崩——**验证必须覆盖 ESM 直跑路径**。中间态曾用 interopDefault 包装层过渡，全迁完已整体删除。
-- 运行时 `require()`（DOMParser 的 @xmldom/xmldom、woff2 的 zlib）在 ESM 下全部改为 `import * as`（zlib LLRT 内置同名 API，静态 import 安全；@xmldom 走 createRequire 惰性 Proxy）。
-- 迁移会引入新类型错误（BoundBox|false 联合、let 变 const 改坏循环变量等）：批次C 曾把 readWindowsAllCodes 的 startId 误改 const（format12 字体必崩），靠字节级双管线对比脚本（scripts/verify_table_migration.ts，108 断言）抓回。
-- vite 的 commonjs 转译插件与 patch-interop 插件（vite.config.ts）现已无消费对象，可择机删除简化。
-
-**终验（2026-10-27）**：tsconfig.scripts/app 两项目 tsc 0 错误；指纹 4/4 逐字节一致；基准 22 个现存字体用例全 PASS（30 用例中 8 个依赖 font/temp 易失字体被清，含白狐 OTF——恢复后需补跑）；vite-ssg build 通过；ESM 直跑（tsx 仓库根入口）正常。
-
-## 性能候选点备忘（2026-10-25 profile 实测，FiraCode-代码 woff2 avg 1.43ms 微基准）
-- `processChunkSync`（node:zlib brotli q2）：14.8% 自耗时——已到拐点，q1/q0 体积损失不值，**不动**
-- `collectReachableGsubTargets` 系列（gsub-reachable.ts）：合计 ~12.4%，已是 TS 且多轮深挖；剩余空间可能在 lookups 解析阶段的 dv 读取合并
-- `read @glyf.js`（5.7%）+ `dump @ttfwriter.js`（2.0%）+ `write @write.js`（1.9%）：vendor js 解析/序列化主链，**js→ts 重写时顺带优化**（如热路径去对象分配）
-- `ceilReduceAndSizeFlat @optimizettf.js`（2.2%）：null 检查/取整逻辑可尝试位运算化
-- `__name @gsub-subset.ts`（2.4%）：tsx 的 CJS/ESM interop 包装开销，构建产物无此问题，仅 dev 现象，**不修**
+目标：全面超越 JS 引擎，逼近 hb 级纯计算速度。
