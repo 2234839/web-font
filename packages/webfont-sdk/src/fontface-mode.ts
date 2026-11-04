@@ -8,6 +8,28 @@
 import { IncrementalEngine, createHttpProvider, type SubsetProvider, type LoadedChunk, type IFontState } from './engine'
 import { NodeFontRegistry, loadGlobalFonts, isNodeEnvironment } from './node-registry'
 
+/**
+ * fetch 字体 buffer 并注册 FontFace；网络/代理瞬时抖动导致 fetch 或解码失败时自动重试一次
+ * （@font-face 依赖浏览器 fetch 无重试会静默 fallback，这里由 SDK 显式控制重试）
+ */
+async function loadFaceWithRetry(url: string, family: string, unicodeRange: string): Promise<FontFace> {
+  let lastErr: unknown
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const res = await fetch(url)
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const buffer = await res.arrayBuffer()
+      const face = new FontFace(family, buffer, { unicodeRange })
+      await face.load()
+      return face
+    } catch (err) {
+      lastErr = err
+      await new Promise((r) => setTimeout(r, 1200))
+    }
+  }
+  throw lastErr
+}
+
 export interface IFontFaceOptions {
   /** 字体文件名（如 '令东齐伋复刻体.ttf'），支持模糊匹配 */
   fontName: string
@@ -88,10 +110,7 @@ export class WebFontFontFaceMode {
       const unicodeRanges = chunk.chars
         .map((c) => 'U+' + c.codePointAt(0)!.toString(16).padStart(4, '0'))
         .join(', ')
-      const res = await fetch(chunk.url)
-      const buffer = await res.arrayBuffer()
-      const face = new FontFace(family, buffer, { unicodeRange: unicodeRanges })
-      await face.load()
+      const face = await loadFaceWithRetry(chunk.url, family, unicodeRanges)
       document.fonts.add(face)
       const list = this.faces.get(family) ?? []
       list.push(face)

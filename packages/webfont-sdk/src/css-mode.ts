@@ -119,17 +119,39 @@ export class WebFontCSSMode {
       list.push(style)
       this.injectedStyles.set(key, list)
       /** 注入后等待字体真正可用于渲染，让 document.fonts 状态机推进（无 API 时定时器兑底） */
-      this.waitFontLoaded(family)
+      this.waitFontLoaded(key, family, style)
     }
   }
 
-  /** 用 document.fonts.load 触发加载与就绪状态推进（无 API 时定时器兑底） */
-  private waitFontLoaded(family: string): void {
-    if (document.fonts && document.fonts.load) {
-      void document.fonts.load(`16px "${family}"`)
-    } else {
-      setTimeout(() => {}, 3000)
-    }
+  /**
+   * 用 document.fonts.load 触发加载与就绪状态推进。
+   * 浏览器 fetch 字体文件瞬时失败（网络/代理抖动）时 @font-face 会静默 fallback 且不会自愈，
+   * 检测到该 face 处于 error 状态则重建 style 触发浏览器重新拉取（每个 face 至多重试一次）
+   */
+  private waitFontLoaded(key: string, family: string, style: HTMLStyleElement): void {
+    if (!(document.fonts && document.fonts.load)) return
+    void document.fonts.load(`16px "${family}"`).then(() => {
+      /** 同名 family 可能有多个 face（多 chunk），只要有 error 就重试本 chunk 这一份 */
+      const failed = [...document.fonts].some(
+        (f) => f.status === 'error' && f.family.replace(/"/g, '') === family,
+      )
+      if (!failed || style.dataset.webfontRetried) return
+      style.dataset.webfontRetried = '1'
+      setTimeout(() => {
+        if (!style.isConnected) return // 该字体已 dispose
+        const retry = document.createElement('style')
+        retry.textContent = style.textContent
+        retry.dataset.webfontRetried = '1'
+        style.remove()
+        document.head.appendChild(retry)
+        const list = this.injectedStyles.get(key)
+        if (list) {
+          const i = list.indexOf(style)
+          if (i >= 0) list[i] = retry
+        }
+        void document.fonts.load(`16px "${family}"`)
+      }, 1200)
+    })
   }
 
   private resolveDefaults(options: IWebFontOptions): { baseUrl: string; family: string; key: string } {
