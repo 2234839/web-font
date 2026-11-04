@@ -5,36 +5,53 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use crate::ttf::Font;
 
 /// 子集缓存默认容量 10MB（SUBSET_CACHE_MAX_SIZE 可覆盖，语义对齐 TS）
 pub const DEFAULT_SUBSET_CACHE_MAX_BYTES: usize = 10 * 1024 * 1024;
 
+/// 缓存条目：解析体 + 最后使用时间（空闲卸载判定用）
+struct FontEntry {
+    font: Arc<Font>,
+    last_used: Instant,
+}
+
 /// 预解析字体缓存：path → 解析好的 Font（只读共享，Arc 派发）
+/// 空闲超过阈值的条目由后台线程卸载释放内存（再次访问重付一次读盘+解析）
 pub struct FontCache {
-    map: Mutex<HashMap<String, Arc<Font>>>,
+    map: Mutex<HashMap<String, FontEntry>>,
 }
 
 impl FontCache {
-    #[allow(dead_code)] // /api/stats 接入前未用
     pub fn new() -> Self {
         FontCache { map: Mutex::new(HashMap::new()) }
     }
 
     /// 命中零 IO + 零解析；未命中在锁内读文件并解析（二次检查避免重复解析，对齐 Zig getFont）
+    /// 命中同时刷新 last_used
     pub fn get_or_parse(&self, path: &str) -> Result<Arc<Font>, FontCacheError> {
         let mut map = self.map.lock().unwrap();
-        if let Some(f) = map.get(path) {
-            return Ok(f.clone());
+        if let Some(e) = map.get_mut(path) {
+            e.last_used = Instant::now();
+            return Ok(e.font.clone());
         }
         let data = std::fs::read(path).map_err(|_| FontCacheError::NotFound)?;
         if data.len() > 100 * 1024 * 1024 {
             return Err(FontCacheError::NotFound);
         }
         let font = Arc::new(Font::parse(data).map_err(|_| FontCacheError::ParseFailed)?);
-        map.insert(path.to_string(), font);
-        Ok(map.get(path).unwrap().clone())
+        map.insert(path.to_string(), FontEntry { font: font.clone(), last_used: Instant::now() });
+        Ok(font)
+    }
+
+    /** 卸载空闲超过阈值的条目，返回卸载数。正在写出的响应持有 Arc 快照，卸载不影响它 */
+    pub fn evict_idle(&self, max_idle: Duration) -> usize {
+        let mut map = self.map.lock().unwrap();
+        let before = map.len();
+        map.retain(|_, e| e.last_used.elapsed() < max_idle);
+        before - map.len()
     }
 
     /// 条目数（/api/stats 的 fontBufferCacheEntries 同位字段，口径注释见 Zig 版）

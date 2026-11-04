@@ -132,6 +132,24 @@ fn run_server() {
     // misc 初始化（配置解析/统计恢复/目录创建/后台线程，对齐 zig misc.init 在 listen 之前）
     misc::init();
 
+    // 字体空闲卸载：FONT_IDLE_UNLOAD_SECONDS 秒未被使用的解析体释放内存（0 = 关闭）
+    // 内存受限环境（容器限额）下冷门大字体不再长期驻留；再次访问重付一次读盘+解析
+    let idle_secs: u64 = std::env::var("FONT_IDLE_UNLOAD_SECONDS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1800);
+    if idle_secs > 0 {
+        let app = app.clone();
+        eprintln!("[font-idle-unload] 阈值 {idle_secs}s，扫描周期 60s");
+        std::thread::spawn(move || loop {
+            std::thread::sleep(std::time::Duration::from_secs(60));
+            let n = app.fonts.evict_idle(std::time::Duration::from_secs(idle_secs));
+            if n > 0 {
+                eprintln!("[font-idle-unload] 卸载 {n} 个空闲字体");
+            }
+        });
+    }
+
     let listener = TcpListener::bind(("0.0.0.0", port)).expect("bind");
     let dirs = app.font_dirs.join(":");
     eprintln!("webfont-rs listening on {port}, font_dirs={dirs}");
