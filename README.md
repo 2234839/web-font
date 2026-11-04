@@ -106,13 +106,15 @@ Prompt: "生成一个东方禅意风格的茶品牌官网"
 
 ### 自部署
 
+后端为 **Rust 实现（`rust-spike/`）**：零依赖 TTF/OTF 子集化 + woff2 编码，musl 静态编译产出单文件二进制（约 2.2MB），`FROM scratch` 镜像 = 二进制 + 前端静态资源，无任何运行时依赖。每连接一线程并发，内置内存感知闸门：内存够则真并发裁剪（默认上限 4），不够则排队，超时回 503 重试。
+
 ```bash
-# Node.js / LLRT
-pnpm install && pnpm build && pnpm build_backend
-node ./dist_backend/app.cjs
+# 需要 Rust + musl 交叉目标（rustup target add x86_64-unknown-linux-musl）
+pnpm install && pnpm build && pnpm build_backend_rs
+PORT=8087 FONT_DIRS=./font ./dist_backend/webfont-rs
 ```
 
-Docker（~30MB 极简镜像）：
+Docker（scratch 镜像，仅 ~5MB）：
 
 ```yaml
 services:
