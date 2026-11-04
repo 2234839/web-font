@@ -546,7 +546,7 @@ fn ms(from: Instant, to: Instant) -> u128 {
 
 /// 在所有字体目录中查找字体文件（对译 findFontPath：精确 > 前缀 > 包含，大小写不敏感，扩展名剥除比较）
 pub(crate) fn find_font_path(dirs: &[String], name: &str) -> Option<String> {
-    // 精确匹配
+    // 精确匹配（不缓存：直 stat，新上传字体立即可见）
     for dir in dirs {
         let p = format!("{dir}/{name}");
         if let Ok(md) = std::fs::metadata(&p) {
@@ -555,36 +555,18 @@ pub(crate) fn find_font_path(dirs: &[String], name: &str) -> Option<String> {
             }
         }
     }
-    // 扫描目录收集（basename 剥扩展名 + 小写）
-    let mut all: Vec<(String, String)> = Vec::new(); // (stem 小写, path)
-    for dir in dirs {
-        let Ok(entries) = std::fs::read_dir(dir) else { continue };
-        for entry in entries.flatten() {
-            // TS readdir 逐项 stat（跟随符号链接）：必须用 std::fs::metadata（stat 语义），
-            // DirEntry::metadata 是 lstat——symlink 字体（如 /tmp/ssim-fonts 的基准链接）会被误跳过
-            let Ok(md) = std::fs::metadata(entry.path()) else { continue };
-            if !md.is_file() {
-                continue;
-            }
-            let fname = entry.file_name();
-            let Some(fname) = fname.to_str() else { continue };
-            if !has_font_ext(fname) {
-                continue;
-            }
-            all.push((strip_ext(fname).to_lowercase(), format!("{dir}/{fname}")));
-        }
-    }
+    // 模糊匹配（前缀 > 包含）走共享清单缓存（5s TTL，上传后主动失效）：
+    // 原实现每请求 readdir + 逐项 stat，成本随字体数线性增长（线上实测 find 4ms）
+    let listing = misc::font_dir_listing(dirs);
     let query = strip_ext(name).to_lowercase();
-    // 前缀匹配
-    for (stem, path) in &all {
-        if stem.starts_with(&query) {
-            return Some(path.clone());
+    for e in listing.iter() {
+        if e.stem_lower.starts_with(&query) {
+            return Some(format!("{}/{}", e.dir, e.fname));
         }
     }
-    // 包含匹配
-    for (stem, path) in &all {
-        if stem.contains(&query) {
-            return Some(path.clone());
+    for e in listing.iter() {
+        if e.stem_lower.contains(&query) {
+            return Some(format!("{}/{}", e.dir, e.fname));
         }
     }
     None

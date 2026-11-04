@@ -1,21 +1,8 @@
-import { jsonResponse } from "../shared";
-import { readdir } from "../interface";
-import { fontDirs } from "../config";
+import { jsonResponse, fontDirListing } from "../shared";
 
-/** GET /api/fonts — 列出所有可用字体 */
+/** GET /api/fonts — 列出所有可用字体（走共享目录清单缓存） */
 export async function handleListFonts(req: Request, _res: Response) {
-  const allFonts: Array<{ name: string; temporary: boolean }> = [];
-
-  for (const dir of fontDirs) {
-    try {
-      const entries = await readdir(dir);
-      for (const entry of entries) {
-        if (entry.isFile() && /\.(ttf|otf|woff|woff2)$/i.test(entry.name)) {
-          allFonts.push({ name: entry.name, temporary: dir === "font/temp" });
-        }
-      }
-    } catch {}
-  }
-
+  const entries = await fontDirListing();
+  const allFonts = entries.map((e) => ({ name: e.name, temporary: e.dir === "font/temp" }));
   return { req, res: jsonResponse(allFonts) };
 }

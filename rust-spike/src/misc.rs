@@ -814,6 +814,76 @@ fn obj_get<'a>(v: &'a JsonValue, key: &str) -> Option<&'a JsonValue> {
     v.get(key)
 }
 
+// ===== 字体目录清单缓存（find_font_path 模糊匹配与 /api/fonts 共用）=====
+
+/// 清单条目：模糊匹配键 + 列表输出（main.rs find_font_path 跨模块读取，pub 字段）
+pub struct CachedFontEntry {
+    /// 去扩展名小写 stem（前缀/包含匹配键）
+    pub stem_lower: String,
+    /// 原始文件名（/api/fonts 输出）
+    pub fname: String,
+    /// 所在目录（路径拼装 + temporary 判定）
+    pub dir: String,
+}
+
+struct FontDirCache {
+    at: Instant,
+    key: String,
+    entries: Arc<Vec<CachedFontEntry>>,
+}
+
+/// 短 TTL：上传/删除后的陈旧条目最多存活 5s（成功上传会主动失效，实际窗口更小）
+const FONT_DIR_CACHE_TTL: Duration = Duration::from_secs(5);
+static FONT_DIR_CACHE: OnceLock<Mutex<Option<FontDirCache>>> = OnceLock::new();
+
+/// 取字体目录清单（5s TTL）：消除每请求 readdir + 逐项 stat，成本随字体数增长的问题。
+/// 精确匹配不走此缓存（直 stat，新上传字体立即可见）；上传/删除成功后主动失效
+pub fn font_dir_listing(dirs: &[String]) -> Arc<Vec<CachedFontEntry>> {
+    let key = dirs.join(":");
+    let cell = FONT_DIR_CACHE.get_or_init(|| Mutex::new(None));
+    let mut g = cell.lock().unwrap();
+    if let Some(c) = g.as_ref() {
+        if c.key == key && c.at.elapsed() < FONT_DIR_CACHE_TTL {
+            return c.entries.clone();
+        }
+    }
+    let entries = scan_font_dirs(dirs);
+    let arc = Arc::new(entries);
+    *g = Some(FontDirCache { at: Instant::now(), key, entries: arc.clone() });
+    arc
+}
+
+/// 上传/删除字体后主动失效（下一次任何查找立即重建清单）
+pub fn invalidate_font_dir_cache() {
+    if let Some(cell) = FONT_DIR_CACHE.get() {
+        *cell.lock().unwrap() = None;
+    }
+}
+
+/// 全量扫描目录建清单（readdir + 逐项 stat，symlink 跟随，对齐原实现）
+fn scan_font_dirs(dirs: &[String]) -> Vec<CachedFontEntry> {
+    let mut all = Vec::new();
+    for dir in dirs {
+        let Ok(entries) = std::fs::read_dir(dir) else { continue };
+        for entry in entries.flatten() {
+            if !entry_is_file(&entry, dir) {
+                continue;
+            }
+            let fname = entry.file_name();
+            let Some(fname) = fname.to_str() else { continue };
+            if !crate::has_font_ext(fname) {
+                continue;
+            }
+            all.push(CachedFontEntry {
+                stem_lower: crate::strip_ext(fname).to_lowercase(),
+                fname: fname.to_string(),
+                dir: dir.clone(),
+            });
+        }
+    }
+    all
+}
+
 // ===== GET /api/fonts（对齐 backend/routes/fonts.ts）=====
 
 /// 目录条目判定是否为普通文件（symlink 需跟进一次 metadata，对齐 readdir+statFile 语义）
@@ -835,27 +905,17 @@ pub fn handle_list_fonts(
     dirs: &[String],
     close: bool,
 ) -> io::Result<bool> {
+    let listing = font_dir_listing(dirs);
     let mut body = String::from("[");
     let mut first = true;
-    for dir in dirs {
-        let Ok(entries) = std::fs::read_dir(dir) else { continue };
-        for entry in entries.flatten() {
-            if !entry_is_file(&entry, dir) {
-                continue;
-            }
-            let fname = entry.file_name();
-            let Some(fname) = fname.to_str() else { continue };
-            if !crate::has_font_ext(fname) {
-                continue;
-            }
-            if !first {
-                body.push(',');
-            }
-            first = false;
-            body.push_str("{\"name\":");
-            body.push_str(&json_stringify_str(fname));
-            body.push_str(&format!(",\"temporary\":{}}}", *dir == *"font/temp"));
+    for e in listing.iter() {
+        if !first {
+            body.push(',');
         }
+        first = false;
+        body.push_str("{\"name\":");
+        body.push_str(&json_stringify_str(&e.fname));
+        body.push_str(&format!(",\"temporary\":{}}}", e.dir == "font/temp"));
     }
     body.push(']');
     http::send_json(stream, 200, &body, close)?;
@@ -1262,6 +1322,9 @@ pub fn handle_upload(
         let auth = get_header(raw_req, "Authorization").unwrap_or("");
         let api_key = auth.strip_prefix("Bearer ").unwrap_or(auth);
         let result = handle_admin_upload(file.data, &filename, api_key);
+        if result.success {
+            invalidate_font_dir_cache();
+        }
         let out = write_upload_result(&result);
         http::send_json(stream, if result.success { 200 } else { 403 }, &out, close)?;
         return Ok(close);
@@ -1270,6 +1333,7 @@ pub fn handle_upload(
     let result = handle_temp_upload(file.data, &filename);
     if result.success {
         stats_record_temp_upload();
+        invalidate_font_dir_cache();
     }
     let out = write_upload_result(&result);
     http::send_json(stream, if result.success { 200 } else { 400 }, &out, close)?;

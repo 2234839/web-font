@@ -103,6 +103,50 @@ export const subsetCache = new LruCache<SubsetCacheEntry>({
   sizeFn: (v) => v.bytes.byteLength * (v.ttf ? 17 : 1),
 });
 
+/** 字体目录清单条目：模糊匹配键 + 列表输出共享 */
+interface FontDirEntry {
+  /** 去扩展名小写 stem（前缀/包含匹配键） */
+  stem: string;
+  /** 原始文件名（/api/fonts 输出） */
+  name: string;
+  /** 所在目录 */
+  dir: string;
+}
+
+/** 目录清单缓存（5s TTL）：消除每请求 readdir + 逐项判定的成本（随字体数线性增长）。
+ * 上传/删除后主动失效（invalidateFontDirCache）；精确匹配不走此缓存，新上传字体立即可见 */
+const FONT_DIR_CACHE_TTL = 5_000;
+let fontDirCache: { at: number; entries: FontDirEntry[] } | null = null;
+
+/** 上传/删除字体后主动失效（下一次任何查找立即重建清单） */
+export function invalidateFontDirCache(): void {
+  fontDirCache = null;
+}
+
+/** 取字体目录清单（TTL 内复用），findFontPath 模糊匹配与 /api/fonts 共享 */
+export async function fontDirListing(): Promise<FontDirEntry[]> {
+  if (fontDirCache && Date.now() - fontDirCache.at < FONT_DIR_CACHE_TTL) {
+    return fontDirCache.entries;
+  }
+  const entries: FontDirEntry[] = [];
+  for (const dir of fontDirs) {
+    try {
+      const list = await readdir(dir);
+      for (const entry of list) {
+        if (entry.isFile() && /\.(ttf|otf|woff|woff2)$/i.test(entry.name)) {
+          entries.push({
+            stem: entry.name.replace(/\.[^.]+$/, "").toLowerCase(),
+            name: entry.name,
+            dir,
+          });
+        }
+      }
+    } catch {}
+  }
+  fontDirCache = { at: Date.now(), entries };
+  return entries;
+}
+
 /**
  * 在所有字体目录中查找字体文件
  * 匹配优先级：精确匹配 > 前缀匹配 > 包含匹配
@@ -116,29 +160,16 @@ export async function findFontPath(filename: string): Promise<string | null> {
     } catch {}
   }
 
-  const allFonts: Array<{ basename: string; path: string }> = [];
-  for (const dir of fontDirs) {
-    try {
-      const entries = await readdir(dir);
-      for (const entry of entries) {
-        if (entry.isFile() && /\.(ttf|otf|woff|woff2)$/i.test(entry.name)) {
-          allFonts.push({
-            basename: entry.name.replace(/\.[^.]+$/, ""),
-            path: path_join(dir, entry.name),
-          });
-        }
-      }
-    } catch {}
-  }
+  const allFonts = await fontDirListing();
 
   const query = filename.replace(/\.[^.]+$/, "").toLowerCase();
 
   for (const f of allFonts) {
-    if (f.basename.toLowerCase().startsWith(query)) return f.path;
+    if (f.stem.startsWith(query)) return path_join(f.dir, f.name);
   }
 
   for (const f of allFonts) {
-    if (f.basename.toLowerCase().includes(query)) return f.path;
+    if (f.stem.includes(query)) return path_join(f.dir, f.name);
   }
 
   return null;

@@ -1,4 +1,5 @@
 import { writeFile, unlink, readdir, stat, mkdir, path_join } from "./interface";
+import { invalidateFontDirCache } from "./shared";
 import { enableTempUpload, adminApiKey, tempMaxFiles, tempMaxTotalSize } from "./config";
 
 /** 允许的字体文件扩展名 */
@@ -101,6 +102,7 @@ export async function handleTempUpload(fileData: { data: Uint8Array; filename: s
   }
 
   await writeFile(filePath, fileData.data);
+  invalidateFontDirCache();
   return { success: true };
 }
 
@@ -124,5 +126,6 @@ export async function handleAdminUpload(
 
   const filename = sanitizeFilename(fileData.filename);
   await writeFile(path_join("font/admin", filename), fileData.data);
+  invalidateFontDirCache();
   return { success: true };
 }

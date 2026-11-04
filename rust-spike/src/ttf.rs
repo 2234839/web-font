@@ -380,14 +380,18 @@ impl Font {
         }
     }
 
-    /// 文本涉及的 gid 集（gid 0 始终保留，升序）
+    /// 文本涉及的 gid 集（gid 0 始终保留，升序）。
+    /// 去重用定长位图（O(1) 判重，替代 Vec::contains 的 O(n)——长文本时平方复杂度）
     pub fn collect_gids(&self, text: &str) -> Result<Vec<u16>, SubsetError> {
         let mut gids: Vec<u16> = vec![0];
+        let mut seen = vec![false; self.num_glyphs as usize + 1];
+        seen[0] = true;
         let glyf = self.find_table(b"glyf");
         for ch in text.chars() {
             let cp = ch as u32;
             if let Some(gid) = self.cmap_get(cp) {
-                if !gids.contains(&gid) {
+                if !seen[gid as usize] {
+                    seen[gid as usize] = true;
                     gids.push(gid);
                 }
                 if let Some(g) = glyf {
@@ -410,8 +414,11 @@ impl Font {
 
     /// 种子 gid（TS probe 语义）：gid 0 + 文本码点首次出现序的 cmap gid。
     /// 不排序——插入序决定 TS subsetGids 追加顺序即新 gid 编号，是 GSUB 对拍的前提。
+    /// 去重用位图（O(1) 判重，见 collect_gids）
     fn seed_gids(&self, text: &str) -> Vec<u16> {
         let mut seeds: Vec<u16> = vec![0];
+        let mut seen_gid = vec![false; self.num_glyphs as usize + 1];
+        seen_gid[0] = true;
         let mut seen_cp: HashSet<u32> = HashSet::new();
         for ch in text.chars() {
             let cp = ch as u32;
@@ -419,7 +426,8 @@ impl Font {
                 continue;
             }
             if let Some(gid) = self.cmap_get(cp) {
-                if !seeds.contains(&gid) {
+                if !seen_gid[gid as usize] {
+                    seen_gid[gid as usize] = true;
                     seeds.push(gid);
                 }
             }
