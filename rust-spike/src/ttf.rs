@@ -1,6 +1,7 @@
 //! TTF 解析与子集化（零依赖，对译 zig-spike/src/ttf.zig）
 
 use std::collections::{HashMap, HashSet};
+use std::sync::OnceLock;
 
 use crate::cff;
 use crate::gsub;
@@ -119,12 +120,13 @@ pub struct Font {
     pub units_per_em: u16,
     /// head.indexToLocFormat（0=short 1=long）
     pub index_to_loc_format: u16,
-    /// 码点 → gid
-    pub cmap: HashMap<u32, u16>,
-    /// gid → 码点反向索引：rev_pairs[rev_idx[gid]..rev_idx[gid+1]] 是该 gid 的全部码点
-    pub rev_pairs: Vec<u32>,
-    /// rev_pairs 的分组前缀和（见 rev_pairs）
-    pub rev_idx: Vec<u32>,
+    /// cmap 表内 Unicode 子表（format4/12）的偏移，按 encoding record 顺序。
+    /// 惰性化核心：parse 不再展开全量 cmap HashMap，查询单个码点时直接在
+    /// mmap 字节上二分查找——解析成本从 O(全部码点) 降到 O(子表数×log n)
+    cmap_sub_offsets: Vec<u32>,
+    /// gid→码点反向索引（rev_pairs/rev_idx），首次使用时才全量构建：
+    /// GSUB 字体的子集请求用不到它，省掉入场费
+    rev: OnceLock<(Vec<u32>, Vec<u32>)>,
 }
 
 impl Font {
@@ -161,37 +163,101 @@ impl Font {
             num_glyphs: 0,
             units_per_em: 1000,
             index_to_loc_format: 0,
-            cmap: HashMap::new(),
-            rev_pairs: Vec::new(),
-            rev_idx: Vec::new(),
+            cmap_sub_offsets: Vec::new(),
+            rev: OnceLock::new(),
         };
         f.num_glyphs = f.read_maxp_glyphs();
         f.index_to_loc_format = f.read_head_loc_format();
         f.units_per_em = f.read_head_upem();
-        // 字段级不相交借用（f.data 只读 + f.cmap 可写），无需自引用结构
-        Font::parse_cmap_impl(&f.data, &f.tables, f.num_glyphs, &mut f.cmap)?;
-        f.build_rev_index();
+        // 只扫 encoding records 记录 Unicode 子表偏移，不展开条目（惰性化）
+        Font::scan_cmap_subs(&f.data, &f.tables, &mut f.cmap_sub_offsets)?;
         Ok(f)
     }
 
-    /// 构建 gid→码点反向索引：计数排序（计数入 rev_idx + 前缀和 + 填充），parse 时一次，
-    /// 子集化每请求只查保留字形
-    fn build_rev_index(&mut self) {
+    /// 扫描 cmap 表目录，记录 Unicode 子表（format4/12）偏移；无任何命中报 NoCmap
+    fn scan_cmap_subs(data: &[u8], tables: &[TableDir], out: &mut Vec<u32>) -> Result<(), ParseError> {
+        let cmap_tbl = find_table_in(data, tables, b"cmap").ok_or(ParseError::NoCmap)?;
+        if cmap_tbl.len() < 4 {
+            return Err(ParseError::NoCmap);
+        }
+        let num_sub = ru16(cmap_tbl, 2) as usize;
+        for i in 0..num_sub {
+            let rec = &cmap_tbl[4 + i * 8..];
+            if rec.len() < 8 {
+                break;
+            }
+            let platform = ru16(rec, 0);
+            let encoding = ru16(rec, 2);
+            let offset = ru32(rec, 4);
+            let is_unicode = (platform == 3 && (encoding == 1 || encoding == 10)) || platform == 0;
+            if !is_unicode || offset as usize >= cmap_tbl.len() {
+                continue;
+            }
+            let sub = &cmap_tbl[offset as usize..];
+            if sub.len() < 2 {
+                continue;
+            }
+            match ru16(sub, 0) {
+                4 | 12 => out.push(offset),
+                _ => {}
+            }
+        }
+        if out.is_empty() {
+            return Err(ParseError::NoCmap);
+        }
+        Ok(())
+    }
+
+    /// 码点 → gid：从最后的子表往前查（多子表合并语义 = 顺序 insert 覆盖，
+    /// 最终值 = 最后写入的子表），单个码点在 mmap 字节上二分，零展开
+    pub fn cmap_get(&self, cp: u32) -> Option<u16> {
+        let cmap_tbl = self.find_table(b"cmap")?;
+        for &off in self.cmap_sub_offsets.iter().rev() {
+            let sub = &cmap_tbl[off as usize..];
+            match cmap_sub_lookup(sub, self.num_glyphs, cp) {
+                SubHit::Gid(g) => return Some(g),
+                SubHit::Skip => continue,
+                SubHit::Miss => continue,
+            }
+        }
+        None
+    }
+
+    /// gid 的全部码点（rev 反向索引，首次调用时全量构建并缓存）
+    pub fn rev_cps(&self, gid: u16) -> &[u32] {
+        let (pairs, idx) = self.rev.get_or_init(|| self.build_rev_index());
+        let start = idx[gid as usize] as usize;
+        let end = idx[gid as usize + 1] as usize;
+        &pairs[start..end]
+    }
+
+    /// 全量展开 cmap 建反向索引：计数排序（计数入前缀和 + 填充）。
+    /// 仅无 GSUB 路径子集 / glyph-match 等需要 gid→码点全量反查时才付这一次成本
+    fn build_rev_index(&self) -> (Vec<u32>, Vec<u32>) {
+        let mut cmap: HashMap<u32, u16> = HashMap::new();
+        let cmap_tbl = self.find_table(b"cmap").unwrap_or(&[]);
+        for &off in &self.cmap_sub_offsets {
+            let sub = &cmap_tbl[off as usize..];
+            match ru16(sub, 0) {
+                4 => parse_cmap4(sub, self.num_glyphs, &mut cmap),
+                12 => parse_cmap12(sub, self.num_glyphs, &mut cmap),
+                _ => {}
+            }
+        }
         let mut idx = vec![0u32; self.num_glyphs as usize + 1];
-        for &gid in self.cmap.values() {
+        for &gid in cmap.values() {
             idx[gid as usize + 1] += 1;
         }
         for i in 1..idx.len() {
             idx[i] += idx[i - 1];
         }
-        let mut pairs = vec![0u32; self.cmap.len()];
+        let mut pairs = vec![0u32; cmap.len()];
         let mut cursor = idx.clone();
-        for (&cp, &gid) in self.cmap.iter() {
+        for (&cp, &gid) in cmap.iter() {
             pairs[cursor[gid as usize] as usize] = cp;
             cursor[gid as usize] += 1;
         }
-        self.rev_pairs = pairs;
-        self.rev_idx = idx;
+        (pairs, idx)
     }
 
     /// 查表体切片（越界表按缺失处理，对译 findTable）
@@ -215,7 +281,7 @@ impl Font {
     /// 码点 → gid 查询（cmap 访问入口，glyph-match 用）
     #[allow(dead_code)] // R5' glyph-match 接入前未用
     pub fn glyph_id(&self, cp: u32) -> Option<u16> {
-        self.cmap.get(&cp).copied()
+        self.cmap_get(cp)
     }
 
     fn read_maxp_glyphs(&self) -> u16 {
@@ -320,7 +386,7 @@ impl Font {
         let glyf = self.find_table(b"glyf");
         for ch in text.chars() {
             let cp = ch as u32;
-            if let Some(&gid) = self.cmap.get(&cp) {
+            if let Some(gid) = self.cmap_get(cp) {
                 if !gids.contains(&gid) {
                     gids.push(gid);
                 }
@@ -352,7 +418,7 @@ impl Font {
             if !seen_cp.insert(cp) {
                 continue;
             }
-            if let Some(&gid) = self.cmap.get(&cp) {
+            if let Some(gid) = self.cmap_get(cp) {
                 if !seeds.contains(&gid) {
                     seeds.push(gid);
                 }
@@ -360,42 +426,135 @@ impl Font {
         }
         seeds
     }
+}
 
-    /// 解析 cmap（Unicode 子表 format4/12 合并；无命中报 NoCmap）。
-    /// 拆为关联函数是为绕过 parse 阶段 data 未拷贝时的自借用问题。
-    fn parse_cmap_impl(data: &[u8], tables: &[TableDir], num_glyphs: u16, cmap: &mut HashMap<u32, u16>) -> Result<(), ParseError> {
-        let cmap_tbl = find_table_in(data, tables, b"cmap").ok_or(ParseError::NoCmap)?;
-        if cmap_tbl.len() < 4 {
-            return Err(ParseError::NoCmap);
+/// 单个子表内单码点查找结果（对齐全量展开时的 insert 语义）
+enum SubHit {
+    /// 命中且该子表展开时会 insert 此值（format12 含 gid=0）
+    Gid(u16),
+    /// 该子表对此 cp 不会 insert（format4 映射到 0 / ro 奇数跳过），
+    /// 不覆盖先前子表的值 → 继续往前查
+    Skip,
+    /// 此 cp 不在该子表任何段内
+    Miss,
+}
+
+/// format4/12 子表单码点查找：段/groups 二分，零展开。
+/// 逐 cp 精确复刻 parse_cmap4/parse_cmap12 的插入条件，保证产物字节不变
+fn cmap_sub_lookup(sub: &[u8], num_glyphs: u16, cp: u32) -> SubHit {
+    if sub.len() < 2 {
+        return SubHit::Miss;
+    }
+    match ru16(sub, 0) {
+        4 => cmap4_lookup(sub, num_glyphs, cp),
+        12 => cmap12_lookup(sub, num_glyphs, cp),
+        _ => SubHit::Miss,
+    }
+}
+
+/// format4：endCode 有序 → 二分找第一个 end>=cp 的段，再按原展开逻辑判定
+fn cmap4_lookup(sub: &[u8], num_glyphs: u16, cp: u32) -> SubHit {
+    if sub.len() < 14 || cp > 0xFFFF {
+        return SubHit::Miss;
+    }
+    let seg_count = ru16(sub, 6) as usize / 2;
+    if seg_count == 0 {
+        return SubHit::Miss;
+    }
+    let seg_end_off = 14usize;
+    let seg_start_off = seg_end_off + seg_count * 2 + 2;
+    let delta_off = seg_start_off + seg_count * 2;
+    let range_off = delta_off + seg_count * 2;
+    if sub.len() < range_off + seg_count * 2 {
+        return SubHit::Miss;
+    }
+    // endCode 数组有序，二分第一个 end >= cp
+    let mut lo = 0usize;
+    let mut hi = seg_count;
+    while lo < hi {
+        let mid = (lo + hi) / 2;
+        if ru16(sub, seg_end_off + mid * 2) < cp as u16 {
+            lo = mid + 1;
+        } else {
+            hi = mid;
         }
-        let num_sub = ru16(cmap_tbl, 2) as usize;
-        for i in 0..num_sub {
-            let rec = &cmap_tbl[4 + i * 8..];
-            if rec.len() < 8 {
-                break;
-            }
-            let platform = ru16(rec, 0);
-            let encoding = ru16(rec, 2);
-            let offset = ru32(rec, 4) as usize;
-            let is_unicode = (platform == 3 && (encoding == 1 || encoding == 10)) || platform == 0;
-            if !is_unicode || offset >= cmap_tbl.len() {
-                continue;
-            }
-            let sub = &cmap_tbl[offset..];
-            if sub.len() < 2 {
-                continue;
-            }
-            let format = ru16(sub, 0);
-            match format {
-                4 => parse_cmap4(sub, num_glyphs, cmap),
-                12 => parse_cmap12(sub, num_glyphs, cmap),
-                _ => {}
-            }
+    }
+    if lo >= seg_count {
+        return SubHit::Miss;
+    }
+    let seg = lo;
+    let end_cp = ru16(sub, seg_end_off + seg * 2) as u32;
+    let start_cp = ru16(sub, seg_start_off + seg * 2) as u32;
+    if cp < start_cp || cp > end_cp {
+        return SubHit::Miss; // gap 段，原展开同样不 insert
+    }
+    let delta = ru16(sub, delta_off + seg * 2);
+    let ro = ru16(sub, range_off + seg * 2);
+    // 罕见奇数 idRangeOffset，原展开跳过（不 insert）
+    if ro % 2 == 1 {
+        return SubHit::Skip;
+    }
+    let gid: u16 = if ro == 0 {
+        (cp.wrapping_add(delta as u32)) as u16
+    } else {
+        let gid_off = range_off + seg * 2 + ro as usize + (cp - start_cp) as usize * 2;
+        if gid_off + 2 > sub.len() {
+            return SubHit::Skip;
         }
-        if cmap.is_empty() {
-            return Err(ParseError::NoCmap);
+        let g = ru16(sub, gid_off);
+        if g == 0 {
+            return SubHit::Skip;
         }
-        Ok(())
+        (g.wrapping_add(delta)) as u16
+    };
+    if gid != 0 && gid < num_glyphs {
+        SubHit::Gid(gid)
+    } else {
+        SubHit::Skip
+    }
+}
+
+/// format12：groups 按 startCode 有序 → 二分定位 group，直接算 gid
+fn cmap12_lookup(sub: &[u8], num_glyphs: u16, cp: u32) -> SubHit {
+    if sub.len() < 16 {
+        return SubHit::Miss;
+    }
+    let num_groups = ru32(sub, 12) as usize;
+    let mut lo = 0usize;
+    let mut hi = num_groups;
+    while lo < hi {
+        let mid = (lo + hi) / 2;
+        let base = 16 + mid * 12;
+        if base + 12 > sub.len() {
+            hi = mid;
+            continue;
+        }
+        if ru32(sub, base + 4) < cp {
+            // endCode < cp，目标在右侧
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+    if lo >= num_groups {
+        return SubHit::Miss;
+    }
+    let base = 16 + lo * 12;
+    if base + 12 > sub.len() {
+        return SubHit::Miss;
+    }
+    let start_cp = ru32(sub, base);
+    let end_cp = ru32(sub, base + 4);
+    let start_gid = ru32(sub, base + 8);
+    if cp < start_cp || cp > end_cp {
+        return SubHit::Miss;
+    }
+    let gid = start_gid + (cp - start_cp);
+    if gid < num_glyphs as u32 {
+        // 原展开对 gid=0 也 insert（覆盖语义），命中即返回
+        SubHit::Gid(gid as u16)
+    } else {
+        SubHit::Skip
     }
 }
 
@@ -1012,7 +1171,7 @@ pub fn subset(font: &Font, text_in: &str) -> Result<Vec<u8>, SubsetError> {
         // 重复码点不去重收集（同 cp 必同 gid），sort 后统一 dedup——省一个 HashSet
         for ch in text.chars() {
             let cp = ch as u32;
-            let Some(&old_gid) = font.cmap.get(&cp) else {
+            let Some(old_gid) = font.cmap_get(cp) else {
                 continue;
             };
             let Some(new_gid) = gid_map.get(old_gid) else {
@@ -1023,9 +1182,7 @@ pub fn subset(font: &Font, text_in: &str) -> Result<Vec<u8>, SubsetError> {
     } else {
         for (new_idx, &old_gid) in keep.iter().enumerate() {
             let new_gid: u16 = new_idx as u16;
-            let start = font.rev_idx[old_gid as usize] as usize;
-            let end = font.rev_idx[old_gid as usize + 1] as usize;
-            for &cp in &font.rev_pairs[start..end] {
+            for &cp in font.rev_cps(old_gid) {
                 cp_pairs.push(CpPair { cp, gid: new_gid });
             }
         }
@@ -1743,7 +1900,7 @@ fn subset_otf(font: &Font, text: &str) -> Result<Vec<u8>, SubsetError> {
             if cp == 0 || cp >= 0x10000 {
                 continue;
             }
-            let Some(&old_gid) = font.cmap.get(&cp) else {
+            let Some(old_gid) = font.cmap_get(cp) else {
                 continue;
             };
             let Some(new_gid) = gid_map.get(old_gid) else {
