@@ -54,6 +54,24 @@ impl FontCache {
         before - map.len()
     }
 
+    /** 内存压力卸载：从最久未用端逐个卸载，直到水位条件满足或只剩 keep_min 个。
+     * release_need 满足即停（回调返回 true 表示压力已解除） */
+    pub fn evict_under_pressure(&self, keep_min: usize, mut enough: impl FnMut() -> bool) -> usize {
+        let mut map = self.map.lock().unwrap();
+        let mut evicted = 0;
+        while map.len() > keep_min && !enough() {
+            // 找 last_used 最旧的条目卸载（条目量级 ~200，O(n) 每轮可忽略）
+            let victim = map
+                .iter()
+                .min_by_key(|(_, e)| e.last_used)
+                .map(|(k, _)| k.clone());
+            let Some(victim) = victim else { break };
+            map.remove(&victim);
+            evicted += 1;
+        }
+        evicted
+    }
+
     /// 条目数（/api/stats 的 fontBufferCacheEntries 同位字段，口径注释见 Zig 版）
     #[allow(dead_code)] // /api/stats 接入前未用
     pub fn len(&self) -> usize {

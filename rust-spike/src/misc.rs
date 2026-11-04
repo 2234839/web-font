@@ -384,6 +384,14 @@ fn read_meminfo() -> Option<(u64, u64)> {
 }
 
 /// 每次准入都读取当前水位，不缓存（对齐 readMemorySnapshot）
+/// 容器内存压力判定：cgroup 可用（limit - usage）低于 total 的比值阈值（15%）
+pub fn memory_under_pressure() -> bool {
+    let Some((limit, free)) = read_cgroup_memory() else {
+        return false;
+    };
+    free < limit * 15 / 100
+}
+
 fn read_memory_snapshot() -> MemSnap {
     let (limit, free) = match read_cgroup_memory() {
         Some(c) => c,

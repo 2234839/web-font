@@ -140,12 +140,20 @@ fn run_server() {
         .unwrap_or(1800);
     if idle_secs > 0 {
         let app = app.clone();
-        eprintln!("[font-idle-unload] 阈值 {idle_secs}s，扫描周期 60s");
+        eprintln!("[font-idle-unload] 阈值 {idle_secs}s，扫描周期 60s，压力卸载水位 15%");
         std::thread::spawn(move || loop {
             std::thread::sleep(std::time::Duration::from_secs(60));
+            // 时间卸载：日常释放久未使用的字体
             let n = app.fonts.evict_idle(std::time::Duration::from_secs(idle_secs));
             if n > 0 {
                 eprintln!("[font-idle-unload] 卸载 {n} 个空闲字体");
+            }
+            // 压力卸载兜底：内存水位不足时按 LRU 再卸（至少保留 2 个热字体）
+            if misc::memory_under_pressure() {
+                let p = app.fonts.evict_under_pressure(2, || !misc::memory_under_pressure());
+                if p > 0 {
+                    eprintln!("[font-idle-unload] 内存压力，LRU 卸载 {p} 个字体");
+                }
             }
         });
     }
