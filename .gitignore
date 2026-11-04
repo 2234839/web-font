@@ -47,3 +47,11 @@ packages/leafer-x-webfont/vendor
 
 # 商业化文档仅本地保留，不入库（png 截图正常跟踪）
 doc/*.md
+
+
+.zig-cache
+zig-out
+target-perf
+# 本地工具/工作区
+.chatcode/
+rust-spike/target-perf/

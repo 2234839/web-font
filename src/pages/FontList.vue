@@ -251,6 +251,7 @@ function onCardAppear(fontName: string) {
         <LazyTrigger
           v-for="font in sortedFonts"
           :key="font.name"
+          root-margin="600px"
           @appear="onCardAppear(font.name)"
         >
           <router-link

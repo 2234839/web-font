@@ -1,0 +1,28 @@
+[package]
+name = "webfont-rs"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+brotli = "9"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "unwind"
+
+# 超小二进制发布 profile（目标 3）：size 优化 + 全 LTO + 去符号。
+# panic 保持 unwind：连接线程 panic 只断当前连接（abort 会因单个畸形请求打死整个服务）
+# 禁 unsafe 红线不变；brotli crate 仍限 woff2.rs
+[profile.tiny]
+inherits = "release"
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+strip = "symbols"
+
+# 小体积但保速变体：opt=3（tiny 的 opt=z 让子集化慢 1.3 倍，速度优先）
+[profile.tinyfast]
+inherits = "tiny"
+opt-level = 3

@@ -1,7 +1,7 @@
 {
   "name": "webfont",
   "private": true,
-  "version": "1.14.6",
+  "version": "1.15.0",
   "type": "module",
   "scripts": {
     "dev": "pnpx tsx scripts/dev-all.ts",
@@ -11,11 +11,12 @@
     "serve:llrt": "./llrt ./dist_backend/app.cjs",
     "build": "vite-ssg build",
     "build_backend": "pnpx tsx scripts/build-backend.ts",
+    "build_backend_rs": "cargo build --profile tinyfast --target x86_64-unknown-linux-musl --manifest-path rust-spike/Cargo.toml && cp rust-spike/target/x86_64-unknown-linux-musl/tinyfast/webfont-rs dist_backend/webfont-rs",
     "lint:font-config": "pnpx tsx scripts/lint-font-config.ts",
     "docker_build": "docker build -t llej0/web-font:${npm_package_version} -t llej0/web-font:latest .",
     "docker_push": "docker push llej0/web-font:${npm_package_version} && docker push llej0/web-font:latest",
     "preview": "vite preview",
-    "release": "pnpm build && pnpm build_backend && pnpm docker_build && pnpm docker_push"
+    "release": "pnpm build && pnpm build_backend_rs && pnpm docker_build && pnpm docker_push"
   },
   "dependencies": {
     "@unhead/vue": "^3.4.3",

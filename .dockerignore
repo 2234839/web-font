@@ -1,0 +1,4 @@
+# 只需要 dist/ 与 dist_backend/，其余全部排除（cargo target 116M、node_modules、字体库等不进 context）
+*
+!dist/
+!dist_backend/
