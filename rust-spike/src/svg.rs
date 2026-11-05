@@ -9,19 +9,27 @@ use crate::cache::FontCacheError;
 use crate::{cache, http, misc, ttf, App};
 
 /// 二次贝塞尔轮廓 → SVG path 片段（M/L/Q/Z；TrueType 隐含中点 on-curve 语义）
-fn contour_to_path(contour: &[ttf::GlyfPt], parts: &mut Vec<String>) {
+/// 直接写入调用方缓冲：大文本（千字级）时避免每点一次 String 分配
+fn contour_to_path(contour: &[ttf::GlyfPt], out: &mut String) {
     if contour.len() < 2 {
         return;
     }
     let n = contour.len();
     let mid = |a: &ttf::GlyfPt, b: &ttf::GlyfPt| (f64::from(a.x + b.x) / 2.0, f64::from(a.y + b.y) / 2.0);
-    // 数值格式化：整数不带小数点，节省体积
-    let num = |v: f64| -> String {
-        if v.fract() == 0.0 {
-            format!("{}", v as i64)
-        } else {
-            format!("{v}")
+    // 数值内联写入：整数不带小数点，节省体积；c 为 NaN 表示仅两点指令（M/L）
+    let put = |out: &mut String, tag: char, a: f64, b: f64, c: f64, d: f64| {
+        out.push(tag);
+        out.push(' ');
+        write_num(out, a);
+        out.push(' ');
+        write_num(out, b);
+        if c.is_finite() {
+            out.push(' ');
+            write_num(out, c);
+            out.push(' ');
+            write_num(out, d);
         }
+        out.push(' ');
     };
 
     // 找 on-curve 起点；全 off-curve（极罕见）用首尾中点作隐含起点
@@ -35,9 +43,8 @@ fn contour_to_path(contour: &[ttf::GlyfPt], parts: &mut Vec<String>) {
         let (mx, my) = mid(&contour[n - 1], &contour[0]);
         (mx, my)
     };
-    parts.push(format!("M {} {}", num(sx), num(sy)));
+    put(out, 'M', sx, sy, f64::NAN, f64::NAN);
 
-    let mut prev = (sx, sy);
     // 悬挂中的 off-curve 控制点
     let mut ctrl: Option<(f64, f64)> = None;
     for k in 1..=n {
@@ -45,26 +52,33 @@ fn contour_to_path(contour: &[ttf::GlyfPt], parts: &mut Vec<String>) {
         let cur = (f64::from(p.x), f64::from(p.y));
         if p.on_curve {
             match ctrl.take() {
-                Some(c) => parts.push(format!("Q {} {} {} {}", num(c.0), num(c.1), num(cur.0), num(cur.1))),
-                None => parts.push(format!("L {} {}", num(cur.0), num(cur.1))),
+                Some(c) => put(out, 'Q', c.0, c.1, cur.0, cur.1),
+                None => put(out, 'L', cur.0, cur.1, f64::NAN, f64::NAN),
             }
-            prev = cur;
         } else {
             if let Some(c) = ctrl {
                 // 连续 off-curve：前控制点与本控制点的中点是隐含 on-curve 终点
                 let implied = ((c.0 + cur.0) / 2.0, (c.1 + cur.1) / 2.0);
-                parts.push(format!("Q {} {} {} {}", num(c.0), num(c.1), num(implied.0), num(implied.1)));
-                prev = implied;
+                put(out, 'Q', c.0, c.1, implied.0, implied.1);
             }
             ctrl = Some(cur);
         }
     }
     // 收尾：悬挂控制点指回起点
     if let Some(c) = ctrl {
-        parts.push(format!("Q {} {} {} {}", num(c.0), num(c.1), num(sx), num(sy)));
+        put(out, 'Q', c.0, c.1, sx, sy);
     }
-    let _ = prev;
-    parts.push("Z".to_string());
+    out.push_str("Z ");
+}
+
+/// 数值写入缓冲（整数不带小数点；字形坐标是整数或 .5 中点，无 NaN/Inf 路径）
+fn write_num(out: &mut String, v: f64) {
+    use std::fmt::Write as _;
+    if v.fract() == 0.0 {
+        let _ = write!(out, "{}", v as i64);
+    } else {
+        let _ = write!(out, "{v}");
+    }
 }
 
 /// 参数安全化：颜色仅允许 3/6 位十六进制，防 SVG 注入
@@ -122,6 +136,8 @@ pub fn handle_svg(
     };
 
     let size = size.clamp(12, 400);
+    // color 缺省/非法时回退默认色（对齐 TS 版 sanitizeColor）
+    let color = sanitize_color(&color);
 
     misc::mark_font_used(&font_path);
     misc::stats_record_subset(misc::utf16_len_utf8(text));
@@ -190,12 +206,16 @@ pub fn handle_svg(
                 return Ok(close);
             }
         };
-        let mut parts: Vec<String> = Vec::new();
+        let mut d = String::with_capacity(1024);
         for c in &contours {
-            contour_to_path(c, &mut parts);
+            contour_to_path(c, &mut d);
         }
-        if !parts.is_empty() {
-            paths.push((pen_x, parts.join(" ")));
+        /** 去掉末尾指令分隔空格，保持与 TS 版逐字节一致 */
+        if d.ends_with(' ') {
+            d.pop();
+        }
+        if !d.is_empty() {
+            paths.push((pen_x, d));
         }
         pen_x += f64::from(font.advance_width(gid).unwrap_or_else(|| font.units_per_em.max(1) as u16));
     }
