@@ -83,6 +83,11 @@ function readGlyphContours(ttf: any, glyf: any): RawContour[] {
   return contours;
 }
 
+/** 对外：读取一个字形的轮廓并统一为对象点形态（供 SVG 矢量化等复用） */
+export function readGlyphContoursNormalized(ttf: any, glyf: any): Array<Array<{ x: number; y: number; onCurve: boolean }>> {
+  return readGlyphContours(ttf, glyf).map(normalizeContour);
+}
+
 /** 把对象点或扁平三元组统一成对象点 */
 function normalizeContour(contour: RawContour): GlyphPoint[] {
   const points: GlyphPoint[] = [];

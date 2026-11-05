@@ -21,6 +21,7 @@ import { handleGetConfig } from "./routes/config";
 import { handleStats, handleStatsEvent } from "./routes/stats";
 import { handleUpload } from "./routes/upload";
 import { handleFontSubset } from "./routes/subset";
+import { handleFontSvg } from "./routes/svg";
 import { handleGlyphMatch } from "./routes/glyph_match";
 import { handleFontDetail } from "./routes/font_detail";
 import { handleFontMeta } from "./routes/font_meta";
@@ -178,6 +179,9 @@ const fontApiMiddleware: cMiddleware = async (req, res, next) => {
   }
   if (url.pathname === "/api" && req.method === "GET") {
     return handleFontSubset(req, res);
+  }
+  if (url.pathname === "/api/svg" && req.method === "GET") {
+    return handleFontSvg(req, res);
   }
   if (url.pathname === "/api/glyph-match" && req.method === "POST") {
     return handleGlyphMatch(req, res);

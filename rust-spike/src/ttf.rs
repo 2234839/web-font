@@ -260,6 +260,29 @@ impl Font {
         (pairs, idx)
     }
 
+    /// gid 的 advance width（hmtx spec 继承：≥numberOfHMetrics 复用末条；缺表回退 unitsPerEm）
+    /// 供 /api/svg 水平布局使用
+    pub fn advance_width(&self, gid: u16) -> Option<u16> {
+        let hmtx = self.find_table(b"hmtx")?;
+        let nhm: u32 = self
+            .find_table(b"hhea")
+            .filter(|h| h.len() >= 36)
+            .map(|h| ru16(h, 34) as u32)
+            .unwrap_or(0);
+        let src: u32 = if u32::from(gid) < nhm {
+            u32::from(gid)
+        } else if nhm > 0 {
+            nhm - 1
+        } else {
+            0
+        };
+        let o = src as usize * 4;
+        if o + 2 > hmtx.len() {
+            return None;
+        }
+        Some(ru16(hmtx, o))
+    }
+
     /// 查表体切片（越界表按缺失处理，对译 findTable）
     fn find_table(&self, tag: &[u8; 4]) -> Option<&[u8]> {
         for t in &self.tables {

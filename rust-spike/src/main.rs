@@ -10,6 +10,7 @@ mod glyph_match;
 mod gsub;
 mod http;
 mod misc;
+mod svg;
 mod ttf;
 mod woff2;
 
@@ -384,6 +385,9 @@ fn route_request(
     }
     if r.path == "/api" && is_get {
         return handle_subset(app, stream, r.query, close, r.if_none_match.as_deref());
+    }
+    if r.path == "/api/svg" && is_get {
+        return svg::handle_svg(app, stream, r.query, close, r.if_none_match.as_deref());
     }
     if r.path == "/api/glyph-match" && is_post {
         return misc::handle_glyph_match(stream, &app.font_dirs, &app.fonts, r.body, close);

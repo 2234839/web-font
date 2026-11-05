@@ -33,6 +33,43 @@
 - LeaferJS 画布 / 设计工具 — [leafer-x-webfont](https://www.npmjs.com/package/leafer-x-webfont) 插件，画布 Text 用什么字体就加载那几个字（[在线 demo](https://webfont.shenzilong.cn/leafer-demo/)）
 - AI 生成网页 — 让 AI 也能输出有设计感的中文字体方案
 
+## 字体效果预览
+
+下面这些图片不是截图，而是服务端实时返回的 **SVG 矢量文字**（`/api/svg` 接口把字符转成字形轮廓路径，无需加载字体文件即可在任意环境渲染）：
+
+<p>
+  <img src="https://webfont.shenzilong.cn/api/svg?font=%E4%BB%A4%E4%B8%9C%E9%BD%90%E4%BC%8B%E5%A4%8D%E5%88%BB%E4%BD%93.ttf&text=%E9%9D%99%E5%BF%83%E8%8C%B6%E8%88%8D&color=333" alt="令东齐伋复刻体 - 静心茶舍" height="52"><br>
+  <sub>令东齐伋复刻体</sub>
+</p>
+<p>
+  <img src="https://webfont.shenzilong.cn/api/svg?font=%E5%BE%97%E6%84%8F%E9%BB%91.ttf&text=%E5%BF%AB%E5%A6%82%E9%97%AA%E7%94%B5&color=333" alt="得意黑 - 快如闪电" height="52"><br>
+  <sub>得意黑</sub>
+</p>
+<p>
+  <img src="https://webfont.shenzilong.cn/api/svg?font=%E9%9C%9E%E9%B9%9C%E6%96%87%E6%A5%B7.ttf&text=%E6%B8%A9%E6%9F%94%E5%B2%81%E6%9C%88&color=333" alt="霞鹜文楷 - 温柔岁月" height="52"><br>
+  <sub>霞鹜文楷</sub>
+</p>
+<p>
+  <img src="https://webfont.shenzilong.cn/api/svg?font=%E9%A9%AC%E5%85%8B%E7%AC%94%E5%93%A5%E7%89%B9%E4%BD%93.ttf&text=%E6%97%A0%E7%95%8F%E9%80%A0%E6%A2%A6&color=333" alt="马克笔哥特体 - 无畏造梦" height="52"><br>
+  <sub>马克笔哥特体</sub>
+</p>
+<p>
+  <img src="https://webfont.shenzilong.cn/api/svg?font=%E5%88%98%E5%BB%BA%E6%AF%9B%E8%8D%89.ttf&text=%E4%B9%98%E7%89%A9%E6%B8%B8%E5%BF%83&color=333" alt="刘建毛草 - 乘物游心" height="52"><br>
+  <sub>刘建毛草</sub>
+</p>
+<p>
+  <img src="https://webfont.shenzilong.cn/api/svg?font=%E4%BC%98%E8%AE%BE%E6%A0%87%E9%A2%98%E9%BB%91.ttf&text=%E5%AD%97%E9%9A%8F%E9%9C%80%E8%BD%BD&color=333" alt="优设标题黑 - 字随需载" height="52"><br>
+  <sub>优设标题黑</sub>
+</p>
+
+用法（参数：`font` 字体名 / `text` 文字 / `size` 字号 12-400 / `color` 十六进制颜色）：
+
+```html
+<img src="https://webfont.shenzilong.cn/api/svg?font=得意黑.ttf&text=快如闪电&size=64&color=333333">
+```
+
+适合 README 徽章式标题、邮件内嵌图、不支持自定义字体的第三方页面等场景——输出的 SVG 只有几 KB，且矢量无限清晰。
+
 ## 核心能力
 
 > [在线体验中文字体效果对比](https://webfont.shenzilong.cn/?demo) — 同一内容，字体不同，体验天壤之别
