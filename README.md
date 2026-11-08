@@ -4,7 +4,7 @@
 
 [English](README.en.md)
 
-[![扫码加入开发者社群](https://tsfullstack.heartstack.space/group/gs.svg?from=web-font)](https://tsfullstack.heartstack.space/group/gs?from=web-font)
+[![扫码加入开发者社群](https://streamhold.heartstack.space/svg/tsfullstack/group/gs.svg?from=web-font)](https://tsfullstack.heartstack.space/group/gs?from=web-font)
 
 **中文字体包太大**（思源黑体 16MB+），没法像英文字体那样直接 `@font-face` 引入。
 

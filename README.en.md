@@ -4,7 +4,7 @@
 
 [中文](README.md)
 
-[![扫码加入开发者社群](https://tsfullstack.heartstack.space/group/gs.svg?from=web-font)](https://tsfullstack.heartstack.space/group/gs?from=web-font)
+[![扫码加入开发者社群](https://streamhold.heartstack.space/svg/tsfullstack/group/gs.svg?from=web-font)](https://tsfullstack.heartstack.space/group/gs?from=web-font)
 
 **Chinese fonts are huge** (Source Han Sans: 16MB+). You can't just `@font-face` them like English fonts.
 
