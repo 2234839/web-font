@@ -198,14 +198,51 @@ struct Request<'a> {
     if_none_match: Option<String>,
 }
 
+/// chunked 帧解码重组：剔除 Transfer-Encoding 头、补 Content-Length、body 展平为连续字节，
+/// 返回重组后的帧总长（非 chunked 帧原样返回 None）
+fn normalize_chunked_frame(buf: &mut Vec<u8>, total: usize) -> Option<usize> {
+    let hdr_end = find(&buf[..total], b"\r\n\r\n")?;
+    let head = buf[..hdr_end].to_vec();
+    if !head_is_chunked(&head) {
+        return None;
+    }
+    let decoded = decode_chunked(&buf[hdr_end + 4..total])?;
+    let mut new_head: Vec<u8> = Vec::with_capacity(hdr_end + 24);
+    for line in head.split(|&b| b == b'\n') {
+        let l = trim_cr(line);
+        if l.is_empty() {
+            continue;
+        }
+        let is_te = l
+            .iter()
+            .position(|&b| b == b':')
+            .map(|colon| l[..colon].eq_ignore_ascii_case(b"transfer-encoding"))
+            .unwrap_or(false);
+        if is_te {
+            continue;
+        }
+        new_head.extend_from_slice(l);
+        new_head.extend_from_slice(b"\r\n");
+    }
+    new_head.extend_from_slice(format!("Content-Length: {}\r\n\r\n", decoded.len()).as_bytes());
+    let head_len = new_head.len();
+    let mut frame = new_head;
+    frame.extend_from_slice(&decoded);
+    frame.extend_from_slice(&buf[total..]);
+    *buf = frame;
+    Some(head_len + decoded.len())
+}
+
 /// 连接线程主体：keep-alive 循环，按 Content-Length 完整取帧后处理（对译 connThread/extractFrame）
 fn conn_loop(app: &App, mut stream: std::net::TcpStream) -> std::io::Result<()> {
     let mut buf: Vec<u8> = Vec::with_capacity(16 * 1024);
     let mut rbuf = [0u8; 16 * 1024];
     loop {
         if let Some(total) = extract_frame(&buf) {
-            let req_bytes = &buf[..total];
-            let close = process_request(app, &mut stream, req_bytes)?;
+            // 反向代理（如 dynaPM）流式转发无 Content-Length，用 chunked 编码——解码重组后再路由
+            let total = normalize_chunked_frame(&mut buf, total).unwrap_or(total);
+            let req_bytes = buf[..total].to_vec();
+            let close = process_request(app, &mut stream, &req_bytes)?;
             // 移除已消费字节（剩余是下一请求的开头）
             buf.drain(..total);
             if close {
@@ -213,7 +250,8 @@ fn conn_loop(app: &App, mut stream: std::net::TcpStream) -> std::io::Result<()> 
             }
             continue;
         }
-        if buf.len() > 1024 * 1024 {
+        // 缓冲上限须覆盖最大上传（90MB + 头部余量）
+        if buf.len() > 100 * 1024 * 1024 {
             let _ = http::send_text(&mut stream, 400, "request too large", true, &[]);
             return Ok(());
         }
@@ -225,10 +263,78 @@ fn conn_loop(app: &App, mut stream: std::net::TcpStream) -> std::io::Result<()> 
     }
 }
 
-/// 判定缓冲里是否有完整请求帧（头结束 + Content-Length 全 body）；无则 None（继续等读）
+/** 请求头是否声明 Transfer-Encoding: chunked（取帧与重组共用） */
+fn head_is_chunked(head: &[u8]) -> bool {
+    head.split(|&b| b == b'\n').any(|h| {
+        let h = trim_cr(h);
+        let Some(colon) = h.iter().position(|&b| b == b':') else { return false };
+        if !h[..colon].eq_ignore_ascii_case(b"transfer-encoding") {
+            return false;
+        }
+        let mut v = &h[colon + 1..];
+        while let Some(&f) = v.first() {
+            if f == b' ' || f == b'\t' { v = &v[1..]; } else { break; }
+        }
+        v.eq_ignore_ascii_case(b"chunked")
+    })
+}
+
+/// 解码 chunked body（非法数据返 None）
+fn decode_chunked(body: &[u8]) -> Option<Vec<u8>> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    loop {
+        let line_end = find(&body[i..], b"\r\n")? + i;
+        let size_str = &body[i..line_end];
+        let semi = size_str.iter().position(|&b| b == b';').unwrap_or(size_str.len());
+        let size = usize::from_str_radix(std::str::from_utf8(&size_str[..semi]).ok()?.trim(), 16).ok()?;
+        i = line_end + 2;
+        if size == 0 {
+            return Some(out);
+        }
+        if i + size + 2 > body.len() {
+            return None;
+        }
+        out.extend_from_slice(&body[i..i + size]);
+        i += size + 2;
+    }
+}
+
+/// chunked 帧完整长度（0-chunk + 可选 trailer + 空行；数据不足返 None 继续等读）
+fn chunked_frame_len(body: &[u8]) -> Option<usize> {
+    let mut i = 0;
+    loop {
+        let line_end = find(&body[i..], b"\r\n")? + i;
+        let size_str = &body[i..line_end];
+        let semi = size_str.iter().position(|&b| b == b';').unwrap_or(size_str.len());
+        let size = usize::from_str_radix(std::str::from_utf8(&size_str[..semi]).ok()?.trim(), 16).ok()?;
+        i = line_end + 2;
+        if size == 0 {
+            // 0-chunk 后：直接空行结束，或若干 trailer 行 + 空行
+            loop {
+                let e = find(&body[i..], b"\r\n")? + i;
+                let line = &body[i..e];
+                i = e + 2;
+                if line.is_empty() {
+                    return Some(i);
+                }
+            }
+        }
+        if i + size + 2 > body.len() {
+            return None;
+        }
+        i += size + 2;
+    }
+}
+
+/// 判定缓冲里是否有完整请求帧（头结束 + Content-Length 全 body / chunked 整帧）；无则 None（继续等读）
 fn extract_frame(req: &[u8]) -> Option<usize> {
     let hdr_end = find(req, b"\r\n\r\n")?;
     let head = &req[..hdr_end];
+    if head_is_chunked(head) {
+        let body_len = chunked_frame_len(&req[hdr_end + 4..])?;
+        return Some(hdr_end + 4 + body_len);
+    }
     let mut content_length = 0usize;
     for h in head.split(|&b| b == b'\n') {
         let h = trim_cr(h);
@@ -640,6 +746,34 @@ mod tests {
         assert_eq!(extract_frame(full), Some(full.len()));
         assert_eq!(extract_frame(&full[..full.len() - 1]), None); // body 未齐
         assert_eq!(extract_frame(b"GET / HTTP/1.1\r\n"), None); // 头未结束
+    }
+
+    #[test]
+    fn chunked_frame_extract_and_normalize() {
+        // 两个 chunk + 0 结束（无 trailer）
+        let head = b"POST /api/upload HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n";
+        let body = b"4\r\nWiki\r\n5\r\npedia\r\n0\r\n\r\n";
+        let mut full = head.to_vec();
+        full.extend_from_slice(body);
+        assert_eq!(extract_frame(&full), Some(full.len()));
+        // 数据不足：截断最后一部分后不完整
+        assert_eq!(extract_frame(&full[..full.len() - 2]), None);
+
+        // 重组：Transfer-Encoding 剔除、补 Content-Length、body 展平
+        let total = extract_frame(&full).unwrap();
+        let new_total = normalize_chunked_frame(&mut full, total).unwrap();
+        assert_eq!(new_total, full.len());
+        let r = parse_request(&full).unwrap();
+        assert_eq!(r.method, "POST");
+        assert_eq!(r.body, b"Wikipedia");
+        assert!(full.starts_with(b"POST /api/upload HTTP/1.1\r\nContent-Length: 9\r\n\r\n"));
+
+        // 带 trailer 的 0-chunk
+        let mut t = head.to_vec();
+        t.extend_from_slice(b"3\r\nabc\r\n0\r\nX-T: 1\r\n\r\n");
+        let total = extract_frame(&t).unwrap();
+        normalize_chunked_frame(&mut t, total).unwrap();
+        assert_eq!(parse_request(&t).unwrap().body, b"abc");
     }
 
     #[test]

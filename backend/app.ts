@@ -190,8 +190,8 @@ const fontApiMiddleware: cMiddleware = async (req, res, next) => {
   return next(req, res);
 };
 
-/** 上传文件大小限制 50MB */
-const MAX_UPLOAD_SIZE = 50 * 1024 * 1024;
+/** 上传文件大小限制 90MB */
+const MAX_UPLOAD_SIZE = 90 * 1024 * 1024;
 
 const uploadSizeMiddleware: cMiddleware = async (req, res, next) => {
   if (req.method === "POST" && parseUrl(req).pathname === "/api/upload") {
@@ -199,7 +199,7 @@ const uploadSizeMiddleware: cMiddleware = async (req, res, next) => {
     if (contentLength > MAX_UPLOAD_SIZE) {
       return {
         req,
-        res: jsonResponse({ success: false, error: "文件过大，最大 50MB" }, 413),
+        res: jsonResponse({ success: false, error: "文件过大，最大 90MB" }, 413),
       };
     }
   }

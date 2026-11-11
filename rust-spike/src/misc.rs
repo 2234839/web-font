@@ -285,6 +285,10 @@ fn clean_once() {
     let retention_ms = config().temp_retention_seconds * 1000;
     let Ok(entries) = std::fs::read_dir("font/temp") else { return };
     let mut names: Vec<String> = Vec::new();
+    // 在册字体文件名集合：用于识别孤儿 meta（字体已删但 meta 残留）
+    let mut live_fonts: Vec<String> = Vec::new();
+    // 孤儿 meta 清单（字体本体不存在或同样过期的 .meta.json）
+    let mut orphan_metas: Vec<(String, String)> = Vec::new();
     for entry in entries.flatten() {
         // 只删普通文件（对齐 entry.kind != .file 跳过）
         let Ok(ft) = entry.file_type() else { continue };
@@ -293,10 +297,14 @@ fn clean_once() {
         }
         let fname = entry.file_name();
         let Some(fname) = fname.to_str() else { continue };
-        if !crate::has_font_ext(fname) {
-            continue;
+        if crate::has_font_ext(fname) {
+            live_fonts.push(fname.to_string());
+            names.push(fname.to_string());
+        } else if let Some(base) = fname.strip_suffix(".meta.json") {
+            if crate::has_font_ext(base) {
+                orphan_metas.push((base.to_string(), fname.to_string()));
+            }
         }
-        names.push(fname.to_string());
     }
     let mut cleaned: usize = 0;
     for name in names {
@@ -313,12 +321,22 @@ fn clean_once() {
             if std::fs::remove_file(format!("font/temp/{name}")).is_err() {
                 continue;
             }
+            // 伴生 meta 一并删除，避免孤儿残留
+            let _ = std::fs::remove_file(format!("font/temp/{name}.meta.json"));
             with_last_used(|m| m.remove(&name));
             cleaned += 1;
         }
     }
+    // 孤儿 meta 兜底：字体本体已不存在的 meta 直接删（本体都不在了，meta 无引用价值）
+    for (base, meta_name) in orphan_metas {
+        if !live_fonts.contains(&base) {
+            if std::fs::remove_file(format!("font/temp/{meta_name}")).is_ok() {
+                cleaned += 1;
+            }
+        }
+    }
     if cleaned > 0 {
-        eprintln!("[temp-cleaner] 本次清理 {cleaned} 个过期临时字体");
+        eprintln!("[temp-cleaner] 本次清理 {cleaned} 个过期临时字体/孤儿元数据");
     }
 }
 
@@ -330,6 +348,9 @@ fn temp_cleaner_thread() {
         config().temp_retention_seconds,
         clean_interval_ms / 1000
     );
+    // 首轮清理立即执行：按需启停（如 dynaPM 闲置回收）下服务可能活不过 60s 延迟，
+    // 冷启动即扫一遍保证过期文件不因进程短命而漏清
+    clean_once();
     std::thread::sleep(Duration::from_secs(60));
     loop {
         clean_once();
@@ -1142,7 +1163,7 @@ fn match_quoted_attr<'a>(header: &'a [u8], attr: &[u8]) -> Option<&'a [u8]> {
 
 // ===== POST /api/upload（对齐 backend/routes/upload.ts + upload.ts）=====
 
-const MAX_UPLOAD_SIZE: usize = 50 * 1024 * 1024;
+const MAX_UPLOAD_SIZE: usize = 90 * 1024 * 1024;
 
 /// 允许的字体扩展名（对齐 isAllowedFontFile）
 fn is_allowed_font_file(filename: &str) -> bool {
@@ -1340,7 +1361,7 @@ pub fn handle_upload(
         .and_then(|cl| cl.parse::<i64>().ok())
         .unwrap_or(0);
     if content_length > MAX_UPLOAD_SIZE as i64 {
-        let body = write_upload_result(&UploadResult { success: false, err: Some("文件过大，最大 50MB") });
+        let body = write_upload_result(&UploadResult { success: false, err: Some("文件过大，最大 90MB") });
         http::send_json(stream, 413, &body, close)?;
         return Ok(close);
     }
